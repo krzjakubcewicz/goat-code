@@ -1,0 +1,5 @@
+# One canonical line ending in the repo. The pipeline runs on Windows,
+# macOS and Linux; mixed endings would make every cross-platform diff noisy.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
