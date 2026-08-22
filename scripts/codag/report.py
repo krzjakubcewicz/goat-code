@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import ledger, miniyaml, osenv, tasks
+from . import ledger, miniyaml, osenv, tasks, tdd
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -36,7 +36,7 @@ class ReportError(RuntimeError):
 # --------------------------------------------------------------------------
 
 
-def verify_done(run, doc, slice_id):
+def verify_done(run, doc, slice_id, status="DONE", profile=None):
     """Cheaply falsifiable checks on a claimed DONE. Returns the problems.
 
     Not an attempt to judge the work - the verifier does that. This only
@@ -56,9 +56,9 @@ def verify_done(run, doc, slice_id):
 
     # --untracked-files=all, so the agent is told "src/stray.js" rather than
     # a collapsed "src/" it then has to go looking through.
-    status = osenv.git(["status", "--porcelain", "--untracked-files=all"], cwd=path)
-    if status.out:
-        changed = ", ".join(line[3:] for line in status.out.splitlines()[:5])
+    tree = osenv.git(["status", "--porcelain", "--untracked-files=all"], cwd=path)
+    if tree.out:
+        changed = ", ".join(line[3:] for line in tree.out.splitlines()[:5])
         problems.append(
             "worktree is not clean - commit or discard these before reporting DONE: {}".format(changed)
         )
@@ -77,10 +77,49 @@ def verify_done(run, doc, slice_id):
         if not (path / relpath).exists():
             problems.append("the brief requires a test at {} and it does not exist".format(relpath))
 
+    if status == "DONE":
+        problems.extend(tdd_findings(run, item, path, profile))
+
     return problems
 
 
-def record_slice(run, slice_id, status, tests=None, concerns=None, reason=None, head=None, force=False):
+def tdd_findings(run, item, worktree_path, profile=None):
+    """TDD violations in the slice's own commit range, if enforcement is on."""
+    if not run.config.get("enforce_tdd", True):
+        return []
+    base = (item.get("commits") or {}).get("base")
+    head = osenv.git(["rev-parse", "HEAD"], cwd=worktree_path)
+    if not base or not head.ok:
+        return []
+    return [
+        "{}. Write the failing test first"
+        " (superpowers:test-driven-development)".format(finding)
+        for finding in _tdd_messages(worktree_path, item, base, head.out, profile)
+    ]
+
+
+def _tdd_hint(problems):
+    """Point at the honest remedy, since git history cannot be un-written."""
+    if not any("before any test" in problem for problem in problems):
+        return ""
+    return (
+        "\n\nHistory cannot be un-written. Add the missing tests, then report"
+        "\nDONE_WITH_CONCERNS saying they were written after the implementation."
+        "\nThe verifier will see it."
+    )
+
+
+def _tdd_messages(worktree_path, item, base, head, profile):
+    return [
+        "implementation landed before any test: commit {} ({}) added {} with no"
+        " test touched yet in this slice".format(entry["short"], entry["subject"], ", ".join(entry["files"]))
+        for entry in tdd.violations(worktree_path, item, base, head, profile)
+    ]
+
+
+def record_slice(
+    run, slice_id, status, tests=None, concerns=None, reason=None, head=None, force=False, profile=None
+):
     """Record an executor's own report. Raises :class:`ReportError` if rejected."""
     status = (status or "").strip().upper()
     if status not in SLICE_STATUSES:
@@ -94,13 +133,22 @@ def record_slice(run, slice_id, status, tests=None, concerns=None, reason=None, 
     except tasks.TaskError as exc:
         raise ReportError(str(exc))
 
-    problems = []
     if status in FINISHED and not force:
-        problems = verify_done(run, doc, slice_id)
+        problems = verify_done(run, doc, slice_id, status=status, profile=profile)
         if problems:
             raise ReportError(
-                "cannot accept {} for {}:\n  - ".format(status, slice_id) + "\n  - ".join(problems)
+                "cannot accept {} for {}:\n  - ".format(status, slice_id)
+                + "\n  - ".join(problems)
+                + _tdd_hint(problems)
             )
+
+    # An honest DONE_WITH_CONCERNS is the escape hatch from the TDD check,
+    # but the violation still goes on the record - it cannot be hidden behind
+    # a vague concern string.
+    if status == "DONE_WITH_CONCERNS" and not force and item.get("worktree"):
+        late = tdd_findings(run, item, pathlib.Path(item["worktree"]), profile)
+        if late:
+            concerns = "; ".join([c for c in [concerns] if c] + late)
 
     resolved_head = head
     if resolved_head is None and item.get("worktree"):

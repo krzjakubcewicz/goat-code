@@ -625,6 +625,7 @@ def cmd_report(args):
                 reason=args.reason,
                 head=args.head,
                 force=args.force,
+                profile=load_stack(run),
             )
             text = "{}: {} (slice now {})".format(
                 result["slice"], result["status"], result["slice_status"]

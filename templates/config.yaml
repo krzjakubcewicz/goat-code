@@ -35,6 +35,12 @@ approval_gate: chat
 # alone, which cod-ag writes either way.
 manage_gitignore: true
 
+# Reject an executor's DONE when its commit history shows implementation
+# landing before it touched any test. Executors are told to work test-first
+# either way; this is what checks. Turn off for a project where that cannot
+# hold, and TDD goes back to being instruction only.
+enforce_tdd: true
+
 # Install dependencies in each new worktree. Turn this off for projects
 # where install is slow and the tests do not need it.
 worktree_setup: true

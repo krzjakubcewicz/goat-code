@@ -19,7 +19,13 @@ _TDD_RULES = """\
 4. Commit. One commit per green test, message in caveman style
    (terse, lowercase, no filler - "add token expiry check", not
    "This commit adds a check for token expiry.").
-Never write implementation before a failing test exists for it."""
+Never write implementation before a failing test exists for it.
+
+This is checked, not just asked for. When you report DONE, your commit
+history is read: if a commit adds implementation before this slice has
+touched any test, the report is refused. A commit adding a test and its
+implementation together is fine. Opening with a fixture or a config file
+is fine. Writing the whole feature and adding tests at the end is not."""
 
 _OWNERSHIP_RULES = """\
 - Create and edit files ONLY inside your owned paths listed above.

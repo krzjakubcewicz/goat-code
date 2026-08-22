@@ -57,6 +57,9 @@ DEFAULT_CONFIG = {
     # The change is left uncommitted for you to review. Turn off to rely on
     # .git/info/exclude alone, which cod-ag always writes either way.
     "manage_gitignore": True,
+    # Reject a DONE whose git history shows implementation landing before any
+    # test. Off leaves TDD as instruction only.
+    "enforce_tdd": True,
     "worktree_setup": True,
     "models": {
         "planner": "opus",

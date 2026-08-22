@@ -188,8 +188,9 @@ command is written into every dispatch prompt.
 ```
 
 A claimed `DONE` is checked before it is accepted: the worktree must be
-clean, HEAD must have moved from the slice's base commit, and every test
-file the brief declares must exist. A rejection names every problem at once
+clean, HEAD must have moved from the slice's base commit, every test file
+the brief declares must exist, and the commit history must show the slice
+touching a test before it added implementation (`enforce_tdd`, default on). A rejection names every problem at once
 and changes nothing, so the agent can fix and retry.
 
 Then return one status line and nothing more. Anything printed stays in the

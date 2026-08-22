@@ -351,3 +351,10 @@ def test_write_persists_the_brief(run, plan):
 def test_brief_for_an_unknown_slice_raises(run, plan):
     with pytest.raises(KeyError):
         brief.build(run, plan, "S9")
+
+
+def test_brief_warns_that_test_first_is_checked(run, plan):
+    """An unannounced gate is a trap; the brief must say the check exists."""
+    text = brief.build(run, plan, "S1")
+    assert "This is checked" in text
+    assert "the report is refused" in text

@@ -54,6 +54,13 @@ Test first, every time:
 3. Refactor only while green.
 4. Commit. One commit per green test.
 
+**This is enforced.** `report --status DONE` reads your commit range and
+refuses the report if implementation landed before you touched any test.
+A commit containing a test and its implementation together passes; so does
+opening with a fixture or config. Writing everything and adding tests last
+does not, and git history cannot be un-written afterwards - so do it in the
+right order the first time.
+
 Commit messages are caveman-terse and lowercase: `add token expiry check`,
 not `This commit adds a check for token expiry.`
 
@@ -94,9 +101,10 @@ actually records your result — nothing you say in your reply updates the run.
 ```
 
 It **verifies** a claimed `DONE` before accepting it: your worktree must be
-clean, HEAD must have moved from your base commit, and every test file the
-brief names must exist. If it rejects you it names every problem at once —
-fix them and run it again. Do not reach for `--force`.
+clean, HEAD must have moved from your base commit, every test file the brief
+names must exist, and your history must show a test before implementation.
+If it rejects you it names every problem at once — fix them and run it
+again. Do not reach for `--force`.
 
 Status is exactly one of `DONE`, `DONE_WITH_CONCERNS` (add `--concerns`),
 `NEEDS_CONTEXT` (add `--reason`), `BLOCKED` (add `--reason`). For the last
