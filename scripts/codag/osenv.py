@@ -76,9 +76,27 @@ class Result:
         }
 
 
+def resolve_exe(name):
+    """Absolute path to an executable, or None.
+
+    Necessary on Windows: ``npm``, ``pnpm``, ``yarn`` and friends ship as
+    ``.CMD`` shims, and without a shell ``CreateProcess`` cannot find or
+    launch a bare ``npm``. ``shutil.which`` honours ``PATHEXT`` and returns
+    the shim's real path, which does launch.
+    """
+    name = str(name)
+    if pathlib.Path(name).is_absolute():
+        return name if pathlib.Path(name).exists() else None
+    return shutil.which(name)
+
+
 def run(argv, cwd=None, check=False, timeout=None, env=None):
     """Run ``argv`` with no shell, capturing UTF-8 output."""
     argv = [str(a) for a in argv]
+    if argv:
+        resolved = resolve_exe(argv[0])
+        if resolved:
+            argv[0] = resolved
     merged = dict(os.environ)
     merged["GIT_OPTIONAL_LOCKS"] = "0"
     merged.setdefault("PYTHONIOENCODING", "utf-8")

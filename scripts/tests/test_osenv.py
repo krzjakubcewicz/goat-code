@@ -172,3 +172,24 @@ def test_only_osenv_calls_subprocess_directly():
             continue
         text = module.read_text(encoding="utf-8")
         assert "import subprocess" not in text, "{} imports subprocess".format(module.name)
+
+
+def test_resolve_exe_finds_git():
+    resolved = osenv.resolve_exe("git")
+    assert resolved and pathlib.Path(resolved).exists()
+
+
+def test_resolve_exe_returns_none_for_nonsense():
+    assert osenv.resolve_exe("definitely-not-a-real-binary-xyz") is None
+
+
+def test_resolve_exe_passes_absolute_paths_through():
+    assert osenv.resolve_exe(sys.executable) == sys.executable
+
+
+@pytest.mark.skipif(not osenv.resolve_exe("npm"), reason="npm not installed")
+def test_run_launches_a_windows_cmd_shim():
+    """npm is a .CMD shim on Windows; a bare argv[0] would not launch."""
+    result = osenv.run(["npm", "--version"])
+    assert result.ok
+    assert result.out[0].isdigit()
