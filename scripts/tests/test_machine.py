@@ -91,6 +91,13 @@ def approved(run):
     return run
 
 
+def e2e_passed(run):
+    """A feature run only reaches done once the E2E agent has reported."""
+    run.state["e2e"] = {"status": "PASS", "detail": None, "tests": "1 passed"}
+    run.save()
+    return run
+
+
 def finish_slice(run, slice_id):
     """Do what an executor does: worktree, commit, report DONE."""
     path, _branch, _setup = worktree.create(run, slice_id, setup=False)
@@ -188,10 +195,18 @@ def test_a_clean_merge_moves_to_verify(run):
     assert machine.derive_phase(run) == "verify"
 
 
-def test_a_passing_verdict_is_done(run):
+def test_a_passing_verdict_on_a_feature_goes_to_e2e(run):
     write_plan(run)
     approved(run)
     (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    assert machine.derive_phase(run) == "e2e"
+
+
+def test_a_passing_verdict_is_done_once_e2e_has_reported(run):
+    write_plan(run)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    e2e_passed(run)
     assert machine.derive_phase(run) == "done"
 
 
@@ -597,6 +612,7 @@ def test_done_reports_the_branch_and_leaves_the_user_branch_alone(run):
     write_plan(run)
     approved(run)
     (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    e2e_passed(run)
 
     action = machine.next_action(run)
     assert action["action"] == "stop"
@@ -611,6 +627,7 @@ def test_stop_is_idempotent(run):
     write_plan(run)
     approved(run)
     (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    e2e_passed(run)
     machine.next_action(run)
     assert machine.next_action(run)["outcome"] == "done"
 

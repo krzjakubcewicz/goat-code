@@ -347,6 +347,92 @@ def verifier(run, package):
     return "\n".join(lines)
 
 
+def e2e(run, doc, package, profile=None):
+    """Prompt for the agent that proves the finished feature from outside."""
+    profile = profile or {}
+    commands = profile.get("commands") or {}
+    lines = []
+    add = lines.append
+
+    add("# End-to-end dispatch - cycle {}".format(run.cycle))
+    add("")
+    add("The feature is built, merged and has passed verification. Prove it")
+    add("works end to end, the way a user would exercise it.")
+    add("")
+    add("## Where")
+    add("")
+    add("    {}".format(package.get("worktree", "")))
+    add("")
+    add("Every slice is already merged there, on `{}`.".format(run.integration_branch))
+    add("")
+
+    add("## What the test must demonstrate")
+    add("")
+    add("The acceptance criteria, and nothing else. Read:")
+    add("")
+    add("- The spec, including the user's clarifications: `{}`".format(run.spec_path))
+    add("- The plan's criteria: `{}`".format(run.tasks_path))
+    add("")
+    for criterion in package.get("criteria") or []:
+        add("- **{} {}**: {}".format(criterion.get("slice"), criterion.get("id"), criterion.get("text")))
+    add("")
+    add("**Do not read the diff to decide what to assert.** A test written")
+    add("from the implementation only restates it, and passes even when the")
+    add("feature is wrong. Assert what was asked for; if the code does not do")
+    add("it, that is the finding.")
+    add("")
+
+    add("## How to write it")
+    add("")
+    if profile.get("e2e_framework"):
+        add("This project uses **{}**. Use it.".format(profile["e2e_framework"]))
+        if commands.get("e2e"):
+            add("")
+            add("    {}".format(_render(commands["e2e"])))
+    else:
+        add("No end-to-end runner is installed. **Do not add one** - the plan's")
+        add("no-new-dependency constraints still bind. Write the highest-level")
+        add("test the existing runner can reach: drive the CLI, call the HTTP")
+        add("handler, exercise the exported entry point. One test that goes")
+        add("through the real path beats three that mock it.")
+    if commands.get("test"):
+        add("")
+        add("Existing test command: `{}`".format(_render(commands["test"])))
+    add("")
+    add("One test, or a small suite, covering the feature's user-visible path.")
+    add("Not a unit test per slice - those exist already and were enforced.")
+    add("")
+    add("**Test files only.** Touching production code would invalidate the")
+    add("verdict this feature just earned. If the only way to make the test")
+    add("pass is to change the implementation, stop and report FAILED.")
+    add("")
+    add("Run it. A test that has never executed is a guess. Then commit on the")
+    add("integration branch with a `test:` prefix.")
+    add("")
+
+    add("## Report")
+    add("")
+    add("Green:")
+    add("")
+    add("    {}".format(command(run, "report", "--role", "e2e", "--status", "PASS", "--tests", "<one line>")))
+    add("")
+    add("Nothing here can reach the feature (a GUI with no runner, say):")
+    add("")
+    add("    {}".format(command(run, "report", "--role", "e2e", "--status", "SKIPPED", "--detail", "<why>")))
+    add("")
+    add("The feature is genuinely broken end to end - only after you have")
+    add("satisfied yourself the fault is not in your own test:")
+    add("")
+    add("    {}".format(command(run, "report", "--role", "e2e", "--status", "FAILED", "--detail", "<criterion and what happened>")))
+    add("")
+    add("A FAILED ends the run, so be sure. Debug your test first.")
+    return "\n".join(lines)
+
+
+def _render(argv):
+    return " ".join(str(part) for part in argv) if argv else "(none detected)"
+
+
 def replanner(run, previous_cycle):
     lines = []
     add = lines.append

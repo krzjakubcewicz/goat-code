@@ -147,6 +147,8 @@ def cmd_init(args):
             run.save()
         baseline = gatesmod.capture_baseline(run, integration, profile=profile)
 
+    if args.kind:
+        run.set_kind_override(args.kind)
     run.set_phase("grill")
     ledgermod.append(run, "run started ({} mode) at base {}".format(run.state["mode"], run.base_commit[:7]))
 
@@ -164,6 +166,7 @@ def cmd_init(args):
         "specialist_skills": profile.get("specialist_skills", []),
         "baseline": (baseline or {}).get("summary"),
         "gitignore_updated": gitignored,
+        "kind_override": run.kind_override,
         "warnings": problems,
     }
 
@@ -609,7 +612,9 @@ def cmd_report(args):
     run = resolve_run(args)
     try:
         if args.role:
-            result = reportmod.record_role(run, args.role, args.status, detail=args.detail)
+            result = reportmod.record_role(
+                run, args.role, args.status, detail=args.detail, tests=args.tests
+            )
             text = "{} {}".format(args.role, result["status"].lower())
             if result.get("verdict"):
                 text += "\nwrote {}".format(result["verdict"])
@@ -892,6 +897,11 @@ def build_parser():
     p = add(sub, "init", help="start a run: preflight, run dir, stack, baseline gates")
     p.add_argument("--prompt", help="feature request, for chat mode")
     p.add_argument("--spec", help="path to a markdown spec file")
+    p.add_argument(
+        "--kind",
+        choices=runmod.KINDS,
+        help="override the planner's classification; a bugfix skips the end-to-end phase",
+    )
     p.add_argument("--force", action="store_true", help="proceed despite preflight problems")
     p.add_argument("--no-baseline", action="store_true", help="skip the baseline gate run")
     p.set_defaults(func=cmd_init)
@@ -985,7 +995,9 @@ def build_parser():
 
     p = add(sub, "report", help="how an agent records its result")
     p.add_argument("--slice", help="slice id, for an executor")
-    p.add_argument("--role", choices=("synthesizer",), help="for a non-slice agent")
+    p.add_argument(
+        "--role", choices=tuple(sorted(reportmod.ROLE_STATUSES)), help="for a non-slice agent"
+    )
     p.add_argument("--status", required=True, help="DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | CLEAN | ESCALATE")
     p.add_argument("--tests", help="one-line test summary")
     p.add_argument("--concerns", help="what needs a human's eye")

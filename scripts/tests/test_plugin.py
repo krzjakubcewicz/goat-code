@@ -75,6 +75,7 @@ def test_every_agent_exists():
         "codag-executor",
         "codag-synthesizer",
         "codag-verifier",
+        "codag-e2e",
         "codag-replanner",
     }
 
@@ -267,6 +268,7 @@ EXPECTED_MODELS = {
     "codag-planner": "opus",
     "codag-executor": "haiku",
     "codag-synthesizer": "sonnet",
+    "codag-e2e": "sonnet",
     "codag-verifier": "opus",
     "codag-replanner": "opus",
 }
@@ -318,7 +320,7 @@ def test_readme_model_table_matches_reality():
     from codag.run import DEFAULT_CONFIG
 
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    rows = dict(re.findall(r"^\| ([a-z ()A-Z]+) \| (opus|sonnet|haiku) \|", text, re.MULTILINE))
+    rows = dict(re.findall(r"^\| ([a-zA-Z0-9 ()]+) \| (opus|sonnet|haiku) \|", text, re.MULTILINE))
     assert rows.get("orchestrator") == "haiku"
     for role, model in DEFAULT_CONFIG["models"].items():
         if role == "executor_escalated":

@@ -246,3 +246,65 @@ def test_summary_line_is_prompt_sized(tmp_path):
 def test_command_text_renders_argv():
     assert stack.command_text(["pnpm", "run", "test"]) == "pnpm run test"
     assert stack.command_text(None) == "(none detected)"
+
+
+# -- end-to-end runners, detected independently ---------------------------
+
+
+def test_a_repo_with_both_runners_reports_both(tmp_path):
+    """The old code reported only vitest, hiding the runner the e2e agent needs."""
+    write(
+        tmp_path,
+        "package.json",
+        package_json(devDependencies={"vitest": "2.0.0", "@playwright/test": "1.47.0"}),
+    )
+    write(tmp_path, "pnpm-lock.yaml", "")
+    profile = stack.detect(tmp_path)
+    assert profile["test_framework"] == "vitest"
+    assert profile["e2e_framework"] == "playwright"
+    assert profile["commands"]["e2e"] == ["pnpm", "exec", "playwright", "test"]
+
+
+def test_cypress_is_detected(tmp_path):
+    write(tmp_path, "package.json", package_json(devDependencies={"cypress": "13"}))
+    write(tmp_path, "package-lock.json", "{}")
+    profile = stack.detect(tmp_path)
+    assert profile["e2e_framework"] == "cypress"
+    assert profile["commands"]["e2e"] == ["npx", "--no-install", "cypress", "run"]
+
+
+def test_a_test_e2e_script_wins_over_the_inferred_command(tmp_path):
+    write(
+        tmp_path,
+        "package.json",
+        package_json(
+            scripts={"test:e2e": "playwright test --project=ci"},
+            devDependencies={"@playwright/test": "1.47.0"},
+        ),
+    )
+    write(tmp_path, "pnpm-lock.yaml", "")
+    profile = stack.detect(tmp_path)
+    assert profile["commands"]["e2e"] == ["pnpm", "run", "test:e2e"]
+    assert profile["e2e_framework"] == "playwright"
+
+
+def test_an_e2e_script_alone_is_enough(tmp_path):
+    write(tmp_path, "package.json", package_json(scripts={"e2e": "node e2e/run.js"}))
+    write(tmp_path, "package-lock.json", "{}")
+    profile = stack.detect(tmp_path)
+    assert profile["e2e_framework"] == "e2e"
+    assert profile["commands"]["e2e"] == ["npm", "run", "e2e"]
+
+
+def test_no_e2e_runner_is_reported_as_none(tmp_path):
+    write(tmp_path, "package.json", package_json(devDependencies={"vitest": "2.0.0"}))
+    write(tmp_path, "package-lock.json", "{}")
+    profile = stack.detect(tmp_path)
+    assert profile["e2e_framework"] is None
+    assert profile["commands"]["e2e"] is None
+
+
+def test_python_e2e_libraries_are_detected(tmp_path):
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['playwright']\n")
+    profile = stack.detect(tmp_path)
+    assert profile["e2e_framework"] == "playwright"

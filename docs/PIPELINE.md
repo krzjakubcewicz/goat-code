@@ -141,6 +141,28 @@ with evidence, gate results with pre-existing failures called out, scope
 violations, carried assumptions, and a final `VERDICT: PASS` or
 `VERDICT: FAIL`. Then it runs `codag verdict`, which reads that line back.
 
+## `e2e`
+
+Only for a `kind: feature` run, and only after the verdict passed.
+`codag-e2e` is dispatched into the integration worktree with the spec and
+every acceptance criterion, and is told **not** to read the diff: a test
+written from the implementation only restates it. It writes one test through
+the real user-visible path, runs it, commits it with a `test:` prefix, then:
+
+```bash
+python scripts/codag.py report --role e2e --status PASS --tests "3 passed"
+```
+
+`SKIPPED` (with `--detail`) when nothing available can reach the feature -
+the run still finishes, with the reason surfaced. `FAILED` (with `--detail`)
+when the feature is genuinely broken end to end: the run stops there. That
+deliberately does **not** replan, because a brand-new E2E test that fails is
+more often the test's fault than the feature's, and a flaky one would eat
+the cycle budget.
+
+A `kind: bugfix` run skips this phase entirely. Its slices already had to be
+written test-first, and that is the right level for a fix.
+
 ## `done`
 
 The `stop` action carries the message and the `finish` command, which removes

@@ -43,6 +43,7 @@ class Evidence:
         self.questions = dispatch.questions_path(run, self.round)
         self.verdict = report.read_verdict(run)
         self.merge_state = merge.state_of(run)
+        self.e2e = run.state.get("e2e") or {}
 
     @property
     def has_plan(self):
@@ -103,6 +104,12 @@ def derive_phase(run, evidence=None):
         return "approve"
 
     if evidence.verdict == "PASS":
+        # A feature earns an end-to-end test before the run is called done.
+        # A bugfix does not: its slices already had to be written test-first.
+        if run.wants_e2e(evidence.doc) and not evidence.e2e.get("status"):
+            return "e2e"
+        if evidence.e2e.get("status") == "FAILED":
+            return "failed"
         return "done"
     if evidence.verdict == "FAIL":
         return "replan"
@@ -162,6 +169,7 @@ def next_action(run, stack_profile=None):
         "execute": _execute,
         "synthesize": _synthesize,
         "verify": _verify,
+        "e2e": _e2e,
         "replan": _replan,
     }.get(phase)
 
@@ -491,6 +499,27 @@ def _criteria(doc):
                     }
                 )
     return out
+
+
+# -- end to end ------------------------------------------------------------
+
+
+def _e2e(run, evidence, stack_profile):
+    package = {
+        "worktree": evidence.merge_state.get("worktree", ""),
+        "criteria": _criteria(evidence.doc),
+    }
+    text = dispatch.e2e(run, evidence.doc, package, stack_profile)
+    path = dispatch.write(run, "e2e", text)
+    return _action(
+        run,
+        "dispatch",
+        "the feature passed verification and has no end-to-end test yet",
+        "dispatch codag-e2e ({})".format(_model(run, "e2e")),
+        dispatches=[
+            {"agent": "codag-e2e", "model": _model(run, "e2e"), "slice": None, "prompt": str(path)}
+        ],
+    )
 
 
 # -- replan ----------------------------------------------------------------

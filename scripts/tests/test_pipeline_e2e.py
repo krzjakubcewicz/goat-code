@@ -22,12 +22,14 @@ from tests.test_cli import node_repo  # noqa: F401
 MAX_STEPS = 60
 
 
-def plan_document(run, slices):
+def plan_document(run, slices, kind="feature"):
     return {
         "version": 1,
         "run_id": run.run_id,
         "cycle": run.cycle,
         "goal": "Greet a user by name from the CLI.",
+        "kind": kind,
+        "kind_reason": "Chosen by the test fixture.",
         "global_constraints": ["No new runtime dependencies"],
         "slices": slices,
     }
@@ -70,8 +72,13 @@ QUESTIONS = "\n".join(
 class FakeAgent:
     """Performs, deterministically, what each real agent would do."""
 
-    def __init__(self, slices, ask_first=True, fail_verdicts=0, block=None, conflict=False):
+    def __init__(
+        self, slices, ask_first=True, fail_verdicts=0, block=None, conflict=False,
+        kind="feature", e2e_status="PASS",
+    ):
         self.slices = slices
+        self.kind = kind
+        self.e2e_status = e2e_status
         self.ask_first = ask_first
         self.fail_verdicts = fail_verdicts
         self.block = dict(block or {})
@@ -87,7 +94,7 @@ class FakeAgent:
         if self.ask_first and self.planner_rounds == 1:
             (run.cycle_dir() / "questions-round-1.yaml").write_text(QUESTIONS, encoding="utf-8")
             return
-        miniyaml.dump(plan_document(run, self.slices), run.tasks_path)
+        miniyaml.dump(plan_document(run, self.slices, self.kind), run.tasks_path)
 
     def executor(self, run, entry):
         slice_id = entry["slice"]
@@ -123,6 +130,17 @@ class FakeAgent:
         )
         cli(run, "verdict", check=False)
 
+    def e2e(self, run, _dispatch):
+        state = run.state.get("merge") or {}
+        worktree_path = state.get("worktree")
+        if self.e2e_status == "PASS":
+            _write(worktree_path, "e2e/journey.test.js", "// end to end\n")
+            osenv.git(["add", "-A"], cwd=worktree_path, check=True)
+            osenv.git(["commit", "-qm", "test: e2e journey"], cwd=worktree_path, check=True)
+            cli(run, "report", "--role", "e2e", "--status", "PASS", "--tests", "1 passed")
+        else:
+            cli(run, "report", "--role", "e2e", "--status", self.e2e_status, "--detail", "no runner")
+
     def replanner(self, run, _dispatch):
         doc = tasks.load(run.tasks_path)
         for item in tasks.slices(doc):
@@ -141,6 +159,7 @@ class FakeAgent:
             "codag-executor": self.executor,
             "codag-synthesizer": self.synthesizer,
             "codag-verifier": self.verifier,
+            "codag-e2e": self.e2e,
             "codag-replanner": self.replanner,
         }[entry["agent"]]
         assert open(entry["prompt"], encoding="utf-8").read().strip(), "dispatch prompt is empty"
@@ -266,6 +285,7 @@ def test_a_whole_run_reaches_done_with_no_model(started):
         "execute",
         "synthesize",
         "verify",
+        "e2e",
         "done",
     ]
 
@@ -462,3 +482,94 @@ def test_resume_reports_the_true_phase_mid_run(started):
     assert "grill" in seen
     assert seen[-1] != "grill", "phase must advance as the run progresses"
     assert Run.load(started).phase in ("execute", "approve", "synthesize", "verify")
+
+
+# -- the end-to-end phase --------------------------------------------------
+
+
+def test_a_feature_run_gets_an_e2e_test(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")])
+    driver = Driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    assert "e2e" in driver.phases
+    assert any(a == "codag-e2e" for a, _s, _m in agent.dispatched)
+
+    run = Run.load(started)
+    listed = osenv.git_out(["ls-tree", "-r", "--name-only", run.integration_branch], cwd=started)
+    assert "e2e/journey.test.js" in listed
+
+
+def test_the_e2e_agent_runs_on_sonnet(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")])
+    Driver(started, agent).loop()
+    models = {a: m for a, _s, m in agent.dispatched}
+    assert models["codag-e2e"] == "sonnet"
+
+
+def test_a_bugfix_run_skips_the_e2e_phase(started):
+    """A bugfix's slices were already forced to be written test-first."""
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], kind="bugfix")
+    driver = Driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    assert "e2e" not in driver.phases
+    assert not any(a == "codag-e2e" for a, _s, _m in agent.dispatched)
+
+
+def test_the_kind_override_beats_the_planners_classification(started):
+    """The planner says feature; --kind bugfix at init wins."""
+    run = Run.load(started)
+    run.set_kind_override("bugfix")
+
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], kind="feature")
+    driver = Driver(started, agent)
+    driver.loop()
+    assert "e2e" not in driver.phases
+
+
+def test_a_failing_e2e_stops_the_run_without_replanning(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], e2e_status="FAILED")
+    driver = Driver(started, agent)
+    final = driver.loop()
+
+    assert final["action"] == "stop"
+    assert final["outcome"] == "failed"
+    assert Run.load(started).cycle == 1, "a failing e2e must not burn a replan cycle"
+
+
+def test_a_skipped_e2e_still_finishes(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], e2e_status="SKIPPED")
+    driver = Driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    assert Run.load(started).state["e2e"]["status"] == "SKIPPED"
+
+
+def test_e2e_can_be_switched_off(started):
+    config = started / ".codag" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("write_e2e_tests: false\n", encoding="utf-8")
+    run = Run.load(started)
+    run.state["config"]["write_e2e_tests"] = False
+    run.save()
+
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")])
+    driver = Driver(started, agent)
+    assert driver.loop()["outcome"] == "done"
+    assert "e2e" not in driver.phases
+
+
+def test_the_e2e_prompt_names_the_criteria_and_forbids_reading_the_diff(started):
+    """The agent must assert the spec, not describe the implementation."""
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")])
+    driver = Driver(started, agent)
+    driver.loop()
+
+    prompt = (Run.load(started).cycle_dir(1) / "dispatch" / "e2e.md").read_text(encoding="utf-8")
+    assert "S1 exists" in prompt
+    assert "Do not read the diff" in prompt
+    assert "Test files only" in prompt

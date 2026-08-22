@@ -17,6 +17,11 @@ from . import miniyaml, osenv
 CODAG_DIR = ".codag"
 STATE_VERSION = 1
 
+#: What a spec is asking for. A bugfix skips the end-to-end phase: the
+#: slice's own enforced test-first coverage is already the right level.
+KINDS = ("feature", "bugfix")
+DEFAULT_KIND = "feature"
+
 #: What cod-ag creates inside a target repo and therefore asks git to ignore.
 #: ``.worktrees/`` is the repo-local fallback location, used only if someone
 #: points ``CODAG_TEMP_ROOT`` inside the repository.
@@ -36,6 +41,7 @@ PHASES = (
     "execute",
     "synthesize",
     "verify",
+    "e2e",
     "replan",
     "done",
     "failed",
@@ -60,12 +66,16 @@ DEFAULT_CONFIG = {
     # Reject a DONE whose git history shows implementation landing before any
     # test. Off leaves TDD as instruction only.
     "enforce_tdd": True,
+    # After a passing verdict on a feature, dispatch an agent to write and run
+    # an end-to-end test of what was built. Bugfix runs skip it either way.
+    "write_e2e_tests": True,
     "worktree_setup": True,
     "models": {
         "planner": "opus",
         "executor": "haiku",
         "executor_escalated": "sonnet",
         "synthesizer": "sonnet",
+        "e2e": "sonnet",
         "verifier": "opus",
         "replanner": "opus",
     },
@@ -307,6 +317,7 @@ class Run:
             "plan_fix_attempts": 0,
             "approval": None,
             "escalations": {},
+            "kind_override": None,
             "created_at": _now_iso(now),
             "updated_at": _now_iso(now),
             "repo": str(repo),
@@ -452,6 +463,29 @@ class Run:
         self.save()
         return recorded[slice_id]
 
+    # -- what kind of change this is --------------------------------------
+
+    @property
+    def kind_override(self):
+        return self.state.get("kind_override")
+
+    def set_kind_override(self, kind):
+        if kind is not None and kind not in KINDS:
+            raise RunError("kind must be one of {}, not {!r}".format(", ".join(KINDS), kind))
+        self.state["kind_override"] = kind
+        self.save()
+        return kind
+
+    def kind(self, doc=None):
+        """feature or bugfix. An explicit --kind beats the planner's guess."""
+        if self.kind_override:
+            return self.kind_override
+        declared = (doc or {}).get("kind")
+        return declared if declared in KINDS else DEFAULT_KIND
+
+    def wants_e2e(self, doc=None):
+        return self.config.get("write_e2e_tests", True) and self.kind(doc) == "feature"
+
     # -- the approval gate -----------------------------------------------
 
     @property
@@ -517,6 +551,7 @@ class Run:
             "mode": self.state.get("mode"),
             "grill_rounds": self.grill_rounds,
             "approval": self.approval,
+            "kind_override": self.kind_override,
             "base_branch": self.state.get("base_branch"),
             "base_commit": (self.base_commit or "")[:7],
             "integration_branch": self.integration_branch,

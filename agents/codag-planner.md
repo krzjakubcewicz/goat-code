@@ -128,6 +128,12 @@ Follow `superpowers:writing-plans` for task right-sizing, then write
   slice needs more than that, that is usually a sign it should be split.
 - Copy the spec's project-wide requirements into `global_constraints`
   verbatim, with exact values.
+- Set `kind` and justify it in one line of `kind_reason`. A **bugfix**
+  restores behaviour that is described as broken or wrong; a **feature**
+  adds or changes what the product can do. When it is genuinely both, or
+  you cannot tell, say `feature` - that only costs an end-to-end test,
+  while a wrong `bugfix` silently skips one. The user sees your call at the
+  approval gate.
 
 **Sizing:** aim for 2–6 slices. One slice means you have not decomposed.
 More than eight usually means you are splitting by layer instead of by

@@ -127,6 +127,33 @@ for exactly this reason: it starts at the base commit, which is what a
 baseline needs, and it is the same worktree the merge later targets — so the
 dependency install is paid once instead of twice.
 
+## Why the E2E test is written last, and from the spec
+
+Every slice proves itself in isolation and the verifier judges the merged
+diff, but until the `e2e` phase nothing drives the finished feature the way
+a user would.
+
+Writing that test after the code is the only option - it cannot exist before
+the feature does - and it carries a specific hazard: a test written by
+reading the implementation restates the implementation, passes forever, and
+will happily assert a bug in detail. So the E2E agent is handed the spec and
+the acceptance criteria and told explicitly not to read the diff to decide
+what to assert. It reads code only to find the entry point.
+
+It may touch test files only. The feature has just earned a passing verdict;
+changing production code now would invalidate that judgement behind the
+verifier's back. If the test can only pass by altering the implementation,
+that is the finding, and the agent reports `FAILED`.
+
+`FAILED` stops the run rather than triggering a replan. A brand-new
+end-to-end test that fails is far more often the test's fault - a selector,
+a wait, a fixture - than the feature's, and letting it into the replan loop
+would spend cycles rewriting working code.
+
+A `kind: bugfix` run skips the phase. Its slices already had to be written
+test-first, enforced from git history, and a second layer for a one-line fix
+is the overhead the classification exists to avoid.
+
 ## Why the synthesizer is last-resort
 
 Merging is mechanical until it isn't. `merge.run_merge` creates the

@@ -35,6 +35,9 @@ It never commits to the branch you are on.
          │
          ├─ verify ───── gates + every acceptance criterion
          │
+         ├─ e2e ──────── one test proving the finished feature
+         │               (features only; a bugfix skips it)
+         │
          └─ DONE  or  replanner ──▶ execute again  (max 3 cycles)
 ```
 
@@ -126,6 +129,7 @@ gets the expensive models; mechanical work does not.
 | executor | haiku | works from a complete brief, test-first, in one slice |
 | executor (after BLOCKED) | sonnet | one step up when haiku could not finish |
 | synthesizer | sonnet | reconciles conflicts, but within a very narrow brief |
+| e2e | sonnet | writes one test proving the finished feature from outside |
 | verifier | opus | the only gate on whether the run is actually done |
 | replanner | opus | diagnosing root cause is the hardest judgement in the loop |
 

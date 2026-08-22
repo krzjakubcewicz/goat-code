@@ -63,9 +63,26 @@ _JS_LOCKFILES = (
     ("npm", "package-lock.json"),
 )
 
-_JS_TEST_LIBS = ("vitest", "jest", "mocha", "ava", "playwright", "@playwright/test", "cypress")
+#: Unit-level runners. Ordered: the first match names ``test_framework``.
+_JS_TEST_LIBS = ("vitest", "jest", "mocha", "ava", "node:test")
+
+#: End-to-end runners, detected separately. A repo commonly has both a unit
+#: runner and an E2E one, and reporting only the first would hide the E2E
+#: runner the e2e agent needs.
+_JS_E2E_LIBS = (
+    ("playwright", ("@playwright/test", "playwright")),
+    ("cypress", ("cypress",)),
+    ("webdriverio", ("webdriverio", "@wdio/cli")),
+    ("puppeteer", ("puppeteer",)),
+    ("testcafe", ("testcafe",)),
+)
+
+#: Scripts that run an end-to-end suite, most specific first.
+_JS_E2E_SCRIPTS = ("test:e2e", "e2e", "test:integration", "e2e:run")
 
 _PY_TEST_LIBS = ("pytest", "unittest2", "nose2")
+
+_PY_E2E_LIBS = ("playwright", "selenium", "splinter")
 
 
 def detect(repo):
@@ -79,12 +96,14 @@ def detect(repo):
         "package_manager": None,
         "monorepo": None,
         "test_framework": None,
+        "e2e_framework": None,
         "commands": {
             "setup": None,
             "build": None,
             "typecheck": None,
             "lint": None,
             "test": None,
+            "e2e": None,
         },
         "source_dirs": [],
         "test_dirs": [],
@@ -152,7 +171,12 @@ def _detect_javascript(repo, profile):
 
     for lib in _JS_TEST_LIBS:
         if lib in deps:
-            profile["test_framework"] = lib.replace("@playwright/test", "playwright")
+            profile["test_framework"] = lib
+            break
+
+    for name, packages in _JS_E2E_LIBS:
+        if any(package in deps for package in packages):
+            profile["e2e_framework"] = name
             break
 
     profile["commands"]["setup"] = _js_install(manager)
@@ -170,6 +194,15 @@ def _detect_javascript(repo, profile):
         profile["commands"]["typecheck"] = _js_exec(manager, ["tsc", "--noEmit"])
     if profile["commands"]["test"] is None and profile["test_framework"]:
         profile["commands"]["test"] = _js_exec(manager, [profile["test_framework"], "run"])
+
+    e2e_script = next((s for s in _JS_E2E_SCRIPTS if s in scripts), None)
+    if e2e_script:
+        profile["commands"]["e2e"] = _js_run(manager, e2e_script)
+        profile["e2e_framework"] = profile["e2e_framework"] or e2e_script
+    elif profile["e2e_framework"] == "playwright":
+        profile["commands"]["e2e"] = _js_exec(manager, ["playwright", "test"])
+    elif profile["e2e_framework"] == "cypress":
+        profile["commands"]["e2e"] = _js_exec(manager, ["cypress", "run"])
 
     profile["monorepo"] = _detect_js_monorepo(repo, pkg, manager)
 
@@ -207,6 +240,11 @@ def _detect_python(repo, profile):
     for lib in _PY_TEST_LIBS:
         if lib in pyproject.lower() or _requirements_mention(repo, lib) or (repo / "pytest.ini").exists():
             profile["test_framework"] = profile["test_framework"] or lib
+            break
+
+    for lib in _PY_E2E_LIBS:
+        if lib in pyproject.lower() or _requirements_mention(repo, lib):
+            profile["e2e_framework"] = profile["e2e_framework"] or lib
             break
 
     if manager == "poetry":

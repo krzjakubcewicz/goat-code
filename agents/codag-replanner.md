@@ -50,6 +50,9 @@ the report says exactly what it could not do and why.
 
 Write `tasks.yaml` for the new cycle at the path you were given.
 
+**Leave `kind` and `kind_reason` exactly as they are.** Whether this was a
+feature or a bugfix did not change because a cycle failed.
+
 **Carry forward everything that passed.** Slices whose criteria are all ✅
 appear with `status: carried`. They are never re-executed, and their
 branches are already merged. Do not delete them from the plan — the verifier

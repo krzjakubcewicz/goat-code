@@ -41,6 +41,11 @@ manage_gitignore: true
 # hold, and TDD goes back to being instruction only.
 enforce_tdd: true
 
+# After a passing verdict on a feature, dispatch an agent to write and run
+# an end-to-end test of what was built. Bugfix runs skip it either way - a
+# bugfix slice already had to be written test-first.
+write_e2e_tests: true
+
 # Install dependencies in each new worktree. Turn this off for projects
 # where install is slow and the tests do not need it.
 worktree_setup: true
@@ -60,5 +65,6 @@ models:
   executor: haiku
   executor_escalated: sonnet
   synthesizer: sonnet
+  e2e: sonnet
   verifier: opus
   replanner: opus

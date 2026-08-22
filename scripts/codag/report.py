@@ -190,27 +190,46 @@ def record_slice(
 # --------------------------------------------------------------------------
 
 
-def record_role(run, role, status, detail=None):
-    """Record a non-slice agent's outcome (currently the synthesizer)."""
+#: Statuses each non-slice role may report.
+ROLE_STATUSES = {
+    "synthesizer": ("CLEAN", "ESCALATE"),
+    "e2e": ("PASS", "SKIPPED", "FAILED"),
+}
+
+#: Statuses that must say why.
+NEEDS_DETAIL = {("synthesizer", "ESCALATE"), ("e2e", "SKIPPED"), ("e2e", "FAILED")}
+
+
+def record_role(run, role, status, detail=None, tests=None):
+    """Record a non-slice agent's outcome: the synthesizer or the e2e agent."""
     role = (role or "").strip().lower()
     status = (status or "").strip().upper()
-    if role != "synthesizer":
-        raise ReportError("unknown role {!r}; only 'synthesizer' reports this way".format(role))
-    if status not in ("CLEAN", "ESCALATE"):
-        raise ReportError("synthesizer status must be CLEAN or ESCALATE, not {!r}".format(status))
-    if status == "ESCALATE" and not detail:
-        raise ReportError("ESCALATE needs --detail saying precisely what disagrees")
+    if role not in ROLE_STATUSES:
+        raise ReportError(
+            "unknown role {!r}; expected one of {}".format(role, ", ".join(sorted(ROLE_STATUSES)))
+        )
+    allowed = ROLE_STATUSES[role]
+    if status not in allowed:
+        raise ReportError("{} status must be one of {}, not {!r}".format(role, ", ".join(allowed), status))
+    if (role, status) in NEEDS_DETAIL and not detail:
+        raise ReportError("{} {} needs --detail saying why".format(role, status))
 
-    run.state["synthesizer"] = {"status": status, "detail": detail}
+    run.state[role] = {"status": status, "detail": detail, "tests": tests}
     run.save()
-    ledger.append(run, "synthesizer {}{}".format(status.lower(), " - " + detail if detail else ""))
+    ledger.append(run, "{} {}{}".format(role, status.lower(), " - " + detail if detail else ""))
 
     written = None
-    if status == "ESCALATE":
+    if role == "synthesizer" and status == "ESCALATE":
         # Slices that contradict each other are a verification failure, not a
         # merge problem. Writing the verdict here keeps one path to replan.
         written = write_escalation_verdict(run, detail)
-    return {"role": role, "status": status, "detail": detail, "verdict": str(written) if written else None}
+    return {
+        "role": role,
+        "status": status,
+        "detail": detail,
+        "tests": tests,
+        "verdict": str(written) if written else None,
+    }
 
 
 def write_escalation_verdict(run, detail):

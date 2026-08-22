@@ -185,6 +185,9 @@ def render_table(doc):
     lines = []
     lines.append("goal: {}".format(doc.get("goal", "")))
     lines.append("run:  {}  cycle {}".format(doc.get("run_id", "?"), doc.get("cycle", "?")))
+    kind = doc.get("kind") or "feature (assumed)"
+    reason = doc.get("kind_reason")
+    lines.append("kind: {}{}".format(kind, " - " + reason if reason else ""))
     constraints = doc.get("global_constraints") or []
     if constraints:
         lines.append("")

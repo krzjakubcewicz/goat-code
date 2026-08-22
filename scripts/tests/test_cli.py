@@ -77,6 +77,8 @@ def plan_for(run, slices):
         "run_id": run.run_id,
         "cycle": 1,
         "goal": "Land three slices in parallel.",
+        "kind": "feature",
+        "kind_reason": "Adds new modules; nothing describes broken behaviour.",
         "global_constraints": ["No new runtime dependencies"],
         "slices": slices,
     }

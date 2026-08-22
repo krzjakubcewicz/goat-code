@@ -17,6 +17,8 @@ def plan(**overrides):
         "run_id": "20260822-114900-demo",
         "cycle": 1,
         "goal": "Users sign in with a magic link.",
+        "kind": "feature",
+        "kind_reason": "Adds a sign-in route; nothing in the spec describes broken behaviour.",
         "global_constraints": ["Node >= 20"],
         "slices": [
             {
@@ -380,3 +382,33 @@ def test_literal_prefix_and_suffix():
     assert schema.literal_prefix("src/index.ts") == "src/"
     assert schema.literal_suffix("tests/**/*.test.ts") == ".test.ts"
     assert schema.literal_suffix("src/index.ts") == "src/index.ts"
+
+
+# -- what kind of change this is -------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["feature", "bugfix"])
+def test_both_kinds_are_accepted(kind):
+    assert schema.validate(plan(kind=kind)).ok
+
+
+def test_an_unknown_kind_is_rejected():
+    assert any("'kind' must be one of" in e for e in errors_of(plan(kind="chore")))
+
+
+def test_a_kind_without_a_reason_warns():
+    doc = plan()
+    del doc["kind_reason"]
+    report = schema.validate(doc)
+    assert report.ok
+    assert any("does not say why" in w for w in report.warnings)
+
+
+def test_a_missing_kind_warns_and_defaults_to_feature():
+    """An older plan still runs; it just gets the end-to-end phase."""
+    doc = plan()
+    del doc["kind"]
+    del doc["kind_reason"]
+    report = schema.validate(doc)
+    assert report.ok
+    assert any("assuming feature" in w for w in report.warnings)

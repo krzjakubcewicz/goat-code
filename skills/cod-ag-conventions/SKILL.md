@@ -12,8 +12,13 @@ defined once instead of drifting across five agent files.
 
 ```
 init -> grill -> plan -> validate -> approve -> execute (waves)
-     -> synthesize -> verify -> DONE | replan -> execute ...
+     -> synthesize -> verify -> e2e -> DONE | replan -> execute ...
 ```
+
+The `e2e` phase runs only for a `kind: feature` run: an agent writes and
+runs one end-to-end test proving the finished feature. A `kind: bugfix`
+goes straight to DONE, because its slices already had to be written
+test-first.
 
 The **orchestrator is the main Claude Code thread**, not an agent: only the
 main thread can spawn subagents and ask the user questions. Planner,
@@ -47,6 +52,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 | `diffpkg` | one-file review package |
 | `report --slice S1 --status DONE` | an executor records its result; a DONE is verified |
 | `report --role synthesizer --status CLEAN\|ESCALATE` | the synthesizer records its result |
+| `report --role e2e --status PASS\|SKIPPED\|FAILED` | the end-to-end agent records its result |
 | `answer QID=answer ...` | record a grill round and count it |
 | `approve --yes\|--revise TEXT\|--abort` | record the plan approval gate |
 | `verdict` | read the verifier PASS/FAIL back and move the run on |
@@ -100,6 +106,8 @@ version: 1
 run_id: 20260822-114900-magic-link
 cycle: 1
 goal: Users sign in with a magic link emailed to them.
+kind: feature                # feature | bugfix - a bugfix skips the e2e phase
+kind_reason: "Adds a sign-in route; nothing in the spec describes broken behaviour."
 global_constraints:          # bind every slice; copied verbatim from the spec
   - "Node >= 20, no new runtime deps"
 assumptions:                 # unresolved after grilling; the verifier surfaces these

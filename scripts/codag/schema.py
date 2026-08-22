@@ -17,6 +17,7 @@ SLICE_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,31}$")
 ACCEPTANCE_ID_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,15}$")
 
 STATUSES = ("pending", "claimed", "done", "blocked", "failed", "carried")
+KINDS = ("feature", "bugfix")
 MODELS = ("opus", "sonnet", "haiku", "fable", "inherit")
 
 REQUIRED_TOP = ("version", "run_id", "cycle", "goal", "slices")
@@ -44,13 +45,12 @@ class Report:
         self.warnings.append(message)
 
     def text(self):
-        lines = []
+        """Always states the verdict first, warnings or not."""
+        lines = ["OK: plan is valid" if self.ok else "INVALID: {} error(s)".format(len(self.errors))]
         for message in self.errors:
             lines.append("ERROR: {}".format(message))
         for message in self.warnings:
             lines.append("WARN:  {}".format(message))
-        if not lines:
-            lines.append("OK: plan is valid")
         return "\n".join(lines)
 
     def as_dict(self):
@@ -250,6 +250,13 @@ def validate(doc):
         report.error("unsupported version {!r}; this build understands version 1".format(doc["version"]))
     if "goal" in doc and not _nonempty_str(doc.get("goal")):
         report.error("'goal' must be a non-empty sentence")
+    if "kind" in doc:
+        if doc["kind"] not in KINDS:
+            report.error("'kind' must be one of {}, not {!r}".format(", ".join(KINDS), doc["kind"]))
+        elif not _nonempty_str(doc.get("kind_reason")):
+            report.warn("'kind' is set but 'kind_reason' does not say why")
+    else:
+        report.warn("no 'kind'; assuming feature, so this run will get an end-to-end test")
     for key in ("global_constraints", "assumptions"):
         if key in doc and doc[key] is not None and not isinstance(doc[key], list):
             report.error("'{}' must be a list".format(key))
