@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "cod-ag",
+  "description": "Local marketplace hosting the cod-ag multi-agent implementation pipeline.",
+  "owner": {
+    "name": "kjakubcewicz"
+  },
+  "plugins": [
+    {
+      "name": "cod-ag",
+      "description": "Grill -> plan -> parallel worktree executors -> synthesize -> verify -> replan. Implements features end to end in any repo.",
+      "source": "./",
+      "category": "workflow"
+    }
+  ]
+}
