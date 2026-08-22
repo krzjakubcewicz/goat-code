@@ -187,6 +187,22 @@ def reap_orphans(repo):
     return pruned
 
 
+def rename_branch(repo, old, new):
+    """Rename a branch, even one checked out in a linked worktree.
+
+    git updates that worktree's HEAD for us, so the integration worktree
+    keeps working under the new name.
+    """
+    if old == new:
+        return new
+    result = osenv.git(["branch", "-m", old, new], cwd=repo)
+    if not result.ok:
+        raise WorktreeError(
+            "could not rename {} to {}: {}".format(old, new, result.stderr.strip())
+        )
+    return new
+
+
 def _branch_exists(repo, branch):
     return osenv.git(["rev-parse", "--verify", "--quiet", "refs/heads/" + branch], cwd=repo).ok
 

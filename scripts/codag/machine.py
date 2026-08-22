@@ -333,6 +333,17 @@ def _execute(run, evidence, stack_profile):
         run.state["awaiting_replan"] = False
         run.save()
 
+    # The branch gets its real name before a single line is written, now that
+    # the plan exists and `kind` is known.
+    if not run.feature_branch:
+        return _action(
+            run,
+            "run",
+            "the work needs a named branch before any code is written",
+            "create the feature branch off {}".format(run.state.get("base_branch")),
+            commands=[_argv(run, "branch")],
+        )
+
     ready = evidence.ready
     if not ready:
         retried = _retry_blocked(run, evidence)

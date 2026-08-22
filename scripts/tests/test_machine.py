@@ -86,8 +86,11 @@ def write_plan(run, doc=None):
     return doc
 
 
-def approved(run):
+def approved(run, branched=True):
+    """Approve the plan. By the time executors run the branch exists too."""
     run.set_approval("approved")
+    if branched:
+        run.adopt_branch("feature/magic-link")
     return run
 
 
@@ -675,3 +678,32 @@ def test_synthesize_reads_the_real_merge_state(run):
     action = machine.next_action(run)
     assert action["action"] == "run"
     assert action["commands"][0][-1] == "verify-package"
+
+
+# -- the feature branch ----------------------------------------------------
+
+
+def test_execute_names_the_branch_before_any_code(run):
+    write_plan(run)
+    approved(run, branched=False)
+
+    action = machine.next_action(run)
+    assert action["action"] == "run"
+    assert action["commands"][0][-1] == "branch"
+    assert "before any code" in action["reason"]
+
+
+def test_the_branch_step_comes_before_the_worktrees(run):
+    write_plan(run)
+    approved(run, branched=False)
+    assert machine.next_action(run)["commands"][0][-1] == "branch"
+
+    run.adopt_branch("feature/magic-link")
+    assert machine.next_action(run)["commands"][0][-4:] == ["worktree", "create", "S1", "S2"]
+
+
+def test_the_branch_step_happens_once(run):
+    write_plan(run)
+    approved(run)
+    action = machine.next_action(run)
+    assert action["commands"][0][-1] != "branch"

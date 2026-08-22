@@ -23,6 +23,19 @@ max_grill_rounds: 3
 # How many times the planner may be sent back to fix validator errors.
 max_plan_fix_attempts: 2
 
+# The branch every run forks from. null auto-detects: origin/HEAD's target,
+# then main, then master. The baseline gates, each slice branch and the
+# feature branch all start here, so the final diff is exactly base..feature.
+# If you are sitting on another branch with unpushed commits, cod-ag says so
+# and starts from the base anyway.
+base_branch: null
+
+# Name for the branch the finished work lands on. Created once the plan is
+# approved - before any code is written - because the name depends on the
+# plan. Placeholders: {kind} (feature|bugfix), {slug} (from the goal),
+# {run_id}, {date}, {time}, {user}.
+branch_template: "{kind}/{slug}"
+
 # When to stop and ask you to approve the plan before any executor runs.
 #   chat   - only a chat-mode run's first cycle (default)
 #   always - every cycle, including replans

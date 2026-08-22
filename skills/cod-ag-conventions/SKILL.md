@@ -11,7 +11,7 @@ defined once instead of drifting across five agent files.
 ## The pipeline
 
 ```
-init -> grill -> plan -> validate -> approve -> execute (waves)
+init -> grill -> plan -> validate -> approve -> branch -> execute (waves)
      -> synthesize -> verify -> e2e -> DONE | replan -> execute ...
 ```
 
@@ -40,6 +40,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 | Command | Purpose |
 | --- | --- |
 | `next` | **the state machine** - the single next action to take |
+| `branch` | name the branch the work lands on, before any code is written |
 | `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |
 | `plan validate` / `plan show` / `plan waves` | gate and inspect tasks.yaml |
 | `wave next` | slice ids dispatchable right now, capped at the parallel limit |

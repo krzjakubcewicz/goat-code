@@ -20,8 +20,14 @@ artifacts that come out.
 ## `init`
 
 - Preflight: git repo, at least one commit, clean tree, attached HEAD, not a
-  linked worktree. Refuses otherwise; `--force` proceeds and records the
-  warnings.
+  linked worktree, and a base branch it can find. Refuses otherwise;
+  `--force` proceeds and records the warnings.
+- Resolves the **base branch** - `base_branch` from config, else
+  `origin/HEAD`'s target, else `main`, else `master` - and records its tip as
+  the run's base commit. Everything the run creates forks from there, so the
+  final diff is exactly `base..feature`. If you are standing on another
+  branch with commits the base lacks, it says so and names them; it does not
+  block.
 - Hides `.codag/` from git: always in `.git/info/exclude`, and — unless
   `manage_gitignore: false` — in the project's `.gitignore`, creating that
   file if absent. The `.gitignore` change is left uncommitted for you to
@@ -84,9 +90,22 @@ python scripts/codag.py approve --abort
 `--revise` sends the plan back to the planner with the feedback. `--abort`
 reaps the worktrees and ends the run.
 
-## `execute` → waves
+## `execute` → the branch, then waves
 
-First a `run` action prepares the wave:
+Before a single line is written, the run's branch gets its real name:
+
+```bash
+python scripts/codag.py branch
+```
+
+The name comes from `branch_template` (default `{kind}/{slug}`), so a
+feature run lands on `feature/magic-link-login` and a bugfix on
+`bugfix/token-expiry`. This happens here rather than at `init` because the
+name depends on `kind` and the goal, which only exist once the plan does. A
+name already in use gets a `-2` suffix. Your working tree is not switched to
+it - cod-ag has never moved your HEAD.
+
+Then a `run` action prepares the wave:
 
 ```bash
 python scripts/codag.py worktree create S1 S2

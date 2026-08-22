@@ -86,6 +86,27 @@ model, runs identically on every OS, and costs nothing to repeat. The
 end-to-end test drives the entire pipeline with no LLM at all — that test
 passing is what proves the spine works on a given platform.
 
+## One base for the whole run
+
+A run forks from the **base branch** - config, else `origin/HEAD`, else
+`main`, else `master` - not from wherever the user happens to be standing.
+The baseline gates measure it, every slice branch forks from it, and the
+feature branch is based on it, so the final diff is exactly `base..feature`:
+the thing you would open a pull request with. Mixing bases would drag the
+user's unrelated commits into that diff and measure the baseline against a
+different tree from the one being tested.
+
+Standing on a branch with commits the base lacks is common and not an error,
+so `init` names those commits and proceeds. Finding that out before
+executors start is the point.
+
+The branch is named at the start of `execute`, not at `init`, because
+`branch_template` can reference `{kind}` and `{slug}` - and `kind` is the
+planner's call, which does not exist until the plan does. Until then the run
+uses a provisional `codag/<run-id>/integration`, which `codag branch`
+renames. `git branch -m` updates the integration worktree's HEAD for us, so
+nothing has to be recreated.
+
 ## Making parallel execution safe
 
 Three independent agents editing one repository is the whole value and the

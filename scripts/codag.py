@@ -149,8 +149,18 @@ def cmd_init(args):
 
     if args.kind:
         run.set_kind_override(args.kind)
+    diverged = runmod.divergence(repo, run.state["base_branch"])
+    if diverged:
+        run.state["divergence"] = diverged
+        run.save()
+
     run.set_phase("grill")
-    ledgermod.append(run, "run started ({} mode) at base {}".format(run.state["mode"], run.base_commit[:7]))
+    ledgermod.append(
+        run,
+        "run started ({} mode) off {} at {}".format(
+            run.state["mode"], run.state["base_branch"], run.base_commit[:7]
+        ),
+    )
 
     payload = {
         "run_id": run.run_id,
@@ -166,6 +176,7 @@ def cmd_init(args):
         "specialist_skills": profile.get("specialist_skills", []),
         "baseline": (baseline or {}).get("summary"),
         "gitignore_updated": gitignored,
+        "divergence": diverged,
         "kind_override": run.kind_override,
         "warnings": problems,
     }
@@ -177,8 +188,21 @@ def cmd_init(args):
         "  stack:  {}".format(stackmod.summary_line(profile)),
         "  skills: {}".format(", ".join(profile.get("specialist_skills") or []) or "-"),
         "  base:   {} on {}".format(run.base_commit[:7], run.state["base_branch"]),
+        "  you:    {}".format(run.state.get("current_branch") or "(detached)"),
         "  branch: {}".format(run.integration_branch),
     ]
+    if diverged:
+        lines.append("")
+        lines.append(
+            "you are on {}, which has {} commit(s) that {} does not - they are"
+            " NOT included in this run:".format(
+                diverged["branch"], len(diverged["commits"]), diverged["base"]
+            )
+        )
+        for entry in diverged["commits"][:5]:
+            lines.append("  {}".format(entry))
+        if len(diverged["commits"]) > 5:
+            lines.append("  (+{} more)".format(len(diverged["commits"]) - 5))
     if gitignored:
         lines.append("")
         lines.append(
@@ -586,6 +610,56 @@ def cmd_verify_package(args):
 
 
 # --------------------------------------------------------------------------
+# the feature branch
+# --------------------------------------------------------------------------
+
+
+def cmd_branch(args):
+    """Give the run's branch its real name, before any code is written.
+
+    Deferred to here rather than done at init because the name depends on
+    `kind` and the goal, which only exist once the plan does.
+    """
+    run = resolve_run(args)
+    doc = load_plan(run)
+
+    if run.feature_branch and not args.rename:
+        emit(
+            args,
+            {"branch": run.feature_branch, "created": False},
+            "already on {}".format(run.feature_branch),
+        )
+        return EXIT_OK
+
+    try:
+        proposed = args.name or run.proposed_branch(doc)
+    except RunError as exc:
+        raise CliError(str(exc))
+    name = runmod.unique_branch(run.repo, proposed)
+
+    try:
+        worktreemod.create_integration(run)
+        worktreemod.rename_branch(run.repo, run.integration_branch, name)
+    except worktreemod.WorktreeError as exc:
+        raise CliError(str(exc))
+    run.adopt_branch(name)
+    ledgermod.append(run, "feature branch {} created off {}".format(name, run.state["base_branch"]))
+
+    payload = {
+        "branch": name,
+        "created": True,
+        "base_branch": run.state["base_branch"],
+        "base_commit": run.base_commit,
+        "collided": name != proposed,
+    }
+    text = "{} (off {} at {})".format(name, run.state["base_branch"], run.base_commit[:7])
+    if payload["collided"]:
+        text += "\n{} already existed".format(proposed)
+    emit(args, payload, text)
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
 # the state machine
 # --------------------------------------------------------------------------
 
@@ -989,6 +1063,11 @@ def build_parser():
 
     p = add(sub, "verify-package", help="gates + diff + criteria for the verifier")
     p.set_defaults(func=cmd_verify_package)
+
+    p = add(sub, "branch", help="name the branch the work lands on, before any code")
+    p.add_argument("--name", help="use this name instead of the configured template")
+    p.add_argument("--rename", action="store_true", help="re-derive the name even if one exists")
+    p.set_defaults(func=cmd_branch)
 
     p = add(sub, "next", help="the single next action; the orchestrator loops on this")
     p.set_defaults(func=cmd_next)

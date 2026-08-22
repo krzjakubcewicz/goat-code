@@ -17,6 +17,12 @@ from . import miniyaml, osenv
 CODAG_DIR = ".codag"
 STATE_VERSION = 1
 
+#: Placeholders a branch template may use.
+BRANCH_VARIABLES = ("kind", "slug", "run_id", "date", "time", "user")
+
+#: Characters git refuses in a ref name, plus whitespace.
+_BRANCH_STRIP = re.compile(r"[^A-Za-z0-9._/-]+")
+
 #: What a spec is asking for. A bugfix skips the end-to-end phase: the
 #: slice's own enforced test-first coverage is already the right level.
 KINDS = ("feature", "bugfix")
@@ -59,6 +65,12 @@ DEFAULT_CONFIG = {
     # chat: gate only a chat-mode run's first cycle. always: gate every
     # cycle. never: fully autonomous once the plan validates.
     "approval_gate": "chat",
+    # Which branch a run starts from. null auto-detects: origin/HEAD, then
+    # main, then master. Every branch the run creates forks from this.
+    "base_branch": None,
+    # Name for the branch the finished work lands on, created once the plan
+    # is approved. Placeholders: kind, slug, run_id, date, time, user.
+    "branch_template": "{kind}/{slug}",
     # Add cod-ag's entries to the project's .gitignore on the first run.
     # The change is left uncommitted for you to review. Turn off to rely on
     # .git/info/exclude alone, which cod-ag always writes either way.
@@ -248,6 +260,106 @@ def gitignore_change_is_ours(repo):
     return strip_gitignore_block(current) == baseline
 
 
+def resolve_base_branch(repo, configured=None):
+    """The branch every run forks from, as ``(name, commit)``.
+
+    Order: an explicit ``base_branch`` in config, then whatever
+    ``origin/HEAD`` points at, then ``main``, then ``master``. Local refs
+    only - cod-ag never touches the network.
+    """
+    repo = pathlib.Path(repo)
+
+    def tip(name):
+        result = osenv.git(["rev-parse", "--verify", "--quiet", "refs/heads/" + name], cwd=repo)
+        return result.out if result.ok and result.out else None
+
+    if configured:
+        commit = tip(configured)
+        if not commit:
+            raise RunError(
+                "config sets base_branch: {} but that branch does not exist".format(configured)
+            )
+        return configured, commit
+
+    head = osenv.git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], cwd=repo)
+    if head.ok and head.out:
+        name = head.out.rsplit("/", 1)[-1]
+        commit = tip(name)
+        if commit:
+            return name, commit
+
+    for name in ("main", "master"):
+        commit = tip(name)
+        if commit:
+            return name, commit
+    return None, None
+
+
+def divergence(repo, base_branch):
+    """Commits on the current branch that the base does not have.
+
+    Not an error - the user asked to start from the base - but they need
+    telling before executors build on something their work is missing from.
+    """
+    repo = pathlib.Path(repo)
+    current = osenv.git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=repo)
+    if not current.ok or not current.out or current.out == base_branch:
+        return None
+    log = osenv.git(
+        ["log", "--oneline", "--no-decorate", "{}..HEAD".format(base_branch)], cwd=repo
+    )
+    if not log.ok:
+        return None
+    commits = [line.strip() for line in log.stdout.splitlines() if line.strip()]
+    if not commits:
+        return None
+    return {"branch": current.out, "base": base_branch, "commits": commits}
+
+
+def sanitise_branch(name):
+    """Coerce a rendered template into something git will accept."""
+    text = _BRANCH_STRIP.sub("-", str(name).strip())
+    while "//" in text:
+        text = text.replace("//", "/")
+    while ".." in text:
+        text = text.replace("..", ".")
+    text = text.strip("/-.")
+    if text.endswith(".lock"):
+        text = text[: -len(".lock")]
+    return text or "codag-run"
+
+
+def render_branch_name(template, values):
+    """Fill a branch template, failing loudly on an unknown placeholder."""
+    try:
+        rendered = template.format(**values)
+    except KeyError as exc:
+        raise RunError(
+            "branch_template uses unknown placeholder {}; available: {}".format(
+                exc, ", ".join(BRANCH_VARIABLES)
+            )
+        )
+    except (IndexError, ValueError) as exc:
+        raise RunError("branch_template is malformed: {}".format(exc))
+    return sanitise_branch(rendered)
+
+
+def unique_branch(repo, name):
+    """``name``, or the first free ``name-2``, ``name-3`` ... variant."""
+    repo = pathlib.Path(repo)
+
+    def taken(candidate):
+        return osenv.git(["rev-parse", "--verify", "--quiet", "refs/heads/" + candidate], cwd=repo).ok
+
+    if not taken(name):
+        return name
+    for suffix in range(2, 100):
+        candidate = "{}-{}".format(name, suffix)
+        if not taken(candidate):
+            return candidate
+    raise RunError("cannot find a free branch name near {}".format(name))
+
+
 def preflight(repo=None):
     """Check the repository is fit to run a pipeline against.
 
@@ -281,6 +393,17 @@ def preflight(repo=None):
     if not branch.ok:
         problems.append("HEAD is detached; check out a branch before starting a run")
 
+    try:
+        base_branch, _commit = resolve_base_branch(root, load_config(root).get("base_branch"))
+    except RunError as exc:
+        problems.append(str(exc))
+    else:
+        if base_branch is None:
+            problems.append(
+                "no base branch found (looked for origin/HEAD, main, master); "
+                "set base_branch in .codag/config.yaml"
+            )
+
     if osenv.in_linked_worktree(root):
         problems.append(
             "this is a linked worktree; start the run from the main work tree at {}".format(
@@ -305,8 +428,18 @@ class Run:
     def create(cls, repo, title, mode, spec_text="", now=None):
         repo = pathlib.Path(repo)
         run_id = _unique_run_id(repo, new_run_id(title, now=now))
-        base_commit = osenv.git_out(["rev-parse", "HEAD"], cwd=repo)
-        base_branch = osenv.git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=repo).out
+        config = load_config(repo)
+        # The whole run forks from the base branch, not from wherever the
+        # user happens to be standing: baseline gates, slice branches and the
+        # feature branch all share one base, so the final diff is exactly
+        # base..feature - the thing you would open a pull request with.
+        base_branch, base_commit = resolve_base_branch(repo, config.get("base_branch"))
+        if base_branch is None:
+            raise RunError(
+                "cannot find a base branch (looked for origin/HEAD, main, master); "
+                "set base_branch in .codag/config.yaml"
+            )
+        current = osenv.git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=repo).out
         state = {
             "version": STATE_VERSION,
             "run_id": run_id,
@@ -321,12 +454,16 @@ class Run:
             "created_at": _now_iso(now),
             "updated_at": _now_iso(now),
             "repo": str(repo),
-            "base_branch": base_branch or None,
+            "base_branch": base_branch,
             "base_commit": base_commit,
+            "current_branch": current or None,
+            # Provisional. Renamed to the configured convention once the plan
+            # is approved and `kind` is known - see `codag branch`.
             "integration_branch": "codag/{}/integration".format(run_id),
+            "feature_branch": None,
             "temp_root": str(osenv.temp_root() / osenv.run_slug(run_id)),
             "worktrees": {},
-            "config": load_config(repo),
+            "config": config,
         }
         run = cls(repo, run_id, state)
         run.root.mkdir(parents=True, exist_ok=True)
@@ -485,6 +622,38 @@ class Run:
 
     def wants_e2e(self, doc=None):
         return self.config.get("write_e2e_tests", True) and self.kind(doc) == "feature"
+
+    # -- the feature branch ------------------------------------------------
+
+    @property
+    def feature_branch(self):
+        """The named branch the work lands on, once it has been created."""
+        return self.state.get("feature_branch")
+
+    def branch_values(self, doc=None, now=None):
+        """Placeholder values for the branch template."""
+        stamp = now or datetime.datetime.now()
+        doc = doc or {}
+        author = osenv.git(["config", "user.name"], cwd=self.repo).out
+        return {
+            "kind": self.kind(doc),
+            "slug": slugify(doc.get("goal") or self.run_id, limit=40),
+            "run_id": self.run_id,
+            "date": stamp.strftime("%Y%m%d"),
+            "time": stamp.strftime("%H%M%S"),
+            "user": slugify(author, limit=20) if author else "unknown",
+        }
+
+    def proposed_branch(self, doc=None, now=None):
+        template = self.config.get("branch_template") or "{kind}/{slug}"
+        return render_branch_name(template, self.branch_values(doc, now))
+
+    def adopt_branch(self, name):
+        """Record ``name`` as both the feature branch and the merge target."""
+        self.state["feature_branch"] = name
+        self.state["integration_branch"] = name
+        self.save()
+        return name
 
     # -- the approval gate -----------------------------------------------
 

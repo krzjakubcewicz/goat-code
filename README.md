@@ -62,9 +62,13 @@ no model at all. That is what the end-to-end test does.
 - **Isolated worktrees.** Each executor gets its own checkout, branched off
   the commit the run started from, in the OS temp directory. Your working
   tree is never involved.
-- **An integration branch.** Everything lands on `codag/<run-id>/integration`
-  for you to review. Nothing is merged into your branch and nothing is ever
-  pushed.
+- **One base, one feature branch.** Every run forks from your base branch -
+  `main`, `master`, or whatever you configure - never from wherever you
+  happen to be standing. Before any code is written the work gets a properly
+  named branch, `feature/magic-link-login` by default, and everything lands
+  there. The final diff is exactly `base..feature`: the thing you would open
+  a pull request with. Nothing is merged into your branch, your HEAD is never
+  moved, and nothing is ever pushed.
 - **A baseline.** Gates run once at the start, so a lint error that was
   already there is never blamed on the run — and never blocks it forever.
 - **A durable ledger.** Progress is on disk, so a crash or a context
@@ -106,9 +110,9 @@ On success:
 ```
 DONE
 
-branch: codag/20260822-114900-magic-link/integration
-review: git diff a1b2c3d..codag/20260822-114900-magic-link/integration
-merge:  git merge codag/20260822-114900-magic-link/integration
+branch: feature/magic-link-login
+review: git diff a1b2c3d..feature/magic-link-login
+merge:  git merge feature/magic-link-login
 
 nothing was committed to your branch main
 ```
@@ -140,11 +144,28 @@ from the `model:` frontmatter on `/cod-ag` and `/cod-ag-resume`, not from
 The planner also picks a model per slice, so a slice that genuinely needs
 more than haiku can say so in the plan.
 
+## Branch naming
+
+The branch is created once the plan is approved - before any code - and is
+named from `branch_template`, which defaults to `{kind}/{slug}`:
+
+```
+feature/magic-link-login
+bugfix/token-expiry-off-by-one
+```
+
+Available placeholders: `{kind}` (feature or bugfix, from the plan),
+`{slug}` (from the goal), `{run_id}`, `{date}`, `{time}`, `{user}`. A name
+already in use gets a `-2` suffix.
+
+`base_branch` controls what it forks from; `null` auto-detects
+`origin/HEAD`, then `main`, then `master`.
+
 ## Configuration
 
 Optional. Copy `templates/config.yaml` to `.codag/config.yaml` in your
-project to change the parallelism, the cycle cap, the grill rounds, timeouts
-or the model per role.
+project to change the parallelism, the cycle cap, the grill rounds, timeouts,
+the branch naming or the model per role.
 
 ## Run state
 
