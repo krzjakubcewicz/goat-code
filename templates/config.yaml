@@ -23,6 +23,12 @@ max_grill_rounds: 3
 # How many times the planner may be sent back to fix validator errors.
 max_plan_fix_attempts: 2
 
+# When to stop and ask you to approve the plan before any executor runs.
+#   chat   - only a chat-mode run's first cycle (default)
+#   always - every cycle, including replans
+#   never  - fully autonomous once the plan validates
+approval_gate: chat
+
 # Install dependencies in each new worktree. Turn this off for projects
 # where install is slow and the tests do not need it.
 worktree_setup: true

@@ -17,24 +17,33 @@ from . import miniyaml, osenv
 CODAG_DIR = ".codag"
 STATE_VERSION = 1
 
+#: Every phase the state machine can derive. Order is the happy path.
 PHASES = (
     "init",
     "grill",
+    "ask",
     "plan",
     "approve",
     "execute",
     "synthesize",
     "verify",
+    "replan",
     "done",
     "failed",
     "aborted",
 )
+
+#: Phases from which no further action is taken.
+TERMINAL_PHASES = ("done", "failed", "aborted")
 
 DEFAULT_CONFIG = {
     "parallel": 3,
     "max_cycles": 3,
     "max_grill_rounds": 3,
     "max_plan_fix_attempts": 2,
+    # chat: gate only a chat-mode run's first cycle. always: gate every
+    # cycle. never: fully autonomous once the plan validates.
+    "approval_gate": "chat",
     "worktree_setup": True,
     "models": {
         "planner": "opus",
@@ -203,6 +212,9 @@ class Run:
             "phase": "init",
             "cycle": 1,
             "grill_rounds": 0,
+            "plan_fix_attempts": 0,
+            "approval": None,
+            "escalations": {},
             "created_at": _now_iso(now),
             "updated_at": _now_iso(now),
             "repo": str(repo),
@@ -310,9 +322,76 @@ class Run:
         self.state["phase"] = phase
         self.save()
 
+    # -- counters, all capped in code rather than in prose ---------------
+
+    @property
+    def grill_rounds(self):
+        return self.state.get("grill_rounds", 0)
+
+    def bump_grill_round(self):
+        """Count a completed question round. Returns the new total."""
+        self.state["grill_rounds"] = self.grill_rounds + 1
+        self.save()
+        return self.state["grill_rounds"]
+
+    def grill_exhausted(self):
+        return self.grill_rounds >= self.config.get("max_grill_rounds", 3)
+
+    @property
+    def plan_fix_attempts(self):
+        return self.state.get("plan_fix_attempts", 0)
+
+    def bump_plan_fix(self):
+        self.state["plan_fix_attempts"] = self.plan_fix_attempts + 1
+        self.save()
+        return self.state["plan_fix_attempts"]
+
+    def plan_fixes_exhausted(self):
+        return self.plan_fix_attempts >= self.config.get("max_plan_fix_attempts", 2)
+
+    def escalations(self, slice_id=None):
+        recorded = self.state.setdefault("escalations", {})
+        return recorded if slice_id is None else recorded.get(slice_id, 0)
+
+    def escalate(self, slice_id):
+        """Record one model escalation for a slice. Returns the new count."""
+        recorded = self.state.setdefault("escalations", {})
+        recorded[slice_id] = recorded.get(slice_id, 0) + 1
+        self.save()
+        return recorded[slice_id]
+
+    # -- the approval gate -----------------------------------------------
+
+    @property
+    def approval(self):
+        return self.state.get("approval")
+
+    def set_approval(self, decision):
+        if decision not in ("approved", "revise", "aborted", None):
+            raise RunError("unknown approval decision {!r}".format(decision))
+        self.state["approval"] = decision
+        self.save()
+        return decision
+
+    def gate_applies(self):
+        """Whether this cycle needs the user to approve the plan."""
+        gate = self.config.get("approval_gate", "chat")
+        if gate == "never":
+            return False
+        if gate == "always":
+            return True
+        return self.state.get("mode") == "chat" and self.cycle == 1
+
+    def needs_approval(self):
+        return self.gate_applies() and self.approval != "approved"
+
     def advance_cycle(self):
         """Move to the next cycle, creating its directory. Returns the number."""
         self.state["cycle"] = self.cycle + 1
+        # Per-cycle counters start over; grill_rounds does not, because
+        # replan cycles never grill.
+        self.state["plan_fix_attempts"] = 0
+        self.state["approval"] = None
         self.cycle_dir().mkdir(parents=True, exist_ok=True)
         (self.cycle_dir() / "briefs").mkdir(exist_ok=True)
         (self.cycle_dir() / "reports").mkdir(exist_ok=True)
@@ -344,7 +423,8 @@ class Run:
             "cycle": self.cycle,
             "max_cycles": self.config.get("max_cycles", 3),
             "mode": self.state.get("mode"),
-            "grill_rounds": self.state.get("grill_rounds", 0),
+            "grill_rounds": self.grill_rounds,
+            "approval": self.approval,
             "base_branch": self.state.get("base_branch"),
             "base_commit": (self.base_commit or "")[:7],
             "integration_branch": self.integration_branch,

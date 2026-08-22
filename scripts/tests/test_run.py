@@ -306,3 +306,118 @@ def test_ledger_survives_a_reload(git_repo):
     run = make_run(git_repo)
     ledger.append(run, "slice S1 complete")
     assert ledger.completed_slices(Run.load(git_repo, run.run_id)) == {"S1"}
+
+
+# -- counters: caps live in code now, not in prose -------------------------
+
+
+def test_grill_rounds_start_at_zero_and_count_up(git_repo):
+    run = make_run(git_repo)
+    assert run.grill_rounds == 0
+    assert run.bump_grill_round() == 1
+    assert run.bump_grill_round() == 2
+    assert Run.load(git_repo, run.run_id).grill_rounds == 2
+
+
+def test_grill_cap_fires_at_the_configured_round(git_repo):
+    run = make_run(git_repo)
+    for _ in range(2):
+        run.bump_grill_round()
+    assert not run.grill_exhausted()
+    run.bump_grill_round()
+    assert run.grill_exhausted()
+
+
+def test_grill_cap_respects_config(git_repo):
+    target = git_repo / ".codag" / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("max_grill_rounds: 1\n", encoding="utf-8")
+    run = make_run(git_repo)
+    run.bump_grill_round()
+    assert run.grill_exhausted()
+
+
+def test_plan_fix_attempts_are_capped(git_repo):
+    run = make_run(git_repo)
+    assert not run.plan_fixes_exhausted()
+    run.bump_plan_fix()
+    assert not run.plan_fixes_exhausted()
+    run.bump_plan_fix()
+    assert run.plan_fixes_exhausted()
+
+
+def test_escalations_are_counted_per_slice(git_repo):
+    run = make_run(git_repo)
+    assert run.escalations("S1") == 0
+    assert run.escalate("S1") == 1
+    assert run.escalations("S1") == 1
+    assert run.escalations("S2") == 0
+    assert Run.load(git_repo, run.run_id).escalations("S1") == 1
+
+
+# -- the approval gate -----------------------------------------------------
+
+
+def test_chat_mode_gates_the_first_cycle(git_repo):
+    run = Run.create(git_repo, "x", "chat")
+    assert run.gate_applies() is True
+    assert run.needs_approval() is True
+    run.set_approval("approved")
+    assert run.needs_approval() is False
+
+
+def test_spec_mode_does_not_gate(git_repo):
+    run = Run.create(git_repo, "x", "spec")
+    assert run.gate_applies() is False
+    assert run.needs_approval() is False
+
+
+def test_replan_cycles_do_not_gate(git_repo):
+    run = Run.create(git_repo, "x", "chat")
+    run.set_approval("approved")
+    run.advance_cycle()
+    assert run.gate_applies() is False
+
+
+def test_approval_gate_always(git_repo):
+    target = git_repo / ".codag" / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("approval_gate: always\n", encoding="utf-8")
+    run = Run.create(git_repo, "x", "spec")
+    assert run.gate_applies() is True
+    run.set_approval("approved")
+    run.advance_cycle()
+    assert run.gate_applies() is True
+    assert run.needs_approval() is True, "approval must not carry across cycles"
+
+
+def test_approval_gate_never(git_repo):
+    target = git_repo / ".codag" / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("approval_gate: never\n", encoding="utf-8")
+    run = Run.create(git_repo, "x", "chat")
+    assert run.gate_applies() is False
+
+
+def test_unknown_approval_decision_is_rejected(git_repo):
+    run = make_run(git_repo)
+    with pytest.raises(RunError):
+        run.set_approval("maybe")
+
+
+def test_advance_cycle_resets_per_cycle_counters(git_repo):
+    run = make_run(git_repo)
+    run.bump_plan_fix()
+    run.set_approval("approved")
+    run.bump_grill_round()
+    run.advance_cycle()
+    assert run.plan_fix_attempts == 0
+    assert run.approval is None
+    assert run.grill_rounds == 1, "grill rounds are not per-cycle; replans never grill"
+
+
+def test_new_phases_are_accepted(git_repo):
+    run = make_run(git_repo)
+    for phase in ("ask", "replan"):
+        run.set_phase(phase)
+        assert Run.load(git_repo, run.run_id).phase == phase
