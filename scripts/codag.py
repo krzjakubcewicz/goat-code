@@ -34,6 +34,7 @@ from codag import (  # noqa: E402
     dispatch as dispatchmod,
     gates as gatesmod,
     ledger as ledgermod,
+    machine as machinemod,
     merge as mergemod,
     miniyaml,
     osenv,
@@ -572,6 +573,23 @@ def cmd_verify_package(args):
 
 
 # --------------------------------------------------------------------------
+# the state machine
+# --------------------------------------------------------------------------
+
+
+def cmd_next(args):
+    """The single next thing to do. The orchestrator loops on this."""
+    run = resolve_run(args)
+    action = machinemod.next_action(run, stack_profile=load_stack(run))
+    emit(args, action, machinemod.render(action))
+    if action["action"] == "stop":
+        return EXIT_OK if action.get("outcome") == "done" else EXIT_FAIL
+    if action["action"] == "escalate":
+        return EXIT_FAIL
+    return EXIT_OK
+
+
+# --------------------------------------------------------------------------
 # agent reports
 # --------------------------------------------------------------------------
 
@@ -745,6 +763,8 @@ def cmd_cycle(args):
     doc = load_plan(run)
     carried = tasksmod.update(run.tasks_path, lambda d: tasksmod.carry_forward(d, set(tasksmod.ids(d))))
     number = run.advance_cycle()
+    run.state["awaiting_replan"] = True
+    run.save()
     previous = run.root / "cycle-{}".format(number - 1) / "tasks-snapshot.yaml"
     miniyaml.dump(doc, previous)
     ledgermod.append(run, "advanced to cycle {} (carried {})".format(number, ", ".join(carried) or "-"))
@@ -948,6 +968,9 @@ def build_parser():
 
     p = add(sub, "verify-package", help="gates + diff + criteria for the verifier")
     p.set_defaults(func=cmd_verify_package)
+
+    p = add(sub, "next", help="the single next action; the orchestrator loops on this")
+    p.set_defaults(func=cmd_next)
 
     p = add(sub, "report", help="how an agent records its result")
     p.add_argument("--slice", help="slice id, for an executor")
