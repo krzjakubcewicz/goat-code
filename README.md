@@ -100,6 +100,28 @@ The run directory holds the whole record: the spec with your clarifications
 appended, the plan, each slice's brief and report, the merge report, the
 gate results and the verdict with per-criterion evidence.
 
+## Models
+
+Each role runs on the cheapest model that can do its job. Judgement work
+gets the expensive models; mechanical work does not.
+
+| Role | Model | Why |
+| --- | --- | --- |
+| orchestrator | haiku | follows a fixed script; the CLI does the thinking |
+| planner | opus | interrogation and decomposition are the highest-leverage step |
+| executor | haiku | works from a complete brief, test-first, in one slice |
+| executor (after BLOCKED) | sonnet | one step up when haiku could not finish |
+| synthesizer | sonnet | reconciles conflicts, but within a very narrow brief |
+| verifier | opus | the only gate on whether the run is actually done |
+| replanner | opus | diagnosing root cause is the hardest judgement in the loop |
+
+The orchestrator is the main thread rather than an agent, so its model comes
+from the `model:` frontmatter on `/cod-ag` and `/cod-ag-resume`, not from
+`config.yaml`.
+
+The planner also picks a model per slice, so a slice that genuinely needs
+more than haiku can say so in the plan.
+
 ## Configuration
 
 Optional. Copy `templates/config.yaml` to `.codag/config.yaml` in your

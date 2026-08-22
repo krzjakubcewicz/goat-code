@@ -31,12 +31,16 @@ worktree_setup: true
 gate_timeout_seconds: 1800
 setup_timeout_seconds: 1800
 
-# Model per role. Executors default to sonnet and escalate to
+# Model per role. Executors run on haiku and escalate to
 # executor_escalated after a BLOCKED result.
+#
+# The orchestrator is the main thread, not an agent, so its model is not
+# set here - it comes from the `model:` frontmatter on /cod-ag and
+# /cod-ag-resume, or from your session model.
 models:
   planner: opus
-  executor: sonnet
-  executor_escalated: opus
-  synthesizer: opus
+  executor: haiku
+  executor_escalated: sonnet
+  synthesizer: sonnet
   verifier: opus
   replanner: opus

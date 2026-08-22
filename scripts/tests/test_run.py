@@ -141,7 +141,8 @@ def test_config_defaults(git_repo):
     config = runmod.load_config(git_repo)
     assert config["parallel"] == 3
     assert config["max_cycles"] == 3
-    assert config["models"]["executor"] == "sonnet"
+    assert config["models"]["executor"] == "haiku"
+    assert config["models"]["planner"] == "opus"
 
 
 def test_config_overrides_merge_deeply(git_repo):

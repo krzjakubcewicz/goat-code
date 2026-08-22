@@ -87,7 +87,7 @@ Then the next wave, until nothing is ready.
 | --- | --- |
 | `DONE_WITH_CONCERNS` | read them; act if correctness or scope, note if observation |
 | `NEEDS_CONTEXT` | supply exactly what is missing, re-dispatch |
-| `BLOCKED` | change something — more context, `opus`, a smaller slice — then retry, or let the replanner take it |
+| `BLOCKED` | change something — more context, the escalated model, a smaller slice — then retry, or let the replanner take it |
 
 A failed slice does not stop the wave. Its dependents simply never become
 ready, and the replanner picks it up.

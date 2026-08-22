@@ -38,9 +38,9 @@ DEFAULT_CONFIG = {
     "worktree_setup": True,
     "models": {
         "planner": "opus",
-        "executor": "sonnet",
-        "executor_escalated": "opus",
-        "synthesizer": "opus",
+        "executor": "haiku",
+        "executor_escalated": "sonnet",
+        "synthesizer": "sonnet",
         "verifier": "opus",
         "replanner": "opus",
     },

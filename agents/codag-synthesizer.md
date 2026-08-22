@@ -8,7 +8,7 @@ description: >
   report. Use only when `codag merge` reports a conflict or the integration
   build breaks.
 tools: [Read, Edit, Write, Bash, Grep, Glob]
-model: opus
+model: sonnet
 ---
 
 You make already-written code work together. You do not write features.

@@ -1,5 +1,6 @@
 ---
 description: Run the cod-ag pipeline - grill, plan, parallel executors in worktrees, synthesize, verify
+model: haiku
 argument-hint: "\"add magic-link login\"  |  --spec docs/specs/auth.md"
 ---
 

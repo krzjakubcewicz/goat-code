@@ -120,8 +120,11 @@ Follow `superpowers:writing-plans` for task right-sizing, then write
   the literal error string, the exact status code, the specific boundary.
 - Publish `interfaces` on any slice another slice depends on, and list them
   in the dependent's `uses_interfaces`.
-- Set `model` per slice: `sonnet` for ordinary work, `opus` where the slice
-  needs design judgement or spans tricky integration.
+- Set `model` per slice, cheapest that can do the job: `haiku` for ordinary
+  work where the brief will carry a complete spec, `sonnet` where the slice
+  spans several files or needs integration judgement, `opus` only where it
+  genuinely needs design judgement. Most slices should be `haiku` - if a
+  slice needs more than that, that is usually a sign it should be split.
 - Copy the spec's project-wide requirements into `global_constraints`
   verbatim, with exact values.
 

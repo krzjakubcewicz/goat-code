@@ -69,9 +69,9 @@ criterion ambiguous, replace its text with exact values. Keep the same `id`
 so the history stays traceable.
 
 **Right-size the remedy.** A failed criterion usually needs a one-file,
-one-test slice, not a redesign. Use `model: sonnet` for those. Reserve
-`opus` for a slice that genuinely requires design judgement. Resist
-rewriting slices that already work.
+one-test slice, not a redesign. Use `model: haiku` for those. Step up to
+`sonnet` when the fix spans files, and `opus` only when the remedy needs
+real design judgement. Resist rewriting slices that already work.
 
 **Record what you concluded** in the plan's `assumptions` or in each
 remedial slice's `intent`, so the executor understands why it exists.

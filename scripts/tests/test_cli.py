@@ -512,3 +512,35 @@ def test_gates_run_fails_on_a_regression(capsys, node_repo):
     code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "gates", "run")
     assert code == cli.EXIT_FAIL
     assert payload["regressions"] == ["test"]
+
+
+def test_wave_next_names_the_model_for_each_slice(capsys, node_repo):
+    """The orchestrator dispatches from this map, so it must be present."""
+    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
+    run = Run.load(node_repo)
+    slices = [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**")]
+    slices[1]["model"] = "opus"
+    plan_for(run, slices)
+
+    _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "wave", "next")
+    assert payload["models"] == {"S1": "haiku", "S2": "opus"}
+    assert payload["escalated_model"] == "sonnet"
+
+
+def test_wave_next_falls_back_to_the_configured_executor_model(capsys, node_repo):
+    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
+    run = Run.load(node_repo)
+    run.state["config"]["models"]["executor"] = "sonnet"
+    run.save()
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+
+    _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "wave", "next")
+    assert payload["models"] == {"S1": "sonnet"}
+
+
+def test_wave_next_text_output_shows_the_model(capsys, node_repo):
+    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
+    run = Run.load(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    _code, out, _err = invoke(capsys, "--repo", str(node_repo), "wave", "next")
+    assert out.strip() == "S1 (haiku)"

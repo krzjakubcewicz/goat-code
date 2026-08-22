@@ -21,6 +21,14 @@ shapes, status codes and CLI you will use throughout.
 Throughout: `CODAG="${CLAUDE_PLUGIN_ROOT}/scripts/codag.py"` and every call
 is `python "$CODAG" <command>`. Use `--json` when you need to read a field.
 
+You run on a small, fast model, and that is deliberate: the CLI does the
+thinking, you follow the script. So **follow these steps literally and in
+order**. Do not improvise a shortcut, skip a gate because the situation
+looks simple, or reason about what the pipeline "probably" wants. When a
+step's output surprises you, re-read the step rather than inventing a
+recovery. Everything you need is either in a command's output or in a file
+whose path that output gives you.
+
 ## Narration
 
 One short line between steps. The ledger and the tool results carry the
@@ -118,7 +126,8 @@ python "$CODAG" brief S1 S2 S3
 
 Then **dispatch one `codag-executor` per slice, all in a single message** — that is
 what makes them parallel; one per message runs them in sequence and wastes
-the whole design. Use each slice's `model` field.
+the whole design. `wave next --json` gives you a `models` map: dispatch each
+slice on the model it names, not on your own.
 
 Each dispatch contains only:
 
@@ -144,8 +153,10 @@ nothing else.
 | `BLOCKED` | see below |
 
 On `BLOCKED`, something must change before you retry. In order: give more
-context; re-dispatch on `opus`; split the slice; escalate to the user. Never
-re-dispatch an unchanged blocked task to the same model.
+context; re-dispatch on the escalated model from config
+(`models.executor_escalated`, `sonnet` by default); split the slice;
+escalate to the user. Never re-dispatch an unchanged blocked task to the
+same model.
 
 After each slice:
 

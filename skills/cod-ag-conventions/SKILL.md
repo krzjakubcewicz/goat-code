@@ -111,7 +111,7 @@ slices:
       - path: "tests/auth/tokens/store.test.ts"
         must_cover: ["single use", "expiry boundary"]
     out_of_scope: ["email delivery", "UI"]
-    model: sonnet            # opus | sonnet | haiku | fable | inherit
+    model: haiku             # opus | sonnet | haiku | fable | inherit
     status: pending          # pending | claimed | done | blocked | failed | carried
     branch: null             # filled in by `worktree create`
     worktree: null

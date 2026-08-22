@@ -252,14 +252,24 @@ def cmd_wave(args):
         ready = tasksmod.ready(doc)
         limit = args.limit or run.config.get("parallel", 3)
         batch = ready[:limit]
+        default_model = run.config.get("models", {}).get("executor", "haiku")
         payload = {
             "ready": batch,
             "deferred": ready[limit:],
             "remaining": tasksmod.remaining(doc),
             "counts": tasksmod.counts(doc),
             "parallel_limit": limit,
+            # Which model to dispatch each executor on, so the orchestrator
+            # does not have to look each slice up separately.
+            "models": {
+                slice_id: (tasksmod.get(doc, slice_id).get("model") or default_model)
+                for slice_id in batch
+            },
+            "escalated_model": run.config.get("models", {}).get("executor_escalated", "sonnet"),
         }
-        text = " ".join(batch) if batch else ""
+        text = " ".join(
+            "{} ({})".format(slice_id, payload["models"][slice_id]) for slice_id in batch
+        )
         if not batch and payload["remaining"]:
             text = "(nothing ready; blocked on {})".format(", ".join(payload["remaining"]))
         elif not batch:

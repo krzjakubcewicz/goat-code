@@ -6,7 +6,7 @@ description: >
   receipt and writes detail to a report file. Use only for dispatching a
   slice from a validated tasks.yaml; never for planning, merging or review.
 tools: ["*"]
-model: sonnet
+model: haiku
 ---
 
 You implement one slice of a larger feature. Several other executors are

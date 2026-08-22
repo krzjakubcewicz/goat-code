@@ -33,7 +33,7 @@ def frontmatter(path):
     fields = {}
     key = None
     for line in block.splitlines():
-        match = re.match(r"^([a-z_]+):\s*(.*)$", line)
+        match = re.match(r"^([a-z][a-z_-]*):\s*(.*)$", line)
         if match:
             key = match.group(1)
             fields[key] = match.group(2).strip()
@@ -250,3 +250,70 @@ def test_ci_covers_all_three_platforms():
     for platform in ("ubuntu-latest", "macos-latest", "windows-latest"):
         assert platform in text, "the cross-OS guarantee needs {} in CI".format(platform)
     assert '"3.9"' in text, "3.9 is the documented floor"
+
+
+# -- model assignment ------------------------------------------------------
+
+EXPECTED_MODELS = {
+    "codag-planner": "opus",
+    "codag-executor": "haiku",
+    "codag-synthesizer": "sonnet",
+    "codag-verifier": "opus",
+    "codag-replanner": "opus",
+}
+
+
+@pytest.mark.parametrize("name,model", sorted(EXPECTED_MODELS.items()))
+def test_agent_runs_on_the_intended_model(name, model):
+    fields, _body = frontmatter(ROOT / "agents" / (name + ".md"))
+    assert fields["model"] == model
+
+
+def test_config_defaults_agree_with_the_agent_files():
+    """Two places name a model per role; they must not drift apart."""
+    import sys
+
+    sys.path.insert(0, str(SCRIPTS))
+    from codag.run import DEFAULT_CONFIG
+
+    models = DEFAULT_CONFIG["models"]
+    for name, model in EXPECTED_MODELS.items():
+        role = name.replace("codag-", "")
+        assert models[role] == model, "{} frontmatter says {}, config says {}".format(
+            name, model, models[role]
+        )
+
+
+def test_blocked_executors_escalate_to_a_stronger_model():
+    import sys
+
+    sys.path.insert(0, str(SCRIPTS))
+    from codag.run import DEFAULT_CONFIG
+
+    ladder = ["haiku", "sonnet", "opus"]
+    models = DEFAULT_CONFIG["models"]
+    assert ladder.index(models["executor_escalated"]) > ladder.index(models["executor"])
+
+
+def test_orchestrator_commands_pin_their_model():
+    """The orchestrator is the main thread, so its model lives here."""
+    for name in ("cod-ag", "cod-ag-resume"):
+        fields, _body = frontmatter(ROOT / "commands" / (name + ".md"))
+        assert fields.get("model") == "haiku", "{} does not pin a model".format(name)
+
+
+def test_readme_model_table_matches_reality():
+    import sys
+
+    sys.path.insert(0, str(SCRIPTS))
+    from codag.run import DEFAULT_CONFIG
+
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    rows = dict(re.findall(r"^\| ([a-z ()A-Z]+) \| (opus|sonnet|haiku) \|", text, re.MULTILINE))
+    assert rows.get("orchestrator") == "haiku"
+    for role, model in DEFAULT_CONFIG["models"].items():
+        if role == "executor_escalated":
+            continue
+        assert rows.get(role) == model, "README says {} for {}, config says {}".format(
+            rows.get(role), role, model
+        )

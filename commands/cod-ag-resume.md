@@ -1,5 +1,6 @@
 ---
 description: Resume an interrupted cod-ag run from its ledger
+model: haiku
 argument-hint: "[run-id]"
 ---
 
