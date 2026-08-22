@@ -29,6 +29,12 @@ max_plan_fix_attempts: 2
 #   never  - fully autonomous once the plan validates
 approval_gate: chat
 
+# Add cod-ag's entries (.codag/, .worktrees/) to the project's .gitignore on
+# the first run, creating the file if it does not exist. The change is left
+# uncommitted for you to review. Turn this off to rely on .git/info/exclude
+# alone, which cod-ag writes either way.
+manage_gitignore: true
+
 # Install dependencies in each new worktree. Turn this off for projects
 # where install is slow and the tests do not need it.
 worktree_setup: true

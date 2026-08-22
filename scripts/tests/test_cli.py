@@ -446,10 +446,11 @@ def test_end_to_end_pipeline(capsys, node_repo):
     for slice_id in ("S1", "S2", "S3"):
         assert not worktree.path_for(run, slice_id).exists()
 
-    # The user's branch is untouched.
+    # The user's branch is untouched: same branch, same commit, and the only
+    # thing in the tree is the .gitignore cod-ag added on the first run.
     assert osenv.git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd=node_repo) == "main"
     assert osenv.git_out(["rev-parse", "HEAD"], cwd=node_repo) == run.base_commit
-    assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == ""
+    assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == "?? .gitignore"
 
     # But the work is on the integration branch, ready to review.
     listed = osenv.git_out(["ls-tree", "-r", "--name-only", run.integration_branch], cwd=node_repo)

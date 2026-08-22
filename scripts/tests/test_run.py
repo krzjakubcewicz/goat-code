@@ -421,3 +421,19 @@ def test_new_phases_are_accepted(git_repo):
     for phase in ("ask", "replan"):
         run.set_phase(phase)
         assert Run.load(git_repo, run.run_id).phase == phase
+
+
+def test_preflight_names_a_modified_tracked_file_correctly(git_repo):
+    """porcelain status is column-aligned; the first entry must not lose its
+    leading space and get mis-sliced."""
+    (git_repo / "README.md").write_text("changed\n", encoding="utf-8")
+    _root, problems = runmod.preflight(git_repo)
+    assert any("README.md" in p for p in problems)
+
+
+def test_preflight_names_several_dirty_paths(git_repo):
+    (git_repo / "README.md").write_text("changed\n", encoding="utf-8")
+    (git_repo / "extra.txt").write_text("new\n", encoding="utf-8")
+    _root, problems = runmod.preflight(git_repo)
+    message = " ".join(problems)
+    assert "README.md" in message and "extra.txt" in message

@@ -312,13 +312,15 @@ def test_the_work_lands_on_the_integration_branch(started):
 
 
 def test_the_users_branch_is_untouched(started):
+    """Same branch, same commit, and nothing in the tree but the .gitignore
+    cod-ag wrote on the first run - which it never commits."""
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
     base = osenv.git_out(["rev-parse", "HEAD"], cwd=started)
     Driver(started, agent).loop()
 
     assert osenv.git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd=started) == "main"
     assert osenv.git_out(["rev-parse", "HEAD"], cwd=started) == base
-    assert osenv.git(["status", "--porcelain"], cwd=started).out == ""
+    assert osenv.git(["status", "--porcelain"], cwd=started).out == "?? .gitignore"
 
 
 def test_the_answers_reach_the_spec(started):

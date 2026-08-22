@@ -557,7 +557,7 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
                 "review: git diff {}..{}".format(run.base_commit[:12], run.integration_branch),
                 "merge:  git merge {}".format(run.integration_branch),
                 "",
-                "your branch {} was not touched".format(run.state.get("base_branch")),
+                "nothing was committed to your branch {}".format(run.state.get("base_branch")),
             ]
         )
         payload["finish"] = _argv(run, "finish")

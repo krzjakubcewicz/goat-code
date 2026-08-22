@@ -6,7 +6,7 @@ into independently-shippable vertical slices, builds them in parallel in
 isolated git worktrees, merges them, verifies the result against your
 acceptance criteria, and either says `DONE` or replans and tries again.
 
-It never touches the branch you are on.
+It never commits to the branch you are on.
 
 ```
 /cod-ag "add magic-link login"
@@ -69,6 +69,10 @@ no model at all. That is what the end-to-end test does.
 - **Checked reports.** Agents record results by running the CLI, and a slice
   claiming `DONE` is rejected unless its worktree is clean, its HEAD has
   moved, and the tests its brief declares exist.
+- **No commits to your branch.** The first run adds `.codag/` and
+  `.worktrees/` to your `.gitignore` (creating it if absent) and leaves that
+  change uncommitted for you to review. Set `manage_gitignore: false` to
+  keep the entry local to `.git/info/exclude` instead.
 
 ## Install
 
@@ -103,7 +107,7 @@ branch: codag/20260822-114900-magic-link/integration
 review: git diff a1b2c3d..codag/20260822-114900-magic-link/integration
 merge:  git merge codag/20260822-114900-magic-link/integration
 
-your branch main was not touched
+nothing was committed to your branch main
 ```
 
 The run directory holds the whole record: the spec with your clarifications
@@ -141,7 +145,7 @@ or the model per role.
 ## Run state
 
 Everything lives in `.codag/` in the target repo, hidden from git via
-`.git/info/exclude` so your working tree stays clean:
+`.git/info/exclude`, and listed in your `.gitignore` on the first run:
 
 ```
 .codag/runs/<run-id>/

@@ -63,7 +63,9 @@ subcommand.
 ## Run directory
 
 Everything lives in the target repo under `.codag/`, hidden from git via
-`.git/info/exclude` so the user's working tree is never dirtied.
+`.git/info/exclude`, and also listed in the project's `.gitignore` on the
+first run (`manage_gitignore`, default on). cod-ag writes that entry but
+never commits it.
 
 ```
 .codag/runs/<run-id>/

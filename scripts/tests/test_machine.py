@@ -603,7 +603,7 @@ def test_done_reports_the_branch_and_leaves_the_user_branch_alone(run):
     assert action["outcome"] == "done"
     assert action["message"].startswith("DONE")
     assert run.integration_branch in action["message"]
-    assert "was not touched" in action["message"]
+    assert "nothing was committed to your branch" in action["message"]
     assert action["finish"][-1] == "finish"
 
 

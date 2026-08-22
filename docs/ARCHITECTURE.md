@@ -170,7 +170,10 @@ Python 3.9 and 3.13):
   creation rather than `fcntl` or `msvcrt`, so concurrent executors can
   update `tasks.yaml` from separate processes on any filesystem.
 - **Nothing in the working tree.** Run state is hidden via
-  `.git/info/exclude`, not `.gitignore`, so `init` cannot dirty the branch
+  both `.git/info/exclude` and the project's `.gitignore`; the first hides
+  it immediately and locally, the second is what a team sees. `init` writes
+  the `.gitignore` entry but never commits it, and preflight recognises its
+  own block so the next run is not blocked by the change
   the pipeline promised not to touch.
 
 ## Context discipline

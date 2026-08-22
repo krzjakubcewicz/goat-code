@@ -22,8 +22,11 @@ artifacts that come out.
 - Preflight: git repo, at least one commit, clean tree, attached HEAD, not a
   linked worktree. Refuses otherwise; `--force` proceeds and records the
   warnings.
-- Adds `.codag/` to `.git/info/exclude` — never to `.gitignore`, so your
-  working tree stays clean.
+- Hides `.codag/` from git: always in `.git/info/exclude`, and — unless
+  `manage_gitignore: false` — in the project's `.gitignore`, creating that
+  file if absent. The `.gitignore` change is left uncommitted for you to
+  review; cod-ag does not commit to your branch. Preflight recognises its
+  own block, so a later run is not blocked by it.
 - Prunes orphan worktrees left by an earlier crashed run.
 - Creates `.codag/runs/<run-id>/` and records the base commit and branch.
 - Detects the stack into `stack.json`.
@@ -150,7 +153,7 @@ branch: codag/20260822-114900-magic-link/integration
 review: git diff a1b2c3d..codag/20260822-114900-magic-link/integration
 merge:  git merge codag/20260822-114900-magic-link/integration
 
-your branch main was not touched
+nothing was committed to your branch main
 ```
 
 Merging is your decision, always.

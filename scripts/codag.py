@@ -129,6 +129,9 @@ def cmd_init(args):
         raise CliError("pass --prompt \"...\" or --spec <file>")
 
     runmod.ensure_ignored(repo)
+    gitignored = False
+    if runmod.load_config(repo).get("manage_gitignore", True):
+        gitignored = runmod.ensure_gitignore(repo)
     worktreemod.reap_orphans(repo)
 
     run = Run.create(repo, title, "spec" if args.spec else "chat", spec_text=spec_text)
@@ -160,6 +163,7 @@ def cmd_init(args):
         "stack_summary": stackmod.summary_line(profile),
         "specialist_skills": profile.get("specialist_skills", []),
         "baseline": (baseline or {}).get("summary"),
+        "gitignore_updated": gitignored,
         "warnings": problems,
     }
 
@@ -172,6 +176,12 @@ def cmd_init(args):
         "  base:   {} on {}".format(run.base_commit[:7], run.state["base_branch"]),
         "  branch: {}".format(run.integration_branch),
     ]
+    if gitignored:
+        lines.append("")
+        lines.append(
+            "added cod-ag's entries to .gitignore - an uncommitted change in "
+            "your tree, left for you to review and commit"
+        )
     if baseline:
         lines.append("")
         lines.append(gatesmod.render(baseline))
@@ -796,7 +806,7 @@ def cmd_finish(args):
         "review: {}".format(payload["review_command"]),
         "merge:  git merge {}".format(run.integration_branch),
         "",
-        "your branch {} was not touched".format(run.state["base_branch"]),
+        "nothing was committed to your branch {}".format(run.state["base_branch"]),
     ]
     emit(args, payload, "\n".join(lines))
     return EXIT_OK

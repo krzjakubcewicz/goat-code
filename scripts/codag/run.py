@@ -17,6 +17,15 @@ from . import miniyaml, osenv
 CODAG_DIR = ".codag"
 STATE_VERSION = 1
 
+#: What cod-ag creates inside a target repo and therefore asks git to ignore.
+#: ``.worktrees/`` is the repo-local fallback location, used only if someone
+#: points ``CODAG_TEMP_ROOT`` inside the repository.
+GITIGNORE_ENTRIES = (CODAG_DIR + "/", ".worktrees/")
+
+#: Marks the block cod-ag manages, so preflight can tell its own edit apart
+#: from a real change the user made.
+GITIGNORE_HEADER = "# cod-ag run state (managed by cod-ag)"
+
 #: Every phase the state machine can derive. Order is the happy path.
 PHASES = (
     "init",
@@ -44,6 +53,10 @@ DEFAULT_CONFIG = {
     # chat: gate only a chat-mode run's first cycle. always: gate every
     # cycle. never: fully autonomous once the plan validates.
     "approval_gate": "chat",
+    # Add cod-ag's entries to the project's .gitignore on the first run.
+    # The change is left uncommitted for you to review. Turn off to rely on
+    # .git/info/exclude alone, which cod-ag always writes either way.
+    "manage_gitignore": True,
     "worktree_setup": True,
     "models": {
         "planner": "opus",
@@ -120,6 +133,59 @@ def ensure_ignored(repo):
     return True
 
 
+def gitignore_block():
+    return "\n".join([GITIGNORE_HEADER] + list(GITIGNORE_ENTRIES)) + "\n"
+
+
+def strip_gitignore_block(text):
+    """``text`` with cod-ag's managed block removed, as it was before.
+
+    Used by preflight to decide whether a modified ``.gitignore`` differs
+    from HEAD by nothing except cod-ag's own edit.
+    """
+    lines = text.splitlines()
+    try:
+        start = lines.index(GITIGNORE_HEADER)
+    except ValueError:
+        return text
+
+    end = start + 1
+    while end < len(lines) and lines[end].strip() in GITIGNORE_ENTRIES:
+        end += 1
+
+    # The blank line we inserted to separate the block from what came before.
+    if start > 0 and lines[start - 1].strip() == "":
+        start -= 1
+
+    kept = lines[:start] + lines[end:]
+    if not kept:
+        return ""
+    return "\n".join(kept) + "\n"
+
+
+def ensure_gitignore(repo):
+    """Add cod-ag's entries to the project's ``.gitignore``, creating it if
+    absent. Returns True when this call changed the file.
+
+    Deliberately left uncommitted: cod-ag does not commit to your branch.
+    Preflight knows to tolerate exactly this change on the next run.
+    """
+    path = pathlib.Path(repo) / ".gitignore"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+
+    present = {line.strip() for line in existing.splitlines()}
+    if all(entry in present or entry.rstrip("/") in present for entry in GITIGNORE_ENTRIES):
+        return False
+
+    prefix = existing
+    if prefix and not prefix.endswith("\n"):
+        prefix += "\n"
+    if prefix.strip():
+        prefix += "\n"
+    osenv.write_text(path, prefix + gitignore_block())
+    return True
+
+
 def load_config(repo):
     """Defaults overlaid with ``.codag/config.yaml`` if the user wrote one."""
     config = _deep_copy(DEFAULT_CONFIG)
@@ -150,6 +216,25 @@ def _deep_merge(base, overrides):
     return base
 
 
+def gitignore_change_is_ours(repo):
+    """True when ``.gitignore`` differs from HEAD by nothing but our block.
+
+    cod-ag writes that block on the first run and deliberately leaves it
+    uncommitted. Without this, the very next run would fail its own
+    clean-tree preflight on an edit cod-ag made itself.
+    """
+    path = pathlib.Path(repo) / ".gitignore"
+    if not path.exists():
+        return False
+    current = path.read_text(encoding="utf-8")
+    if GITIGNORE_HEADER not in current:
+        return False
+
+    committed = osenv.git(["show", "HEAD:.gitignore"], cwd=repo)
+    baseline = committed.stdout if committed.ok else ""
+    return strip_gitignore_block(current) == baseline
+
+
 def preflight(repo=None):
     """Check the repository is fit to run a pipeline against.
 
@@ -164,14 +249,18 @@ def preflight(repo=None):
     if not osenv.git(["rev-parse", "--verify", "HEAD"], cwd=root).ok:
         problems.append("the repository has no commits yet; make an initial commit first")
 
+    # stdout, not .out: porcelain status is column-aligned and .out strips the
+    # leading space off " M path", which would mis-slice the first entry.
     status = osenv.git(["status", "--porcelain", "--untracked-files=normal"], cwd=root)
+    paths = [line[3:].strip('"') for line in status.stdout.splitlines() if line.strip()]
     dirty = [
-        line
-        for line in status.out.splitlines()
-        if line.strip() and not line[3:].startswith(CODAG_DIR + "/")
+        path
+        for path in paths
+        if not path.startswith(CODAG_DIR + "/")
+        and not (path == ".gitignore" and gitignore_change_is_ours(root))
     ]
     if dirty:
-        preview = ", ".join(line[3:] for line in dirty[:5])
+        preview = ", ".join(dirty[:5])
         more = "" if len(dirty) <= 5 else " (+{} more)".format(len(dirty) - 5)
         problems.append("working tree is not clean: {}{}".format(preview, more))
 
