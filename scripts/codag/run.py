@@ -35,6 +35,7 @@ DEFAULT_CONFIG = {
     "max_cycles": 3,
     "max_grill_rounds": 3,
     "max_plan_fix_attempts": 2,
+    "worktree_setup": True,
     "models": {
         "planner": "opus",
         "executor": "sonnet",

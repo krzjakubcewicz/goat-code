@@ -1,0 +1,42 @@
+# cod-ag per-project configuration.
+#
+# Copy to .codag/config.yaml in the target repository and edit. Everything
+# is optional; anything you leave out keeps the default shown here.
+#
+# Note: .codag/ is excluded from git via .git/info/exclude, so this file is
+# local to your machine. Commit it deliberately if your team should share
+# it, by adding an exception to .gitignore.
+
+# How many executors run in parallel in one wave. Each gets its own
+# worktree, so raise this only as far as your machine and the project's
+# install cost allow.
+parallel: 3
+
+# How many verify -> replan -> execute cycles before the pipeline stops and
+# reports what it could not achieve. There is no "keep trying forever".
+max_cycles: 3
+
+# How many rounds of questions the planner may put to you before it must
+# produce a plan. Anything still unresolved becomes a recorded assumption.
+max_grill_rounds: 3
+
+# How many times the planner may be sent back to fix validator errors.
+max_plan_fix_attempts: 2
+
+# Install dependencies in each new worktree. Turn this off for projects
+# where install is slow and the tests do not need it.
+worktree_setup: true
+
+# Seconds before a gate command or a setup command is killed.
+gate_timeout_seconds: 1800
+setup_timeout_seconds: 1800
+
+# Model per role. Executors default to sonnet and escalate to
+# executor_escalated after a BLOCKED result.
+models:
+  planner: opus
+  executor: sonnet
+  executor_escalated: opus
+  synthesizer: opus
+  verifier: opus
+  replanner: opus
