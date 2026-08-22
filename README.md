@@ -43,6 +43,13 @@ main thread can spawn subagents and ask you questions. Planner, executor,
 synthesizer, verifier and replanner are real subagents with isolated
 context.
 
+**The orchestrator does not decide any of this.** `codag next` reads the run
+state off disk and returns one action - run this command, dispatch these
+agents on these models, ask this, or stop - and the orchestrator performs it
+and calls `next` again. Phases, caps, retry policy and the exact text each
+agent receives are all in tested Python, so a whole run can be driven with
+no model at all. That is what the end-to-end test does.
+
 ## What makes it safe to run in parallel
 
 - **Exclusive file ownership.** The planner assigns each slice a disjoint
@@ -59,6 +66,9 @@ context.
   already there is never blamed on the run — and never blocks it forever.
 - **A durable ledger.** Progress is on disk, so a crash or a context
   compaction cannot cause finished slices to be rebuilt.
+- **Checked reports.** Agents record results by running the CLI, and a slice
+  claiming `DONE` is rejected unless its worktree is clean, its HEAD has
+  moved, and the tests its brief declares exist.
 
 ## Install
 
@@ -152,10 +162,17 @@ judgement instead of git plumbing. You can drive the whole pipeline by hand:
 
 ```bash
 python scripts/codag.py init --prompt "add magic-link login"
+python scripts/codag.py next          # what to do, and what to do after that
+```
+
+`next` is the whole pipeline. The individual steps it orchestrates are all
+callable directly too:
+
+```bash
 python scripts/codag.py plan validate
-python scripts/codag.py wave next
 python scripts/codag.py worktree create S1 S2
 python scripts/codag.py brief S1 S2
+python scripts/codag.py report --slice S1 --status DONE --tests "7 passed"
 python scripts/codag.py merge
 python scripts/codag.py verify-package
 python scripts/codag.py finish
@@ -177,6 +194,9 @@ agent-to-agent reports; `ponytail` for keeping executors from gold-plating.
 python -m pytest scripts/tests -v
 ```
 
-The suite includes an end-to-end pipeline run with no LLM in the loop —
-init, plan validation, three worktrees, real commits, merge, gates and
-finish — which is what proves the deterministic spine on each OS.
+`scripts/tests/test_pipeline_e2e.py` drives whole runs through the state
+machine with a fake agent and no LLM: the happy path, parallel wave
+batching, a failing verdict driving a replan cycle, carried slices never
+re-executing, the cycle cap stopping rather than looping, a blocked slice
+retried exactly once on a stronger model, and a merge conflict waking the
+synthesizer. That suite passing is what proves the pipeline on each OS.

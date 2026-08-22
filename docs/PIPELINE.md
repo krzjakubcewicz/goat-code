@@ -1,98 +1,116 @@
 # Pipeline walkthrough
 
-One run, start to finish, with the artifacts each step produces. Useful when
-debugging a run or driving the CLI by hand.
+One run, start to finish. Useful when debugging a run or driving the CLI by
+hand.
 
-## 0. `init`
+The orchestrator does exactly two things: it starts the run, then it loops.
 
 ```bash
 python scripts/codag.py init --prompt "add magic-link login"
+
+# then, until it says stop:
+python scripts/codag.py next --json
 ```
 
-- Preflight: git repo, at least one commit, clean tree, attached HEAD.
-  Refuses otherwise; `--force` proceeds and records the warnings.
-- Adds `.codag/` to `.git/info/exclude`.
-- Prunes orphan worktrees left by any earlier crashed run.
-- Creates `.codag/runs/<run-id>/`, records the base commit and branch.
+Each `next` returns one action — `run`, `dispatch`, `ask`, `escalate` or
+`stop` — which the orchestrator performs before calling `next` again.
+Everything below describes what the machine decides at each phase, and the
+artifacts that come out.
+
+## `init`
+
+- Preflight: git repo, at least one commit, clean tree, attached HEAD, not a
+  linked worktree. Refuses otherwise; `--force` proceeds and records the
+  warnings.
+- Adds `.codag/` to `.git/info/exclude` — never to `.gitignore`, so your
+  working tree stays clean.
+- Prunes orphan worktrees left by an earlier crashed run.
+- Creates `.codag/runs/<run-id>/` and records the base commit and branch.
 - Detects the stack into `stack.json`.
-- Creates the integration worktree, installs dependencies, and runs the
-  gates to produce `baseline-gates.json`.
+- Creates the integration worktree, installs dependencies, and runs the gates
+  to produce `baseline-gates.json`.
 
 Phase becomes `grill`.
 
-## 1. Grill
+## `grill` → dispatch the planner
 
-The orchestrator dispatches `codag-planner`, which returns either
-`QUESTIONS` or `PLAN`.
+The machine renders `cycle-N/dispatch/planner-round-R.md` and dispatches
+`codag-planner` on `opus`. The planner either writes
+`cycle-N/questions-round-R.yaml` and returns `QUESTIONS`, or writes
+`tasks.yaml` and returns `PLAN`.
 
-Each question round: the orchestrator asks via `AskUserQuestion`, appends
-the answers to `spec.md` under `## Clarifications (round N)`, and
-re-dispatches. Maximum three rounds; anything unresolved becomes an entry in
-the plan's `assumptions`, which the verifier surfaces at the end.
+At the round cap (`max_grill_rounds`, default 3) the prompt tells the planner
+it **must** produce a plan and record anything unresolved as an assumption.
 
-Spec-mode runs are grilled too — a spec file is a starting point, not a
-contract.
+## `ask` → put the questions to the user
 
-## 2. Plan and validate
-
-The planner writes `tasks.yaml`.
+The action carries an `AskUserQuestion`-shaped payload built from the
+planner's YAML, with its recommendation already marked. The orchestrator asks
+and records:
 
 ```bash
-python scripts/codag.py plan validate
-python scripts/codag.py plan show
+python scripts/codag.py answer Q1="15-minute timer" Q2=Both --note Q1="match the cookie"
 ```
 
-Validation failure sends the planner back with the exact error list, twice
-at most. See `cod-ag-conventions` for every rule.
+That appends the Q&A verbatim to `spec.md` under `## Clarifications (round
+N)` and increments the round counter. The spec file, not the conversation, is
+the durable record — a later cycle re-reads the same file.
 
-## 3. Approve
+Spec-mode runs are grilled too: a spec file is a starting point, not a
+contract.
 
-Chat mode only. The slice table, the warnings and the assumptions go to the
-user: approve, revise, or abort. Replan cycles skip this.
+## `plan` → validate
 
-## 4. Execute
+Every `next` re-validates `tasks.yaml`. On failure the planner is
+re-dispatched with the exact error list and told to change nothing else,
+capped by `max_plan_fix_attempts`. Past the cap the run stops rather than
+grinding.
+
+## `approve` → the gate
+
+Applies when `approval_gate` is `chat` (default) and this is a chat-mode
+run's first cycle. The action carries the plan table command, the validator
+warnings and any recorded assumptions.
 
 ```bash
-python scripts/codag.py wave next            # -> S1 S2
+python scripts/codag.py approve --yes
+python scripts/codag.py approve --revise "Split the CLI slice in two."
+python scripts/codag.py approve --abort
+```
+
+`--revise` sends the plan back to the planner with the feedback. `--abort`
+reaps the worktrees and ends the run.
+
+## `execute` → waves
+
+First a `run` action prepares the wave:
+
+```bash
 python scripts/codag.py worktree create S1 S2
 python scripts/codag.py brief S1 S2
 ```
 
-All executors in a wave are dispatched **in one message**, which is what
-makes them concurrent. Each gets a brief path, the interfaces earlier slices
-published, and a report path.
+Then a single `dispatch` action carrying the whole wave — every executor goes
+out in one message, which is what makes them concurrent. Each gets its own
+rendered prompt naming its brief, the interfaces its dependencies published,
+and the command to report with.
 
 Each executor works test-first in its own worktree, commits per green test,
-and returns a receipt:
-
-```
-STATUS: DONE
-COMMITS: a1b2c3d..e4f5g6h (4 commits)
-TESTS: 7 passed, 0 failed
-```
-
-The orchestrator records the result and appends to the ledger:
+and records its own result:
 
 ```bash
-python scripts/codag.py task commits S1 --head e4f5g6h
-python scripts/codag.py task status S1 done
-python scripts/codag.py ledger "slice S1 complete (commits a1b2c3d..e4f5g6h)"
+python scripts/codag.py report --slice S1 --status DONE --tests "7 passed, 0 failed"
 ```
 
-Then the next wave, until nothing is ready.
+A `DONE` is checked before it is accepted: clean worktree, HEAD moved from
+the slice's base, and every declared test file present. A rejection lists all
+the problems and changes nothing.
 
-### When an executor does not return DONE
+**A blocked slice** is retried exactly once, on `models.executor_escalated`.
+If it blocks again it is marked failed and the run moves on; its dependents
+never become ready, and the replanner picks it up.
 
-| Status | Response |
-| --- | --- |
-| `DONE_WITH_CONCERNS` | read them; act if correctness or scope, note if observation |
-| `NEEDS_CONTEXT` | supply exactly what is missing, re-dispatch |
-| `BLOCKED` | change something — more context, the escalated model, a smaller slice — then retry, or let the replanner take it |
-
-A failed slice does not stop the wave. Its dependents simply never become
-ready, and the replanner picks it up.
-
-## 5. Synthesize
+## `synthesize` → merge
 
 ```bash
 python scripts/codag.py merge
@@ -101,57 +119,60 @@ python scripts/codag.py merge
 Creates `codag/<run-id>/integration` from the base commit and merges each
 finished slice branch in dependency order.
 
-- `clean` — no agent is dispatched at all.
-- `conflict` — `merge-report.md` names the slice and the files. The
-  synthesizer resolves them, runs `merge --continue`, and repeats. It logs
-  every non-conflict edit in the report's justification table.
+- **clean** — no agent is dispatched at all.
+- **conflict** — `codag-synthesizer` is dispatched on `sonnet` with the
+  conflicted files. It resolves, runs `merge --continue`, repeats, then
+  reports `CLEAN`. If the slices genuinely contradict each other it reports
+  `ESCALATE`, which writes a failing verdict and sends the run to replan.
 
-## 6. Verify
+## `verify`
 
 ```bash
 python scripts/codag.py verify-package
 ```
 
 Runs the gates in the integration worktree, classifies failures against the
-baseline, writes `review.diff`, and returns every path the verifier needs.
-
+baseline, writes `review.diff`, and assembles every path the verifier needs.
 `codag-verifier` reads them and writes `verdict.md`: a per-criterion table
 with evidence, gate results with pre-existing failures called out, scope
 violations, carried assumptions, and a final `VERDICT: PASS` or
-`VERDICT: FAIL`.
+`VERDICT: FAIL`. Then it runs `codag verdict`, which reads that line back.
 
-## 7a. PASS
+## `done`
 
-```bash
-python scripts/codag.py finish
+The `stop` action carries the message and the `finish` command, which removes
+the slice worktrees and keeps the integration branch.
+
+```
+DONE
+
+branch: codag/20260822-114900-magic-link/integration
+review: git diff a1b2c3d..codag/20260822-114900-magic-link/integration
+merge:  git merge codag/20260822-114900-magic-link/integration
+
+your branch main was not touched
 ```
 
-Removes the slice worktrees, keeps the integration branch, prints the review
-and merge commands. Your branch is untouched — merging is your decision.
+Merging is your decision, always.
 
-## 7b. FAIL
+## `replan`
 
-```bash
-python scripts/codag.py cycle
-```
+A failing verdict runs `codag cycle`: satisfied slices become `carried`, the
+old plan is snapshotted, `cycle-N+1/` is created. Then `codag-replanner` is
+dispatched to diagnose root cause and write a plan containing only remedial
+slices. Back to `execute`, skipping the grill and the gate.
 
-Marks satisfied slices `carried`, snapshots the old plan, creates
-`cycle-N+1/`. Refuses past `max_cycles`.
-
-`codag-replanner` diagnoses root cause and writes a plan containing only
-remedial slices. Back to step 4, skipping the grill and the approval gate.
-
-At the cap the run stops and reports what is still unmet. It does not loop
-forever and it does not claim success.
+Past `max_cycles` the run stops and reports what is still unmet. It does not
+loop forever and it does not claim success.
 
 ## Resuming
 
-```bash
-python scripts/codag.py resume
-```
+Just run `next`. The phase is derived from what is on disk, so it is correct
+regardless of what the orchestrator remembers.
 
-Prints the phase, which slices are complete according to the ledger, what is
-ready and the merge state. Trust it over recollection.
+```bash
+python scripts/codag.py resume --json   # the same picture, for a human
+```
 
 ## Aborting
 
@@ -159,5 +180,5 @@ ready and the merge state. Trust it over recollection.
 python scripts/codag.py abort
 ```
 
-Removes every worktree including the integration one. Branches survive
-unless you pass `--delete-branches`, so committed work is recoverable.
+Removes every worktree including the integration one. Branches survive unless
+you pass `--delete-branches`, so committed work stays recoverable.

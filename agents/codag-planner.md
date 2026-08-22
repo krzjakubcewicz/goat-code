@@ -73,7 +73,8 @@ about intent and trade-offs, not implementation detail.
 
 ### Question format
 
-Return a fenced YAML block, at most 8 questions, ordered most-blocking
+Write them to the path your dispatch names. Do not return them inline, and
+do not write `tasks.yaml` in the same round. At most 8, most-blocking
 first:
 
 ```yaml
@@ -140,10 +141,11 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" plan validate
 
 ## Return format
 
-For questions, return the YAML block and one line: `QUESTIONS: 4 (3
-blocking)`.
+After writing the questions file, return one line: `QUESTIONS: 4 (3
+blocking)`. The orchestrator puts them to the user, appends the answers to
+the spec, and dispatches you again.
 
-For a plan:
+After writing a plan:
 
 ```
 PLAN

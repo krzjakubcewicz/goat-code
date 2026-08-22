@@ -19,6 +19,53 @@ orchestrator asks them, appends the answers to the spec, and re-dispatches.
 The spec file — not the conversation — is the durable record, which is why
 the answers are written to disk rather than passed in the next prompt.
 
+## The orchestrator is a state machine
+
+The pipeline's control flow lives in `machine.py`, not in the orchestrator
+skill. `next_action` reads the run's files, derives which phase the evidence
+implies, and returns exactly one action: run this command, dispatch these
+agents on these models, put these questions to the user, or stop.
+
+`derive_phase` is pure - no writes, no side effects - and `next_action`
+persists whatever it returns. That means `state.json` is a cache of the
+evidence rather than the source of truth: a stale or hand-edited phase
+self-corrects on the next call, which is also what makes resuming after a
+crash or a compaction trustworthy.
+
+Everything that used to be prose the model was trusted to honour is now
+code with a test:
+
+| Was | Is |
+| --- | --- |
+| "maximum three rounds" | `grill_rounds` incremented by `answer`, checked by `grill_exhausted` |
+| "two attempts, then stop" | `plan_fix_attempts`, `plan_fixes_exhausted` |
+| "at cycle 4, stop" | `cycles_exhausted`, enforced in `_replan` |
+| "re-dispatch on a stronger model, once" | `escalations` per slice, enforced in `_retry_blocked` |
+| "dispatch all executors in one message" | one `dispatch` action carrying the whole wave |
+| "gate in chat mode only" | `approval_gate` config, `gate_applies` |
+
+Because the machine is a function of files, a whole run can be driven with
+no model: `test_pipeline_e2e.py` loops on `next_action` with a fake agent
+that writes the files and runs the reporting commands a real agent would.
+
+The model still has to exist - only a model turn can invoke the `Agent` tool
+or `AskUserQuestion` - but it no longer decides anything.
+
+## Agents report through the CLI
+
+An agent's result reaches `tasks.yaml` by the agent running a command, not
+by the orchestrator reading its reply. Every dispatch prompt is rendered by
+`dispatch.py` with the exact command baked in, interpreter and `--repo`
+pinned so it works from an executor's own worktree in any shell.
+
+This removed the last place the orchestrator model had to parse prose, and
+it made the claims checkable. `report --status DONE` is refused when the
+worktree is dirty, when HEAD has not moved from the slice's base, or when a
+test file the brief declares does not exist. The failure it exists to catch
+is the slice that reports DONE with uncommitted work and so contributes
+nothing to the merge - previously invisible until verification, at the cost
+of a whole cycle.
+
 ## Two halves: script and judgement
 
 Every mechanical operation lives in `scripts/codag.py`. Agents call it

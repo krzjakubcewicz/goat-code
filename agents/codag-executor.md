@@ -80,24 +80,29 @@ truthful `BLOCKED` is worth far more than an optimistic `DONE`.
 
 ## Report
 
-Write the full report to the path in your brief. It should contain: what you
-built, the design decisions you made and why, the tests and their output,
-anything you noticed outside your scope, and any assumption you had to make.
+Two steps, in this order.
 
-Return **only** this receipt to the orchestrator:
+**1. Write the full report** to the path your dispatch names: what you built,
+the design decisions you made and why, the tests and their output, anything
+you noticed outside your scope, and any assumption you had to make.
+
+**2. Run the `codag report` command your dispatch gives you.** That is what
+actually records your result — nothing you say in your reply updates the run.
 
 ```
-STATUS: DONE
-COMMITS: a1b2c3d..e4f5g6h (4 commits)
-TESTS: 7 passed, 0 failed (pnpm run test)
-CONCERNS: none
-REPORT: <report path>
+... report --slice S1 --status DONE --tests "7 passed, 0 failed"
 ```
 
-Status is exactly one of `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`,
-`BLOCKED`. For the last three, add one or two lines saying precisely what is
-missing or wrong — "it didn't work" tells the orchestrator nothing it can
-act on.
+It **verifies** a claimed `DONE` before accepting it: your worktree must be
+clean, HEAD must have moved from your base commit, and every test file the
+brief names must exist. If it rejects you it names every problem at once —
+fix them and run it again. Do not reach for `--force`.
 
-Keep the receipt terse. Detail goes in the file; anything you print stays in
-the orchestrator's context for the rest of the run.
+Status is exactly one of `DONE`, `DONE_WITH_CONCERNS` (add `--concerns`),
+`NEEDS_CONTEXT` (add `--reason`), `BLOCKED` (add `--reason`). For the last
+three, say precisely what is missing or wrong — "it didn't work" gives the
+replanner nothing to act on.
+
+Then return a single status line and nothing else. Anything you print stays
+in the orchestrator's context for the rest of the run; the report file and
+the CLI carry everything that matters.

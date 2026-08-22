@@ -117,13 +117,20 @@ Do not soften a verdict to be agreeable, and do not fail a run over style
 preferences or anything the criteria do not require. Judge against the
 criteria, the gates and the spec. Nothing else.
 
-## Return
+## Report
+
+After writing `verdict.md`, run the command in your dispatch:
 
 ```
-VERDICT: FAIL
-CRITERIA: 4 of 6 met
-GATES: no regressions (lint pre-existing)
-SCOPE: 1 violation
-MUST CHANGE: 2 items
-VERDICT FILE: <path>
+... verdict
+```
+
+It reads your final `VERDICT:` line back and moves the run on — to `DONE` on
+a pass, or into a replan cycle on a fail. If it tells you the line is
+missing, add it as the file's last line and run it again.
+
+Then return one line:
+
+```
+VERDICT: FAIL - 4 of 6 criteria met, 1 scope violation
 ```

@@ -157,10 +157,11 @@ def test_skill_frontmatter(path):
     assert len(body.strip()) > 1000
 
 
-def test_orchestrator_names_every_agent():
-    text = (ROOT / "skills" / "cod-ag-orchestrator" / "SKILL.md").read_text(encoding="utf-8")
+def test_the_state_machine_dispatches_every_agent():
+    """Who runs when lives in machine.py, not in the skill's prose."""
+    text = (SCRIPTS / "codag" / "machine.py").read_text(encoding="utf-8")
     for path in AGENTS:
-        assert path.stem in text, "orchestrator never dispatches {}".format(path.stem)
+        assert path.stem in text, "the machine never dispatches {}".format(path.stem)
 
 
 def test_orchestrator_states_the_parallel_dispatch_rule():
@@ -168,6 +169,14 @@ def test_orchestrator_states_the_parallel_dispatch_rule():
     text = (ROOT / "skills" / "cod-ag-orchestrator" / "SKILL.md").read_text(encoding="utf-8")
     assert "single message" in text
     assert "parallel" in text
+
+
+def test_orchestrator_defers_to_the_state_machine():
+    """The skill must not re-describe the pipeline it no longer owns."""
+    text = (ROOT / "skills" / "cod-ag-orchestrator" / "SKILL.md").read_text(encoding="utf-8")
+    assert "next" in text
+    assert "do **not** decide what happens next" in text
+    assert "## Step 1" not in text, "the eight-step prose is now machine.py"
 
 
 # -- cross-references ------------------------------------------------------

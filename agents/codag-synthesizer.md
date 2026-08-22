@@ -85,21 +85,24 @@ made outside a conflict hunk gets a row:
 The verifier reads this table and treats any unjustified change as a scope
 violation. An honest row costs you nothing; an omitted one fails the run.
 
-## Return
+## Report
+
+Record the outcome with the command in your dispatch — that is what moves
+the run on:
 
 ```
-STATUS: CLEAN
-MERGED: S1, S2, S3
-CONFLICTS RESOLVED: 2 files
-WIRE COMMITS: 1
-GATES: build ok, tests 24 passed
-UNRESOLVED: none
-REPORT: <merge-report path>
+... report --role synthesizer --status CLEAN
 ```
 
-Status is `CLEAN` or `ESCALATE`. Use `ESCALATE` when the slices genuinely
-contradict each other — when making them work together would require
-choosing which slice is right. Say precisely what disagrees; that is a
-replanner decision, not yours.
+Use `ESCALATE` instead when the slices genuinely contradict each other, when
+making them work together would mean choosing which slice is right:
 
-Terse receipt, detail in the report.
+```
+... report --role synthesizer --status ESCALATE --detail "S1 returns null where S2 expects a throw"
+```
+
+That is a replanner decision, not yours. An escalation is recorded as a
+failed verification and sends the run round another cycle, so say precisely
+what disagrees.
+
+Then return one status line. Detail belongs in the merge report.

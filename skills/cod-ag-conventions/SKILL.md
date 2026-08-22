@@ -19,6 +19,11 @@ The **orchestrator is the main Claude Code thread**, not an agent: only the
 main thread can spawn subagents and ask the user questions. Planner,
 executor, synthesizer, verifier and replanner are subagents.
 
+The orchestrator does not decide the order. `codag next` reads the run state
+off disk and returns the one action to take; the orchestrator performs it and
+calls `next` again. Phases, caps, model choice and retry policy live in
+`machine.py`, not in prose.
+
 ## The `codag` CLI
 
 Everything mechanical is a script. Never do by hand what the CLI does.
@@ -29,6 +34,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 
 | Command | Purpose |
 | --- | --- |
+| `next` | **the state machine** - the single next action to take |
 | `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |
 | `plan validate` / `plan show` / `plan waves` | gate and inspect tasks.yaml |
 | `wave next` | slice ids dispatchable right now, capped at the parallel limit |
@@ -39,6 +45,11 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 | `gates run` | build/typecheck/lint/test, classified against the baseline |
 | `verify-package` | everything the verifier needs, in one call |
 | `diffpkg` | one-file review package |
+| `report --slice S1 --status DONE` | an executor records its result; a DONE is verified |
+| `report --role synthesizer --status CLEAN\|ESCALATE` | the synthesizer records its result |
+| `answer QID=answer ...` | record a grill round and count it |
+| `approve --yes\|--revise TEXT\|--abort` | record the plan approval gate |
+| `verdict` | read the verifier PASS/FAIL back and move the run on |
 | `ledger "..."` | append to the durable progress ledger |
 | `cycle` | advance to the next replan cycle |
 | `status` / `resume` / `finish` / `abort` | lifecycle |
@@ -63,6 +74,7 @@ Everything lives in the target repo under `.codag/`, hidden from git via
   baseline-gates.json  gate results at the base commit
   tasks.yaml           THE plan - every agent reads this
   cycle-N/
+    questions-round-N.yaml   dispatch/S1.md
     briefs/S1.md   reports/S1.md
     merge-report.md   gates.json   review.diff   verdict.md
 ```
@@ -163,19 +175,24 @@ has to change: more context, a stronger model, or a smaller task.
 
 ## Report contract
 
-Agents write detail to **files** and return only a short summary. Anything
-returned in the message stays in the orchestrator's context for the rest of
-the session; anything written to a file does not.
+Agents write detail to **files** and record their outcome by **running the
+CLI**, not by returning prose for the orchestrator to interpret. The exact
+command is written into every dispatch prompt.
 
-An executor returns:
+```bash
+... report --slice S1 --status DONE --tests "7 passed, 0 failed"
+... report --role synthesizer --status CLEAN
+... verdict
+```
 
-```
-STATUS: DONE
-COMMITS: a1b2c3d..e4f5g6h (4 commits)
-TESTS: 7 passed, 0 failed (pnpm run test)
-CONCERNS: none
-REPORT: .codag/runs/<id>/cycle-1/reports/S1.md
-```
+A claimed `DONE` is checked before it is accepted: the worktree must be
+clean, HEAD must have moved from the slice's base commit, and every test
+file the brief declares must exist. A rejection names every problem at once
+and changes nothing, so the agent can fix and retry.
+
+Then return one status line and nothing more. Anything printed stays in the
+orchestrator's context for the rest of the session; anything written to a
+file does not.
 
 ## Writing style
 
