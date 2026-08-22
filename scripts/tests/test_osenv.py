@@ -193,3 +193,44 @@ def test_run_launches_a_windows_cmd_shim():
     result = osenv.run(["npm", "--version"])
     assert result.ok
     assert result.out[0].isdigit()
+
+
+# -- reaching the main repo from inside a worktree -------------------------
+
+
+def linked_worktree(repo, name="wt", branch="side"):
+    osenv.git(["worktree", "add", "-q", str(repo / name), "-b", branch], cwd=repo, check=True)
+    return repo / name
+
+
+def test_repo_root_inside_a_worktree_returns_the_worktree(git_repo):
+    """Documenting the trap: this is why main_repo_root exists."""
+    wt = linked_worktree(git_repo)
+    assert osenv.repo_root(wt) == wt.resolve()
+
+
+def test_main_repo_root_reaches_the_real_root_from_a_worktree(git_repo):
+    wt = linked_worktree(git_repo)
+    assert osenv.main_repo_root(wt) == git_repo.resolve()
+
+
+def test_main_repo_root_is_the_root_in_a_normal_checkout(git_repo):
+    assert osenv.main_repo_root(git_repo) == git_repo.resolve()
+
+
+def test_main_repo_root_is_none_outside_a_repo(tmp_path):
+    outside = tmp_path / "plain"
+    outside.mkdir()
+    assert osenv.main_repo_root(outside) is None
+
+
+def test_in_linked_worktree_distinguishes_the_two(git_repo):
+    wt = linked_worktree(git_repo)
+    assert osenv.in_linked_worktree(wt) is True
+    assert osenv.in_linked_worktree(git_repo) is False
+
+
+def test_in_linked_worktree_is_false_outside_a_repo(tmp_path):
+    outside = tmp_path / "plain"
+    outside.mkdir()
+    assert osenv.in_linked_worktree(outside) is False

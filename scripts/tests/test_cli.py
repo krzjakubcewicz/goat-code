@@ -544,3 +544,45 @@ def test_wave_next_text_output_shows_the_model(capsys, node_repo):
     plan_for(run, [slice_spec("S1", "src/a/**")])
     _code, out, _err = invoke(capsys, "--repo", str(node_repo), "wave", "next")
     assert out.strip() == "S1 (haiku)"
+
+
+# -- the CLI must work from inside an executor's worktree ------------------
+
+
+def test_cli_reaches_the_run_from_inside_a_slice_worktree(capsys, node_repo):
+    """Executors self-report from their worktree; .codag/ lives in the main repo."""
+    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
+    run = Run.load(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    invoke(capsys, "--repo", str(node_repo), "worktree", "create", "S1", "--no-setup")
+
+    inside = worktree.path_for(run, "S1")
+    code, payload, _err = invoke_json(capsys, "--repo", str(inside), "status")
+    assert code == 0
+    assert payload["run_id"] == run.run_id
+
+
+def test_task_status_can_be_set_from_inside_a_worktree(capsys, node_repo):
+    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
+    run = Run.load(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    invoke(capsys, "--repo", str(node_repo), "worktree", "create", "S1", "--no-setup")
+
+    inside = worktree.path_for(run, "S1")
+    code, _out, _err = invoke(capsys, "--repo", str(inside), "task", "status", "S1", "done")
+    assert code == 0
+    assert Run.load(node_repo).run_id == run.run_id
+    _code, item, _e = invoke_json(capsys, "--repo", str(node_repo), "task", "show", "S1")
+    assert item["status"] == "done"
+
+
+def test_init_refuses_to_start_from_a_linked_worktree(capsys, node_repo):
+    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
+    run = Run.load(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    invoke(capsys, "--repo", str(node_repo), "worktree", "create", "S1", "--no-setup")
+
+    inside = worktree.path_for(run, "S1")
+    code, _out, err = invoke(capsys, "--repo", str(inside), "init", "--prompt", "y", "--no-baseline")
+    assert code == cli.EXIT_USAGE
+    assert "linked worktree" in err

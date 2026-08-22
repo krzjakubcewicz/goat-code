@@ -66,7 +66,13 @@ def emit(args, payload, text):
 
 
 def resolve_repo(args):
-    root = osenv.repo_root(getattr(args, "repo", None) or pathlib.Path.cwd())
+    """The main work tree, where .codag/ lives.
+
+    Deliberately not ``repo_root``: executor agents run inside their own
+    linked worktree, and every command they issue must still reach the run
+    state in the main repository.
+    """
+    root = osenv.main_repo_root(getattr(args, "repo", None) or pathlib.Path.cwd())
     if root is None:
         raise CliError("not inside a git repository (run 'git init' first)")
     return root

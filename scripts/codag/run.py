@@ -170,6 +170,13 @@ def preflight(repo=None):
     if not branch.ok:
         problems.append("HEAD is detached; check out a branch before starting a run")
 
+    if osenv.in_linked_worktree(root):
+        problems.append(
+            "this is a linked worktree; start the run from the main work tree at {}".format(
+                osenv.main_repo_root(root)
+            )
+        )
+
     return root, problems
 
 

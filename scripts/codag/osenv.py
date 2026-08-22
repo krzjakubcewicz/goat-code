@@ -152,11 +152,55 @@ def git_out(args, cwd=None):
 
 
 def repo_root(start=None):
-    """Absolute path of the enclosing git work tree, or None."""
+    """Absolute path of the enclosing git work tree, or None.
+
+    Inside a linked worktree this returns the *worktree*, not the repository
+    it belongs to. Use :func:`main_repo_root` when you need the place
+    ``.codag/`` lives.
+    """
     result = git(["rev-parse", "--show-toplevel"], cwd=start or pathlib.Path.cwd())
     if not result.ok:
         return None
     return pathlib.Path(result.out).resolve()
+
+
+def main_repo_root(start=None):
+    """Absolute path of the *main* work tree, even from a linked worktree.
+
+    Executor agents run inside their own worktree but must reach the run
+    state in the main repository's ``.codag/``. ``--show-toplevel`` returns
+    the worktree there, so it cannot be used; ``--git-common-dir`` points at
+    the main ``.git``, whose parent is the real root.
+    """
+    where = pathlib.Path(start) if start else pathlib.Path.cwd()
+    result = git(["rev-parse", "--git-common-dir"], cwd=where)
+    if not result.ok:
+        return None
+
+    common = pathlib.Path(result.out)
+    if not common.is_absolute():
+        common = where / common
+    try:
+        common = common.resolve()
+    except OSError:
+        return repo_root(where)
+
+    if common.name == ".git":
+        candidate = common.parent
+        # A submodule's common dir is <super>/.git/modules/<name>, which this
+        # name check already excludes; verify anyway before trusting it.
+        check = git(["rev-parse", "--show-toplevel"], cwd=candidate)
+        if check.ok and pathlib.Path(check.out).resolve() == candidate:
+            return candidate
+    return repo_root(where)
+
+
+def in_linked_worktree(start=None):
+    """True when ``start`` is inside a linked worktree rather than the main one."""
+    where = pathlib.Path(start) if start else pathlib.Path.cwd()
+    here = repo_root(where)
+    main = main_repo_root(where)
+    return here is not None and main is not None and here != main
 
 
 def temp_root():
