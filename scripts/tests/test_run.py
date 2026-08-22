@@ -91,32 +91,47 @@ def test_preflight_rejects_a_repo_with_no_commits(tmp_path):
     assert any("no commits" in p for p in problems)
 
 
-# -- gitignore -------------------------------------------------------------
+# -- ignoring run state ----------------------------------------------------
 
 
-def test_ensure_gitignore_creates_the_file(git_repo):
-    (git_repo / ".gitignore").unlink(missing_ok=True)
-    assert runmod.ensure_gitignore(git_repo) is True
-    assert ".codag/" in (git_repo / ".gitignore").read_text(encoding="utf-8")
+def exclude_file(repo):
+    return repo / ".git" / "info" / "exclude"
 
 
-def test_ensure_gitignore_is_idempotent(git_repo):
-    runmod.ensure_gitignore(git_repo)
-    assert runmod.ensure_gitignore(git_repo) is False
-    body = (git_repo / ".gitignore").read_text(encoding="utf-8")
-    assert body.count(".codag/") == 1
+def test_ensure_ignored_writes_to_info_exclude(git_repo):
+    assert runmod.ensure_ignored(git_repo) is True
+    assert ".codag/" in exclude_file(git_repo).read_text(encoding="utf-8")
 
 
-def test_ensure_gitignore_appends_without_eating_the_last_line(git_repo):
-    (git_repo / ".gitignore").write_text("node_modules", encoding="utf-8")
-    runmod.ensure_gitignore(git_repo)
-    lines = (git_repo / ".gitignore").read_text(encoding="utf-8").splitlines()
-    assert lines == ["node_modules", ".codag/"]
+def test_ensure_ignored_does_not_touch_the_working_tree(git_repo):
+    """The pipeline promises not to dirty the user's branch."""
+    runmod.ensure_ignored(git_repo)
+    assert osenv.git(["status", "--porcelain"], cwd=git_repo).out == ""
+    assert not (git_repo / ".gitignore").exists()
 
 
-def test_ensure_gitignore_accepts_an_existing_bare_entry(git_repo):
-    (git_repo / ".gitignore").write_text(".codag\n", encoding="utf-8")
-    assert runmod.ensure_gitignore(git_repo) is False
+def test_ensure_ignored_is_idempotent(git_repo):
+    runmod.ensure_ignored(git_repo)
+    assert runmod.ensure_ignored(git_repo) is False
+    assert exclude_file(git_repo).read_text(encoding="utf-8").count(".codag/") == 1
+
+
+def test_ensure_ignored_appends_without_eating_the_last_line(git_repo):
+    osenv.write_text(exclude_file(git_repo), "*.tmp")
+    runmod.ensure_ignored(git_repo)
+    lines = exclude_file(git_repo).read_text(encoding="utf-8").splitlines()
+    assert lines == ["*.tmp", ".codag/"]
+
+
+def test_ensure_ignored_respects_an_existing_gitignore_entry(git_repo):
+    (git_repo / ".gitignore").write_text(".codag/\n", encoding="utf-8")
+    assert runmod.ensure_ignored(git_repo) is False
+
+
+def test_run_state_is_invisible_to_git(git_repo):
+    runmod.ensure_ignored(git_repo)
+    make_run(git_repo)
+    assert osenv.git(["status", "--porcelain"], cwd=git_repo).out == ""
 
 
 # -- config ----------------------------------------------------------------

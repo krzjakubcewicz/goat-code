@@ -76,23 +76,37 @@ def runs_dir(repo):
     return codag_dir(repo) / "runs"
 
 
-def ensure_gitignore(repo):
-    """Make sure ``.codag/`` never lands in the user's commits.
+def ensure_ignored(repo):
+    """Make sure ``.codag/`` never shows up in the user's git status.
+
+    Written to ``.git/info/exclude`` rather than ``.gitignore``: run state
+    is local, per-machine scratch, and editing a tracked ``.gitignore``
+    would dirty the working tree the pipeline just promised not to touch.
 
     Returns True when the entry was added by this call.
     """
     repo = pathlib.Path(repo)
-    ignore = repo / ".gitignore"
     entry = CODAG_DIR + "/"
-    if ignore.exists():
-        existing = ignore.read_text(encoding="utf-8")
-        lines = [line.strip() for line in existing.splitlines()]
+
+    result = osenv.git(["rev-parse", "--git-common-dir"], cwd=repo)
+    if not result.ok:
+        return False
+    git_dir = pathlib.Path(result.out)
+    if not git_dir.is_absolute():
+        git_dir = repo / git_dir
+
+    tracked = repo / ".gitignore"
+    if tracked.exists():
+        lines = [line.strip() for line in tracked.read_text(encoding="utf-8").splitlines()]
         if entry in lines or CODAG_DIR in lines:
             return False
-        prefix = "" if existing.endswith("\n") or existing == "" else "\n"
-        osenv.write_text(ignore, existing + prefix + entry + "\n")
-        return True
-    osenv.write_text(ignore, entry + "\n")
+
+    exclude = git_dir / "info" / "exclude"
+    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if entry in [line.strip() for line in existing.splitlines()]:
+        return False
+    prefix = "" if existing.endswith("\n") or existing == "" else "\n"
+    osenv.write_text(exclude, existing + prefix + entry + "\n")
     return True
 
 
@@ -171,7 +185,7 @@ class Run:
     @classmethod
     def create(cls, repo, title, mode, spec_text="", now=None):
         repo = pathlib.Path(repo)
-        run_id = new_run_id(title, now=now)
+        run_id = _unique_run_id(repo, new_run_id(title, now=now))
         base_commit = osenv.git_out(["rev-parse", "HEAD"], cwd=repo)
         base_branch = osenv.git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=repo).out
         state = {
@@ -329,6 +343,18 @@ class Run:
             "worktrees": self.state.get("worktrees", {}),
             "updated_at": self.state.get("updated_at"),
         }
+
+
+def _unique_run_id(repo, run_id):
+    """Two runs started in the same second must not share a directory."""
+    directory = runs_dir(repo)
+    if not (directory / run_id).exists():
+        return run_id
+    for suffix in range(2, 100):
+        candidate = "{}-{}".format(run_id, suffix)
+        if not (directory / candidate).exists():
+            return candidate
+    raise RunError("cannot allocate a run id for {}".format(run_id))
 
 
 def latest_run_id(repo):
