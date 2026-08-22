@@ -31,11 +31,13 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from codag import (  # noqa: E402
     brief as briefmod,
     diffpkg,
+    dispatch as dispatchmod,
     gates as gatesmod,
     ledger as ledgermod,
     merge as mergemod,
     miniyaml,
     osenv,
+    report as reportmod,
     run as runmod,
     schema,
     stack as stackmod,
@@ -570,6 +572,113 @@ def cmd_verify_package(args):
 
 
 # --------------------------------------------------------------------------
+# agent reports
+# --------------------------------------------------------------------------
+
+
+def cmd_report(args):
+    """How an agent puts its result back into the run."""
+    run = resolve_run(args)
+    try:
+        if args.role:
+            result = reportmod.record_role(run, args.role, args.status, detail=args.detail)
+            text = "{} {}".format(args.role, result["status"].lower())
+            if result.get("verdict"):
+                text += "\nwrote {}".format(result["verdict"])
+        else:
+            if not args.slice:
+                raise reportmod.ReportError("pass --slice <id> or --role synthesizer")
+            result = reportmod.record_slice(
+                run,
+                args.slice,
+                args.status,
+                tests=args.tests,
+                concerns=args.concerns,
+                reason=args.reason,
+                head=args.head,
+                force=args.force,
+            )
+            text = "{}: {} (slice now {})".format(
+                result["slice"], result["status"], result["slice_status"]
+            )
+    except reportmod.ReportError as exc:
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            sys.stderr.write("codag: {}\n".format(exc))
+        return EXIT_USAGE
+    emit(args, result, text)
+    return EXIT_OK
+
+
+def cmd_answer(args):
+    """Record the user's answers to a grill round."""
+    run = resolve_run(args)
+    path = (
+        pathlib.Path(args.questions)
+        if args.questions
+        else dispatchmod.questions_path(run, run.grill_rounds + 1)
+    )
+    try:
+        answers = reportmod.parse_pairs(args.pairs)
+        notes = reportmod.parse_pairs(args.note)
+        if args.file:
+            loaded = miniyaml.load(args.file) or {}
+            if not isinstance(loaded, dict):
+                raise reportmod.ReportError("{} must contain a mapping of QID to answer".format(args.file))
+            merged = {str(k): str(v) for k, v in loaded.items()}
+            merged.update(answers)
+            answers = merged
+        result = reportmod.record_answers(run, path, answers, notes=notes, free_text=args.free)
+    except (reportmod.ReportError, miniyaml.YamlError) as exc:
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            sys.stderr.write("codag: {}\n".format(exc))
+        return EXIT_USAGE
+
+    text = "round {} recorded ({} answered, {} left to the planner)".format(
+        result["round"], result["answered"], len(result["unanswered"])
+    )
+    emit(args, result, text)
+    return EXIT_OK
+
+
+def cmd_approve(args):
+    run = resolve_run(args)
+    decision = "approved" if args.yes else "aborted" if args.abort else "revise"
+    try:
+        result = reportmod.record_approval(run, decision, feedback=args.revise)
+    except reportmod.ReportError as exc:
+        raise CliError(str(exc))
+    if decision == "aborted":
+        worktreemod.reap(run, keep_integration=False)
+        run.set_phase("aborted")
+    emit(args, result, "plan {}".format(decision))
+    return EXIT_OK
+
+
+def cmd_verdict(args):
+    run = resolve_run(args)
+    try:
+        result = reportmod.require_verdict(run)
+    except reportmod.ReportError as exc:
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            sys.stderr.write("codag: {}\n".format(exc))
+        return EXIT_USAGE
+
+    payload = {
+        "verdict": result,
+        "cycle": run.cycle,
+        "path": str(run.cycle_dir() / "verdict.md"),
+    }
+    emit(args, payload, "VERDICT: {}".format(result))
+    return EXIT_OK if result == "PASS" else EXIT_FAIL
+
+
+# --------------------------------------------------------------------------
 # lifecycle
 # --------------------------------------------------------------------------
 
@@ -839,6 +948,36 @@ def build_parser():
 
     p = add(sub, "verify-package", help="gates + diff + criteria for the verifier")
     p.set_defaults(func=cmd_verify_package)
+
+    p = add(sub, "report", help="how an agent records its result")
+    p.add_argument("--slice", help="slice id, for an executor")
+    p.add_argument("--role", choices=("synthesizer",), help="for a non-slice agent")
+    p.add_argument("--status", required=True, help="DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED | CLEAN | ESCALATE")
+    p.add_argument("--tests", help="one-line test summary")
+    p.add_argument("--concerns", help="what needs a human's eye")
+    p.add_argument("--reason", help="why you are blocked or need context")
+    p.add_argument("--detail", help="what disagrees, for an ESCALATE")
+    p.add_argument("--head", help="override the commit sha (default: your worktree's HEAD)")
+    p.add_argument("--force", action="store_true", help="skip the DONE checks (use only with a reason)")
+    p.set_defaults(func=cmd_report)
+
+    p = add(sub, "answer", help="record the user's answers to a grill round")
+    p.add_argument("pairs", nargs="*", metavar="QID=ANSWER")
+    p.add_argument("--note", action="append", metavar="QID=TEXT", help="extra note on one answer")
+    p.add_argument("--free", help="unstructured extra context from the user")
+    p.add_argument("--file", help="YAML mapping of QID to answer, instead of pairs")
+    p.add_argument("--questions", help="questions file (default: the current round's)")
+    p.set_defaults(func=cmd_answer)
+
+    p = add(sub, "approve", help="record the plan approval gate")
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--yes", action="store_true", help="approve and start executing")
+    group.add_argument("--revise", metavar="FEEDBACK", help="send the plan back with this feedback")
+    group.add_argument("--abort", action="store_true", help="stop the run and clean up")
+    p.set_defaults(func=cmd_approve)
+
+    p = add(sub, "verdict", help="read the verifier's PASS/FAIL back")
+    p.set_defaults(func=cmd_verdict)
 
     p = add(sub, "status", help="what is this run doing")
     p.add_argument("--all", action="store_true", help="list every run")

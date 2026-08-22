@@ -54,7 +54,9 @@ def verify_done(run, doc, slice_id):
     if not path.exists():
         return ["worktree {} does not exist".format(path)]
 
-    status = osenv.git(["status", "--porcelain"], cwd=path)
+    # --untracked-files=all, so the agent is told "src/stray.js" rather than
+    # a collapsed "src/" it then has to go looking through.
+    status = osenv.git(["status", "--porcelain", "--untracked-files=all"], cwd=path)
     if status.out:
         changed = ", ".join(line[3:] for line in status.out.splitlines()[:5])
         problems.append(
