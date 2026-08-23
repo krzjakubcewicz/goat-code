@@ -13,7 +13,8 @@ import pytest
 
 from codag import progress
 from codag.run import Run
-from tests.test_cli import cli, invoke, invoke_json, node_repo  # noqa: F401
+from tests.conftest import make_run
+from tests.test_cli import cli, invoke, invoke_json  # noqa: F401
 
 BODY = "\n".join(
     [
@@ -129,8 +130,8 @@ def test_the_template_names_the_three_sections():
 
 
 def start(capsys, repo):
-    invoke(capsys, "--repo", str(repo), "init", "--prompt", "magic link", "--no-baseline")
-    return Run.load(repo)
+    """A run ready to write progress into; not a test of `init`."""
+    return make_run(repo, "magic link")
 
 
 def test_append_from_a_body_file(capsys, node_repo):
@@ -206,4 +207,4 @@ def test_the_log_is_hidden_from_git(capsys, node_repo):
     from codag import osenv
 
     assert progress.path_for(node_repo).exists()
-    assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == "?? .gitignore"
+    assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == ""

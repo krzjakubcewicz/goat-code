@@ -82,8 +82,10 @@ def resolve_repo(args):
     return root
 
 
-def resolve_run(args):
-    repo = resolve_repo(args)
+def resolve_run(args, repo=None):
+    """Load the run. Pass ``repo`` when the caller already resolved it -
+    locating the repository costs a subprocess."""
+    repo = repo or resolve_repo(args)
     try:
         return Run.load(repo, getattr(args, "run", None))
     except RunError as exc:
@@ -246,7 +248,7 @@ def cmd_stack(args):
         emit(args, profile, stackmod.summary_line(profile))
         return EXIT_OK
     if args.stack_command == "show":
-        run = resolve_run(args)
+        run = resolve_run(args, repo)
         profile = load_stack(run)
         emit(args, profile, stackmod.summary_line(profile))
         return EXIT_OK
@@ -627,7 +629,7 @@ def cmd_progress(args):
         return EXIT_OK
 
     if args.progress_command == "append":
-        run = resolve_run(args)
+        run = resolve_run(args, repo)
         body = args.text
         if args.body:
             source = pathlib.Path(args.body)
@@ -840,7 +842,7 @@ def cmd_status(args):
         emit(args, {"runs": summaries}, text or "(no runs yet)")
         return EXIT_OK
 
-    run = resolve_run(args)
+    run = resolve_run(args, repo)
     summary = run.summary()
     lines = [
         "run {}".format(run.run_id),

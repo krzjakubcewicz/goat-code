@@ -18,6 +18,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from codag import miniyaml, osenv, worktree  # noqa: E402
 from codag.run import Run  # noqa: E402
+from tests.conftest import make_run  # noqa: E402
 
 
 def _load_cli():
@@ -45,30 +46,6 @@ def invoke(capsys, *argv):
 def invoke_json(capsys, *argv):
     code, out, err = invoke(capsys, *argv, "--json")
     return code, (json.loads(out) if out.strip() else None), err
-
-
-@pytest.fixture
-def node_repo(git_repo):
-    """A repo with a detectable stack whose gates are fast and scriptable."""
-    (git_repo / "package.json").write_text(
-        json.dumps(
-            {
-                "name": "fixture",
-                "scripts": {"build": "node -e \"process.exit(0)\"", "test": "node scripts/test.js"},
-                "devDependencies": {"typescript": "5.6.0"},
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    (git_repo / "package-lock.json").write_text("{}", encoding="utf-8")
-    (git_repo / "tsconfig.json").write_text("{}", encoding="utf-8")
-    scripts = git_repo / "scripts"
-    scripts.mkdir()
-    (scripts / "test.js").write_text("process.exit(0);\n", encoding="utf-8")
-    osenv.git(["add", "-A"], cwd=git_repo, check=True)
-    osenv.git(["commit", "-qm", "fixture project"], cwd=git_repo, check=True)
-    return git_repo
 
 
 def plan_for(run, slices):
@@ -179,8 +156,7 @@ def test_init_captures_a_baseline_in_the_integration_worktree(capsys, node_repo)
 
 
 def test_plan_validate_passes_a_good_plan(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**")])
     code, out, _err = invoke(capsys, "--repo", str(node_repo), "plan", "validate")
     assert code == 0
@@ -188,8 +164,7 @@ def test_plan_validate_passes_a_good_plan(capsys, node_repo):
 
 
 def test_plan_validate_reports_an_ownership_collision(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/a/**")])
     code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "plan", "validate")
     assert code == cli.EXIT_FAIL
@@ -197,8 +172,7 @@ def test_plan_validate_reports_an_ownership_collision(capsys, node_repo):
 
 
 def test_plan_validate_reports_bad_yaml_with_a_position(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     run.tasks_path.write_text("version: 1\nslices: &anchor\n", encoding="utf-8")
     code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "plan", "validate")
     assert code == cli.EXIT_FAIL
@@ -206,8 +180,7 @@ def test_plan_validate_reports_bad_yaml_with_a_position(capsys, node_repo):
 
 
 def test_plan_show_renders_waves(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**", ["S1"])])
     _code, out, _err = invoke(capsys, "--repo", str(node_repo), "plan", "show")
     assert "wave 1" in out and "wave 2" in out
@@ -217,8 +190,7 @@ def test_plan_show_renders_waves(capsys, node_repo):
 
 
 def test_wave_next_respects_the_parallel_cap(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S{}".format(i), "src/m{}/**".format(i)) for i in range(5)])
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "wave", "next")
     assert len(payload["ready"]) == 3
@@ -226,8 +198,7 @@ def test_wave_next_respects_the_parallel_cap(capsys, node_repo):
 
 
 def test_wave_next_after_completion(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**", ["S1"])])
     invoke(capsys, "--repo", str(node_repo), "task", "status", "S1", "done")
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "wave", "next")
@@ -235,8 +206,7 @@ def test_wave_next_after_completion(capsys, node_repo):
 
 
 def test_task_set_and_show(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     invoke(capsys, "--repo", str(node_repo), "task", "set", "S1", "model", "opus")
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "task", "show", "S1")
@@ -244,8 +214,7 @@ def test_task_set_and_show(capsys, node_repo):
 
 
 def test_task_set_coerces_types(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     invoke(capsys, "--repo", str(node_repo), "task", "set", "S1", "owns", '["src/z/**"]', "--type", "json")
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "task", "show", "S1")
@@ -253,8 +222,7 @@ def test_task_set_coerces_types(capsys, node_repo):
 
 
 def test_task_on_an_unknown_slice_is_a_clear_error(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     code, _out, err = invoke(capsys, "--repo", str(node_repo), "task", "status", "S9", "done")
     assert code == cli.EXIT_USAGE
@@ -265,8 +233,7 @@ def test_task_on_an_unknown_slice_is_a_clear_error(capsys, node_repo):
 
 
 def test_worktree_create_records_paths_in_the_plan(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**")])
     code, payload, _err = invoke_json(
         capsys, "--repo", str(node_repo), "worktree", "create", "S1", "S2", "--no-setup"
@@ -280,8 +247,7 @@ def test_worktree_create_records_paths_in_the_plan(capsys, node_repo):
 
 
 def test_brief_writes_one_file_per_slice(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "brief", "S1")
     text = pathlib.Path(payload["briefs"][0]).read_text(encoding="utf-8")
@@ -293,8 +259,7 @@ def test_brief_writes_one_file_per_slice(capsys, node_repo):
 
 
 def test_status_summarises_the_run(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     _code, out, _err = invoke(capsys, "--repo", str(node_repo), "status")
     assert run.run_id in out
@@ -316,8 +281,7 @@ def test_ledger_appends_and_reads(capsys, node_repo):
 
 
 def test_resume_reports_what_to_trust(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**")])
     invoke(capsys, "--repo", str(node_repo), "task", "status", "S1", "done")
     invoke(capsys, "--repo", str(node_repo), "ledger", "slice S1 complete")
@@ -327,8 +291,7 @@ def test_resume_reports_what_to_trust(capsys, node_repo):
 
 
 def test_cycle_advances_and_carries_finished_work(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**")])
     invoke(capsys, "--repo", str(node_repo), "task", "status", "S1", "done")
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "cycle")
@@ -340,8 +303,7 @@ def test_cycle_advances_and_carries_finished_work(capsys, node_repo):
 
 
 def test_cycle_cap_stops_the_loop(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     run.state["cycle"] = 4
     run.save()
@@ -351,8 +313,7 @@ def test_cycle_cap_stops_the_loop(capsys, node_repo):
 
 
 def test_abort_cleans_up(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     invoke(capsys, "--repo", str(node_repo), "worktree", "create", "S1", "--no-setup")
     code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "abort")
@@ -519,8 +480,7 @@ def test_gates_run_fails_on_a_regression(capsys, node_repo):
 
 def test_wave_next_names_the_model_for_each_slice(capsys, node_repo):
     """The orchestrator dispatches from this map, so it must be present."""
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     slices = [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**")]
     slices[1]["model"] = "opus"
     plan_for(run, slices)
@@ -531,8 +491,7 @@ def test_wave_next_names_the_model_for_each_slice(capsys, node_repo):
 
 
 def test_wave_next_falls_back_to_the_configured_executor_model(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     run.state["config"]["models"]["executor"] = "sonnet"
     run.save()
     plan_for(run, [slice_spec("S1", "src/a/**")])
@@ -542,8 +501,7 @@ def test_wave_next_falls_back_to_the_configured_executor_model(capsys, node_repo
 
 
 def test_wave_next_text_output_shows_the_model(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     _code, out, _err = invoke(capsys, "--repo", str(node_repo), "wave", "next")
     assert out.strip() == "S1 (haiku)"
@@ -554,8 +512,7 @@ def test_wave_next_text_output_shows_the_model(capsys, node_repo):
 
 def test_cli_reaches_the_run_from_inside_a_slice_worktree(capsys, node_repo):
     """Executors self-report from their worktree; .codag/ lives in the main repo."""
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     invoke(capsys, "--repo", str(node_repo), "worktree", "create", "S1", "--no-setup")
 
@@ -566,8 +523,7 @@ def test_cli_reaches_the_run_from_inside_a_slice_worktree(capsys, node_repo):
 
 
 def test_task_status_can_be_set_from_inside_a_worktree(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     invoke(capsys, "--repo", str(node_repo), "worktree", "create", "S1", "--no-setup")
 
@@ -580,8 +536,7 @@ def test_task_status_can_be_set_from_inside_a_worktree(capsys, node_repo):
 
 
 def test_init_refuses_to_start_from_a_linked_worktree(capsys, node_repo):
-    invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(node_repo)
+    run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     invoke(capsys, "--repo", str(node_repo), "worktree", "create", "S1", "--no-setup")
 

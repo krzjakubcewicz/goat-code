@@ -14,7 +14,8 @@ import pytest
 
 from codag import miniyaml, osenv, run as runmod, worktree
 from codag.run import Run, RunError
-from tests.test_cli import cli, invoke, invoke_json, node_repo  # noqa: F401
+from tests.conftest import make_run
+from tests.test_cli import cli, invoke, invoke_json  # noqa: F401
 
 PLAN = {
     "version": 1,
@@ -218,8 +219,8 @@ def test_a_free_name_is_used_as_is(git_repo):
 
 
 def start(capsys, repo, **plan_overrides):
-    invoke(capsys, "--repo", str(repo), "init", "--prompt", "magic link", "--no-baseline")
-    run = Run.load(repo)
+    """A run with a plan. The `init` path is exercised by its own tests below."""
+    run = make_run(repo, "magic link")
     write_plan(run, **plan_overrides)
     return run
 

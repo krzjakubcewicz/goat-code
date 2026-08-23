@@ -12,7 +12,7 @@ import pytest
 
 from codag import osenv, run as runmod
 from codag.run import Run
-from tests.test_cli import cli, invoke, invoke_json, node_repo  # noqa: F401
+from tests.test_cli import cli, invoke, invoke_json  # noqa: F401
 
 
 def gitignore(repo):

@@ -16,8 +16,8 @@ import json
 import pytest
 
 from codag import machine, miniyaml, osenv, tasks
+from tests.test_cli import cli as cli_module  # noqa: F401
 from codag.run import Run
-from tests.test_cli import node_repo  # noqa: F401
 
 MAX_STEPS = 60
 
@@ -74,8 +74,9 @@ class FakeAgent:
 
     def __init__(
         self, slices, ask_first=True, fail_verdicts=0, block=None, conflict=False,
-        kind="feature", e2e_status="PASS",
+        kind="feature", e2e_status="PASS", subprocess=False,
     ):
+        self.subprocess = subprocess
         self.slices = slices
         self.kind = kind
         self.e2e_status = e2e_status
@@ -86,6 +87,11 @@ class FakeAgent:
         self.planner_rounds = 0
         self.verdicts = []
         self.dispatched = []
+
+    def cli(self, run, *args, **kwargs):
+        """The agent's own CLI calls, in whichever mode the test asked for."""
+        runner = cli_subprocess if self.subprocess else cli
+        return runner(run, *args, **kwargs)
 
     # -- the agents --------------------------------------------------------
 
@@ -101,7 +107,7 @@ class FakeAgent:
         remaining = self.block.get(slice_id, 0)
         if remaining:
             self.block[slice_id] = remaining - 1
-            cli(run, "report", "--slice", slice_id, "--status", "BLOCKED", "--reason", "stuck")
+            self.cli(run, "report", "--slice", slice_id, "--status", "BLOCKED", "--reason", "stuck")
             return
 
         doc = tasks.load(run.tasks_path)
@@ -112,15 +118,15 @@ class FakeAgent:
         _write(path, target, "{}{}".format(body, slice_id))
         osenv.git(["add", "-A"], cwd=path, check=True)
         osenv.git(["commit", "-qm", "{}: work".format(slice_id)], cwd=path, check=True)
-        cli(run, "report", "--slice", slice_id, "--status", "DONE", "--tests", "1 passed")
+        self.cli(run, "report", "--slice", slice_id, "--status", "DONE", "--tests", "1 passed")
 
     def synthesizer(self, run, _dispatch):
         state = run.state.get("merge") or {}
         worktree_path = state["worktree"]
         for conflict in state.get("conflicts") or []:
             _write(worktree_path, conflict, "resolved by the synthesizer\n")
-        cli(run, "merge", "--continue", check=False)
-        cli(run, "report", "--role", "synthesizer", "--status", "CLEAN")
+        self.cli(run, "merge", "--continue", check=False)
+        self.cli(run, "report", "--role", "synthesizer", "--status", "CLEAN")
 
     def verifier(self, run, _dispatch):
         verdict = "FAIL" if len(self.verdicts) < self.fail_verdicts else "PASS"
@@ -128,7 +134,7 @@ class FakeAgent:
         (run.cycle_dir() / "verdict.md").write_text(
             "# Verdict\n\nchecked everything\n\nVERDICT: {}\n".format(verdict), encoding="utf-8"
         )
-        cli(run, "verdict", check=False)
+        self.cli(run, "verdict", check=False)
 
     def e2e(self, run, _dispatch):
         state = run.state.get("merge") or {}
@@ -137,9 +143,9 @@ class FakeAgent:
             _write(worktree_path, "e2e/journey.test.js", "// end to end\n")
             osenv.git(["add", "-A"], cwd=worktree_path, check=True)
             osenv.git(["commit", "-qm", "test: e2e journey"], cwd=worktree_path, check=True)
-            cli(run, "report", "--role", "e2e", "--status", "PASS", "--tests", "1 passed")
+            self.cli(run, "report", "--role", "e2e", "--status", "PASS", "--tests", "1 passed")
         else:
-            cli(run, "report", "--role", "e2e", "--status", self.e2e_status, "--detail", "no runner")
+            self.cli(run, "report", "--role", "e2e", "--status", self.e2e_status, "--detail", "no runner")
 
     def scribe(self, run, _dispatch):
         entry = run.cycle_dir() / "progress-entry.md"
@@ -157,7 +163,7 @@ class FakeAgent:
             ),
             encoding="utf-8",
         )
-        cli(run, "progress", "append", "--body", str(entry))
+        self.cli(run, "progress", "append", "--body", str(entry))
 
     def replanner(self, run, _dispatch):
         doc = tasks.load(run.tasks_path)
@@ -188,11 +194,16 @@ class FakeAgent:
 class Driver:
     """The orchestrator loop, with a fake model."""
 
-    def __init__(self, repo, agent):
+    def __init__(self, repo, agent, subprocess=False):
         self.repo = repo
         self.agent = agent
+        self.subprocess = subprocess
         self.phases = []
         self.waves = []
+
+    def _cli(self, run, *args, **kwargs):
+        runner = cli_subprocess if self.subprocess else cli
+        return runner(run, *args, **kwargs)
 
     def loop(self, limit=MAX_STEPS):
         for _ in range(limit):
@@ -210,8 +221,11 @@ class Driver:
     def perform(self, run, action):
         if action["action"] == "run":
             for command in action["commands"]:
-                result = osenv.run(command)
-                assert result.returncode in (0, 1), "{}\n{}".format(command, result.stderr)
+                if self.subprocess:
+                    result = osenv.run(command)
+                    assert result.returncode in (0, 1), "{}\n{}".format(command, result.stderr)
+                else:
+                    assert cli_module.main(command[2:]) in (0, 1), command
             return
 
         if action["action"] == "dispatch":
@@ -224,13 +238,13 @@ class Driver:
 
         if action["action"] == "ask":
             if action["ask"].get("kind") == "approval":
-                cli(run, "approve", "--yes")
+                self._cli(run, "approve", "--yes")
                 return
             answers = [
                 "{}={}".format(q["id"], _recommended(q))
                 for q in action["ask"]["questions"]
             ]
-            cli(run, "answer", *answers)
+            self._cli(run, "answer", *answers)
             return
 
         raise AssertionError("unknown action {!r}".format(action["action"]))
@@ -244,6 +258,20 @@ def _recommended(question):
 
 
 def cli(run, *args, check=True):
+    """Run a codag command the way the driver does.
+
+    In-process by default: spawning the CLI costs about 1.3 s a call and the
+    driver makes hundreds. ``subprocess=True`` runs the argv exactly as
+    rendered - a couple of tests keep that path, so the command strings
+    cod-ag writes into dispatch prompts are still proven to execute.
+    """
+    code = cli_module.main(machine._argv(run, *args)[2:])
+    if check:
+        assert code in (0, 1), "codag {} exited {}".format(" ".join(str(a) for a in args), code)
+    return code
+
+
+def cli_subprocess(run, *args, check=True):
     command = machine._argv(run, *args)
     result = osenv.run(command)
     if check:
@@ -593,3 +621,42 @@ def test_the_e2e_prompt_names_the_criteria_and_forbids_reading_the_diff(started)
     assert "S1 exists" in prompt
     assert "Do not read the diff" in prompt
     assert "Test files only" in prompt
+
+
+# -- the commands really do run as written ---------------------------------
+#
+# The rest of this file drives the CLI in-process, which is roughly a
+# hundred times faster. These two keep the real subprocess path, so the
+# command strings cod-ag renders into dispatch prompts - the ones a real
+# agent copies and runs - are still proven to execute.
+
+
+def test_a_whole_run_works_through_real_subprocesses(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], subprocess=True)
+    driver = Driver(started, agent, subprocess=True)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    run = Run.load(started)
+    listed = osenv.git_out(["ls-tree", "-r", "--name-only", run.integration_branch], cwd=started)
+    assert "src/s1/index.js" in listed
+
+
+def test_the_rendered_report_command_runs_verbatim(started):
+    """An executor copies this string out of its dispatch prompt."""
+    run = Run.load(started)
+    miniyaml.dump(plan_document(run, [slice_doc("S1", "src/s1/**")]), run.tasks_path)
+    cli(run, "approve", "--yes")
+    cli(run, "branch")
+    cli(run, "worktree", "create", "S1", "--no-setup")
+
+    doc = tasks.load(run.tasks_path)
+    path = tasks.get(doc, "S1")["worktree"]
+    _write(path, "tests/S1.test.js", "// test\n")
+    _write(path, "src/s1/index.js", "module.exports = 1;\n")
+    osenv.git(["add", "-A"], cwd=path, check=True)
+    osenv.git(["commit", "-qm", "S1: work"], cwd=path, check=True)
+
+    result = cli_subprocess(run, "report", "--slice", "S1", "--status", "DONE", "--tests", "1 passed")
+    assert result.ok, result.stderr
+    assert tasks.get(tasks.load(run.tasks_path), "S1")["status"] == "done"

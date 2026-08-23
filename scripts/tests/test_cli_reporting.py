@@ -12,12 +12,13 @@ import pytest
 
 from codag import osenv, worktree
 from codag.run import Run
-from tests.test_cli import cli, invoke, invoke_json, node_repo, plan_for, slice_spec  # noqa: F401
+from tests.conftest import make_run
+from tests.test_cli import cli, invoke, invoke_json, plan_for, slice_spec  # noqa: F401
 
 
 def start(capsys, repo, slices=None):
-    invoke(capsys, "--repo", str(repo), "init", "--prompt", "x", "--no-baseline")
-    run = Run.load(repo)
+    """A run ready to report into. `init` itself is covered in test_cli."""
+    run = make_run(repo)
     if slices is not None:
         plan_for(run, slices)
     return run

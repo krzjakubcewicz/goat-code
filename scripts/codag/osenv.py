@@ -164,6 +164,19 @@ def repo_root(start=None):
     return pathlib.Path(result.out).resolve()
 
 
+#: Resolved main work trees, keyed by the path we were asked about. Locating
+#: the repository takes two git subprocesses, and every CLI command needs it
+#: at least once - the orchestrator loop calls `next` over and over, and each
+#: executor shells out to `report`. Keyed by path, so a test process handling
+#: many repositories still gets the right answer for each.
+_MAIN_ROOTS = {}
+
+
+def clear_repo_cache():
+    """Forget resolved roots. For a test that moves a repo under our feet."""
+    _MAIN_ROOTS.clear()
+
+
 def main_repo_root(start=None):
     """Absolute path of the *main* work tree, even from a linked worktree.
 
@@ -171,7 +184,19 @@ def main_repo_root(start=None):
     state in the main repository's ``.codag/``. ``--show-toplevel`` returns
     the worktree there, so it cannot be used; ``--git-common-dir`` points at
     the main ``.git``, whose parent is the real root.
+
+    Memoised: the answer cannot change within one CLI invocation, and
+    resolving it costs two subprocesses.
     """
+    key = str(start) if start else str(pathlib.Path.cwd())
+    if key in _MAIN_ROOTS:
+        return _MAIN_ROOTS[key]
+    resolved = _resolve_main_repo_root(start)
+    _MAIN_ROOTS[key] = resolved
+    return resolved
+
+
+def _resolve_main_repo_root(start=None):
     where = pathlib.Path(start) if start else pathlib.Path.cwd()
     result = git(["rev-parse", "--git-common-dir"], cwd=where)
     if not result.ok:
@@ -187,8 +212,15 @@ def main_repo_root(start=None):
 
     if common.name == ".git":
         candidate = common.parent
-        # A submodule's common dir is <super>/.git/modules/<name>, which this
-        # name check already excludes; verify anyway before trusting it.
+        # A submodule's common dir is <super>/.git/modules/<name>, so the
+        # name check above already excludes one. When we are standing inside
+        # the candidate, that settles it - no second subprocess needed, and
+        # this is the common case for every CLI invocation.
+        try:
+            if where.resolve().is_relative_to(candidate):
+                return candidate
+        except (OSError, AttributeError):
+            pass
         check = git(["rev-parse", "--show-toplevel"], cwd=candidate)
         if check.ok and pathlib.Path(check.out).resolve() == candidate:
             return candidate

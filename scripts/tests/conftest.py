@@ -1,11 +1,18 @@
 """Shared pytest fixtures. Adds ``scripts/`` to sys.path so tests import
 ``codag`` the same way ``codag.py`` does, with no packaging step.
+
+Repository fixtures are built **once per session** and copied per test.
+Building one with real git costs about half a second; copying it costs about
+twenty milliseconds, and around six hundred tests need one. Each test still
+gets its own independent repository - only the way it is produced changes.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
+import shutil
 import sys
 
 import pytest
@@ -15,6 +22,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from codag import osenv  # noqa: E402
+from codag.run import Run  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -26,11 +34,11 @@ def temp_root(tmp_path, monkeypatch):
     return root
 
 
-@pytest.fixture
-def git_repo(tmp_path):
-    """A tiny initialised git repo with one commit on ``main``."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
+# -- repository templates, built once ---------------------------------------
+
+
+def _build_git_repo(repo):
+    repo.mkdir(parents=True, exist_ok=True)
     osenv.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
     osenv.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
     osenv.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
@@ -39,6 +47,83 @@ def git_repo(tmp_path):
     osenv.run(["git", "add", "-A"], cwd=repo, check=True)
     osenv.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
     return repo
+
+
+def _build_node_repo(repo):
+    """A repo with a detectable stack whose gates are fast and scriptable."""
+    (repo / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "fixture",
+                "scripts": {"build": "node -e \"process.exit(0)\"", "test": "node scripts/test.js"},
+                "devDependencies": {"typescript": "5.6.0"},
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (repo / "package-lock.json").write_text("{}", encoding="utf-8")
+    (repo / "tsconfig.json").write_text("{}", encoding="utf-8")
+    scripts = repo / "scripts"
+    scripts.mkdir(exist_ok=True)
+    (scripts / "test.js").write_text("process.exit(0);\n", encoding="utf-8")
+    osenv.git(["add", "-A"], cwd=repo, check=True)
+    osenv.git(["commit", "-qm", "fixture project"], cwd=repo, check=True)
+    return repo
+
+
+@pytest.fixture(scope="session")
+def _git_template(tmp_path_factory):
+    return _build_git_repo(tmp_path_factory.mktemp("template") / "git-repo")
+
+
+@pytest.fixture(scope="session")
+def _node_template(tmp_path_factory):
+    return _build_node_repo(_build_git_repo(tmp_path_factory.mktemp("template") / "node-repo"))
+
+
+@pytest.fixture
+def git_repo(tmp_path, _git_template):
+    """A tiny initialised git repo with one commit on ``main``."""
+    target = tmp_path / "repo"
+    shutil.copytree(_git_template, target)
+    return target
+
+
+@pytest.fixture
+def node_repo(tmp_path, _node_template):
+    """A repo with a detectable stack whose gates are fast and scriptable."""
+    target = tmp_path / "repo"
+    shutil.copytree(_node_template, target)
+    return target
+
+
+# -- a run, without paying for the CLI's init -------------------------------
+
+
+def make_run(repo, title="fixture feature", mode="chat"):
+    """A run directory and a detected stack, without the CLI's ``init``.
+
+    For the many tests that need a run to exist but are not about ``init``
+    itself. Skips preflight, orphan reaping, the integration worktree and the
+    baseline gates - about 1.8 seconds a test. Tests whose subject *is*
+    ``init`` still call the real thing.
+    """
+    from codag import run as runmod, stack as stackmod
+
+    # Hiding .codag/ is part of "a run exists"; writing .gitignore is not -
+    # that belongs to init, and init's own tests still cover it.
+    runmod.ensure_ignored(repo)
+    run = Run.create(repo, title, mode)
+    stackmod.write(repo, run.stack_path)
+    run.set_phase("grill")
+    return run
+
+
+@pytest.fixture
+def ready_run(node_repo):
+    """``make_run`` as a fixture, for tests that want it ready-made."""
+    return make_run(node_repo)
 
 
 def commit_file(repo, relpath, text, message):
