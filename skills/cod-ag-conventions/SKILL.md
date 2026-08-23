@@ -226,7 +226,9 @@ Commit messages use caveman style: `add token expiry check`, not
 
 - `superpowers:test-driven-development` — executors, always
 - `superpowers:writing-plans` — planner, for task right-sizing
-- `superpowers:brainstorming` and `grilling` — planner, for the question rounds
+- `superpowers:brainstorming` — planner, for generating the questions
+  (how to *ask* them is inlined in the planner: cod-ag must not depend on
+  a skill that only exists on one machine)
 - `superpowers:systematic-debugging` — replanner, failure to root cause
 - `superpowers:verification-before-completion` — verifier
 - `ponytail:ponytail` (lite) — executors and the synthesizer, against gold-plating

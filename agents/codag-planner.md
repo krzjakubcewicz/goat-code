@@ -45,7 +45,29 @@ already in the repo waste the user's time and make you look careless.
 
 ## Phase 2: grill
 
-Use `grilling` and `superpowers:brainstorming` for the questioning style.
+Use `superpowers:brainstorming` for generating the questions. How to ask
+them:
+
+**Walk the design tree, resolving dependencies between decisions.** Some
+answers change what the next question even means. Ask the ones that unlock
+others first, and hold back a question whose framing depends on an answer
+you do not have yet — it belongs in the next round, phrased properly, not
+in this one phrased vaguely.
+
+**Every question carries your recommendation.** You have read the code and
+the spec; the user has not, today. A question with no recommended answer
+makes them do your thinking. Name the option you would pick and why.
+
+**Look facts up; ask only about decisions.** Anything discoverable by
+reading the repository is yours to find. What the user is *for* is the
+choices only they can make — intent, priorities, trade-offs, what they
+meant. Never spend one of your limited questions on a fact.
+
+**A round is not a questionnaire.** Asking eight loosely-related questions
+at once is bewildering and gets careless answers. Ask the few that matter
+now. You have up to three rounds; use them as a conversation, not as one
+form split into three pages.
+
 You must have an answer or a recorded assumption on **all four axes** before
 you may return PLAN:
 

@@ -336,7 +336,7 @@ def test_readme_model_table_matches_reality():
 
 EXPECTED_SKILLS = {
     "codag-executor": ["superpowers:test-driven-development", "ponytail:ponytail"],
-    "codag-planner": ["superpowers:writing-plans", "grilling"],
+    "codag-planner": ["superpowers:writing-plans", "superpowers:brainstorming"],
     "codag-verifier": ["superpowers:verification-before-completion", "ponytail:ponytail-review"],
     "codag-replanner": ["superpowers:systematic-debugging"],
 }
@@ -355,3 +355,38 @@ def test_the_conventions_skill_lists_them_all():
     for skills in EXPECTED_SKILLS.values():
         for skill in skills:
             assert skill in text, "conventions does not list {}".format(skill)
+
+
+#: Every skill cod-ag's agents load from another plugin. Kept explicit so
+#: adding a dependency is a deliberate act - cod-ag is installed on machines
+#: that do not have whatever happens to be in one developer's ~/.claude.
+EXTERNAL_SKILLS = {
+    "superpowers:brainstorming",
+    "superpowers:systematic-debugging",
+    "superpowers:test-driven-development",
+    "superpowers:verification-before-completion",
+    "superpowers:writing-plans",
+    "ponytail:ponytail",
+    "ponytail:ponytail-review",
+}
+
+
+def test_agents_depend_on_exactly_the_declared_skills():
+    """A new dependency has to be added here on purpose.
+
+    Note what this does *not* catch: a bare, un-namespaced skill name from
+    someone's personal ~/.claude/skills. Namespacing is the convention that
+    makes a dependency visible; keep to it.
+    """
+    found = set()
+    for path in AGENTS:
+        text = path.read_text(encoding="utf-8")
+        for name in re.findall(r"`((?:superpowers|ponytail|grilling)[a-z:-]*)`", text):
+            found.add(name)
+
+    # engineering-skills is resolved at runtime from stack.json, not named.
+    unexpected = found - EXTERNAL_SKILLS
+    assert not unexpected, "undeclared skill dependency: {}".format(sorted(unexpected))
+
+    unused = EXTERNAL_SKILLS - found
+    assert not unused, "declared but no agent loads it: {}".format(sorted(unused))

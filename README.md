@@ -215,6 +215,20 @@ python scripts/codag.py finish
 `python scripts/codag.py --help` lists everything. Add `--json` for
 machine-readable output.
 
+## Skill dependencies
+
+cod-ag's agents load these from other plugins. Install them alongside it:
+
+| plugin | skills used |
+| --- | --- |
+| `superpowers` | `brainstorming`, `writing-plans`, `test-driven-development`, `systematic-debugging`, `verification-before-completion` |
+| `ponytail` | `ponytail`, `ponytail-review` |
+| `engineering-skills` | the `senior-*` specialist chosen at runtime from `stack.json` |
+
+The list is pinned by a test, so adding a dependency is a deliberate act.
+Anything else an agent needs is written into the agent itself - cod-ag runs
+on machines that do not have whatever happens to be in your `~/.claude`.
+
 ## Built on
 
 [superpowers](https://github.com/anthropics/claude-plugins-official) for
