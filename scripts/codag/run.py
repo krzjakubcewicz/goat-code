@@ -48,6 +48,7 @@ PHASES = (
     "synthesize",
     "verify",
     "e2e",
+    "record",
     "replan",
     "done",
     "failed",
@@ -81,6 +82,10 @@ DEFAULT_CONFIG = {
     # After a passing verdict on a feature, dispatch an agent to write and run
     # an end-to-end test of what was built. Bugfix runs skip it either way.
     "write_e2e_tests": True,
+    # Append an entry to .codag/progress.txt when a run completes, and read
+    # earlier entries when planning. The learnings are the point: they stop a
+    # later run rediscovering what this one found out.
+    "write_progress": True,
     "worktree_setup": True,
     "models": {
         "planner": "opus",
@@ -88,6 +93,7 @@ DEFAULT_CONFIG = {
         "executor_escalated": "sonnet",
         "synthesizer": "sonnet",
         "e2e": "sonnet",
+        "scribe": "sonnet",
         "verifier": "opus",
         "replanner": "opus",
     },
@@ -619,6 +625,9 @@ class Run:
             return self.kind_override
         declared = (doc or {}).get("kind")
         return declared if declared in KINDS else DEFAULT_KIND
+
+    def wants_progress(self):
+        return bool(self.config.get("write_progress", True))
 
     def wants_e2e(self, doc=None):
         return self.config.get("write_e2e_tests", True) and self.kind(doc) == "feature"

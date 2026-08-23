@@ -15,7 +15,7 @@ import pathlib
 
 import sys
 
-from . import dispatch, merge, miniyaml, report, schema, tasks
+from . import dispatch, merge, miniyaml, progress, report, schema, tasks
 
 #: Actions the orchestrator knows how to perform.
 ACTIONS = ("run", "dispatch", "ask", "escalate", "stop")
@@ -44,6 +44,7 @@ class Evidence:
         self.verdict = report.read_verdict(run)
         self.merge_state = merge.state_of(run)
         self.e2e = run.state.get("e2e") or {}
+        self.progress = run.state.get("scribe") or {}
 
     @property
     def has_plan(self):
@@ -110,6 +111,10 @@ def derive_phase(run, evidence=None):
             return "e2e"
         if evidence.e2e.get("status") == "FAILED":
             return "failed"
+        # One entry per completed run, with the learnings a later run would
+        # otherwise have to rediscover.
+        if run.wants_progress() and not evidence.progress.get("status"):
+            return "record"
         return "done"
     if evidence.verdict == "FAIL":
         return "replan"
@@ -170,6 +175,7 @@ def next_action(run, stack_profile=None):
         "synthesize": _synthesize,
         "verify": _verify,
         "e2e": _e2e,
+        "record": _record,
         "replan": _replan,
     }.get(phase)
 
@@ -529,6 +535,23 @@ def _e2e(run, evidence, stack_profile):
         "dispatch codag-e2e ({})".format(_model(run, "e2e")),
         dispatches=[
             {"agent": "codag-e2e", "model": _model(run, "e2e"), "slice": None, "prompt": str(path)}
+        ],
+    )
+
+
+# -- the progress log ------------------------------------------------------
+
+
+def _record(run, evidence, stack_profile):
+    text = dispatch.scribe(run, evidence.doc, _criteria(evidence.doc), evidence.merge_state)
+    path = dispatch.write(run, "scribe", text)
+    return _action(
+        run,
+        "dispatch",
+        "the run is finished and has not been written up yet",
+        "dispatch codag-scribe ({})".format(_model(run, "scribe")),
+        dispatches=[
+            {"agent": "codag-scribe", "model": _model(run, "scribe"), "slice": None, "prompt": str(path)}
         ],
     )
 

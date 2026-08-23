@@ -36,6 +36,7 @@ from codag import (  # noqa: E402
     ledger as ledgermod,
     machine as machinemod,
     merge as mergemod,
+    progress as progressmod,
     miniyaml,
     osenv,
     report as reportmod,
@@ -610,6 +611,43 @@ def cmd_verify_package(args):
 
 
 # --------------------------------------------------------------------------
+# the progress log
+# --------------------------------------------------------------------------
+
+
+def cmd_progress(args):
+    """The project's cross-run log. Appends; never rewrites."""
+    repo = resolve_repo(args)
+
+    if args.progress_command == "show":
+        found = progressmod.recent(repo, args.limit)
+        payload = {"path": str(progressmod.path_for(repo)), "count": len(found), "entries": found}
+        joiner = "\n\n{}\n\n".format(progressmod.SEPARATOR)
+        emit(args, payload, joiner.join(found) or "(no entries yet)")
+        return EXIT_OK
+
+    if args.progress_command == "append":
+        run = resolve_run(args)
+        body = args.text
+        if args.body:
+            source = pathlib.Path(args.body)
+            if not source.exists():
+                raise CliError("no entry body at {}".format(source))
+            body = osenv.read_text(source)
+        try:
+            entry = progressmod.append(repo, run, body)
+        except ValueError as exc:
+            raise CliError(str(exc))
+
+        reportmod.record_role(run, "scribe", "WRITTEN")
+        payload = {"path": str(progressmod.path_for(repo)), "entry": entry}
+        emit(args, payload, "appended to {}".format(payload["path"]))
+        return EXIT_OK
+
+    raise CliError("unknown progress command")
+
+
+# --------------------------------------------------------------------------
 # the feature branch
 # --------------------------------------------------------------------------
 
@@ -1063,6 +1101,16 @@ def build_parser():
 
     p = add(sub, "verify-package", help="gates + diff + criteria for the verifier")
     p.set_defaults(func=cmd_verify_package)
+
+    p = add(sub, "progress", help="the project's cross-run log of what cod-ag did and learnt")
+    s = p.add_subparsers(dest="progress_command", required=True)
+    shower = add(s, "show")
+    shower.add_argument("--limit", type=int, default=5, help="how many recent entries (0 for all)")
+    shower.set_defaults(func=cmd_progress)
+    appender = add(s, "append")
+    appender.add_argument("--body", help="file holding the entry body")
+    appender.add_argument("--text", help="the entry body inline, instead of --body")
+    appender.set_defaults(func=cmd_progress)
 
     p = add(sub, "branch", help="name the branch the work lands on, before any code")
     p.add_argument("--name", help="use this name instead of the configured template")

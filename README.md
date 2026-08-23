@@ -117,6 +117,10 @@ merge:  git merge feature/magic-link-login
 nothing was committed to your branch main
 ```
 
+Each completed run also appends to `.codag/progress.txt` - what was built,
+what changed, and the learnings a later run would otherwise rediscover. The
+planner reads those entries before planning the next piece of work.
+
 The run directory holds the whole record: the spec with your clarifications
 appended, the plan, each slice's brief and report, the merge report, the
 gate results and the verdict with per-criterion evidence.
@@ -134,6 +138,7 @@ gets the expensive models; mechanical work does not.
 | executor (after BLOCKED) | sonnet | one step up when haiku could not finish |
 | synthesizer | sonnet | reconciles conflicts, but within a very narrow brief |
 | e2e | sonnet | writes one test proving the finished feature from outside |
+| scribe | sonnet | writes up the run and its learnings in the progress log |
 | verifier | opus | the only gate on whether the run is actually done |
 | replanner | opus | diagnosing root cause is the hardest judgement in the loop |
 

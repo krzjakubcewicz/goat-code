@@ -141,6 +141,24 @@ class FakeAgent:
         else:
             cli(run, "report", "--role", "e2e", "--status", self.e2e_status, "--detail", "no runner")
 
+    def scribe(self, run, _dispatch):
+        entry = run.cycle_dir() / "progress-entry.md"
+        entry.write_text(
+            "\n".join(
+                [
+                    "- What was implemented",
+                    "  - the fixture feature",
+                    "- Files changed",
+                    "  - src/**",
+                    "- **Learnings for future iterations:**",
+                    "  - the fake agent wrote this",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        cli(run, "progress", "append", "--body", str(entry))
+
     def replanner(self, run, _dispatch):
         doc = tasks.load(run.tasks_path)
         for item in tasks.slices(doc):
@@ -160,6 +178,7 @@ class FakeAgent:
             "codag-synthesizer": self.synthesizer,
             "codag-verifier": self.verifier,
             "codag-e2e": self.e2e,
+            "codag-scribe": self.scribe,
             "codag-replanner": self.replanner,
         }[entry["agent"]]
         assert open(entry["prompt"], encoding="utf-8").read().strip(), "dispatch prompt is empty"
@@ -286,6 +305,7 @@ def test_a_whole_run_reaches_done_with_no_model(started):
         "synthesize",
         "verify",
         "e2e",
+        "record",
         "done",
     ]
 

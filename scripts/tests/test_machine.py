@@ -101,6 +101,17 @@ def e2e_passed(run):
     return run
 
 
+def recorded(run):
+    """...and once the run has been written up in the progress log."""
+    run.state["scribe"] = {"status": "WRITTEN", "detail": None, "tests": None}
+    run.save()
+    return run
+
+
+def finished(run):
+    return recorded(e2e_passed(run))
+
+
 def finish_slice(run, slice_id):
     """Do what an executor does: worktree, commit, report DONE."""
     path, _branch, _setup = worktree.create(run, slice_id, setup=False)
@@ -209,7 +220,7 @@ def test_a_passing_verdict_is_done_once_e2e_has_reported(run):
     write_plan(run)
     approved(run)
     (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
-    e2e_passed(run)
+    finished(run)
     assert machine.derive_phase(run) == "done"
 
 
@@ -615,7 +626,7 @@ def test_done_reports_the_branch_and_leaves_the_user_branch_alone(run):
     write_plan(run)
     approved(run)
     (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
-    e2e_passed(run)
+    finished(run)
 
     action = machine.next_action(run)
     assert action["action"] == "stop"
@@ -630,7 +641,7 @@ def test_stop_is_idempotent(run):
     write_plan(run)
     approved(run)
     (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
-    e2e_passed(run)
+    finished(run)
     machine.next_action(run)
     assert machine.next_action(run)["outcome"] == "done"
 
@@ -707,3 +718,50 @@ def test_the_branch_step_happens_once(run):
     approved(run)
     action = machine.next_action(run)
     assert action["commands"][0][-1] != "branch"
+
+
+# -- the progress log ------------------------------------------------------
+
+
+def test_a_finished_run_is_written_up_before_it_is_done(run):
+    write_plan(run)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    e2e_passed(run)
+
+    assert machine.derive_phase(run) == "record"
+    action = machine.next_action(run)
+    assert action["dispatches"][0]["agent"] == "codag-scribe"
+    assert action["dispatches"][0]["model"] == "sonnet"
+
+
+def test_recording_can_be_switched_off(run):
+    write_plan(run)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    e2e_passed(run)
+    run.state["config"]["write_progress"] = False
+    run.save()
+    assert machine.derive_phase(run) == "done"
+
+
+def test_a_bugfix_is_still_written_up(run):
+    """It skips the E2E phase, not the log - its learnings matter as much."""
+    write_plan(run, dict(PLAN, kind="bugfix", kind_reason="restores behaviour"))
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    assert machine.derive_phase(run) == "record"
+
+
+def test_the_scribe_prompt_points_at_the_run_artifacts(run):
+    write_plan(run)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    e2e_passed(run)
+
+    prompt = open(machine.next_action(run)["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert str(run.spec_path) in prompt
+    assert str(run.tasks_path) in prompt
+    assert str(run.cycle_dir() / "verdict.md") in prompt
+    assert "progress append" in prompt
+    assert "Learnings" in prompt or "learnings" in prompt

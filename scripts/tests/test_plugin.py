@@ -76,6 +76,7 @@ def test_every_agent_exists():
         "codag-synthesizer",
         "codag-verifier",
         "codag-e2e",
+        "codag-scribe",
         "codag-replanner",
     }
 
@@ -269,6 +270,7 @@ EXPECTED_MODELS = {
     "codag-executor": "haiku",
     "codag-synthesizer": "sonnet",
     "codag-e2e": "sonnet",
+    "codag-scribe": "sonnet",
     "codag-verifier": "opus",
     "codag-replanner": "opus",
 }

@@ -59,6 +59,11 @@ enforce_tdd: true
 # bugfix slice already had to be written test-first.
 write_e2e_tests: true
 
+# Append an entry to .codag/progress.txt when a run completes, and show
+# earlier entries to the planner. The learnings section is the point: it
+# stops the next run rediscovering what this one found out.
+write_progress: true
+
 # Install dependencies in each new worktree. Turn this off for projects
 # where install is slow and the tests do not need it.
 worktree_setup: true
@@ -79,5 +84,6 @@ models:
   executor_escalated: sonnet
   synthesizer: sonnet
   e2e: sonnet
+  scribe: sonnet
   verifier: opus
   replanner: opus

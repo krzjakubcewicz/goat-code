@@ -16,7 +16,7 @@ from __future__ import annotations
 import pathlib
 import sys
 
-from . import osenv
+from . import _scribe_prompt, osenv, progress
 
 #: Absolute path to the CLI, resolved from this file so a rendered command
 #: is correct regardless of the agent's working directory or PATH.
@@ -70,6 +70,12 @@ def planner(run, round_no, forced=False, validator_errors=None, revision=None):
     add("")
     add("- Spec (read the `## Clarifications` sections; those are already answered): `{}`".format(run.spec_path))
     add("- Detected stack: `{}`".format(run.stack_path))
+    if progress.entries(run.repo):
+        add("- What earlier runs learnt about this codebase - read this before")
+        add("  exploring, it will save you time and stop you asking a question")
+        add("  someone already answered:")
+        add("")
+        add("        {}".format(command(run, "progress", "show")))
     add("")
 
     if validator_errors:
@@ -426,6 +432,70 @@ def e2e(run, doc, package, profile=None):
     add("    {}".format(command(run, "report", "--role", "e2e", "--status", "FAILED", "--detail", "<criterion and what happened>")))
     add("")
     add("A FAILED ends the run, so be sure. Debug your test first.")
+    return "\n".join(lines)
+
+
+def scribe(run, doc, criteria, merge_state=None):
+    """Prompt for the agent that writes the run up in the progress log."""
+    lines = []
+    add = lines.append
+    entry_path = run.cycle_dir() / "progress-entry.md"
+
+    add("# Progress dispatch - {}".format(run.run_id))
+    add("")
+    add(_scribe_prompt.INTRO)
+
+    add("## What this run did")
+    add("")
+    add("Goal: {}".format((doc or {}).get("goal", "")))
+    add("Kind: {}".format(run.kind(doc)))
+    add("Branch: `{}`, off `{}`".format(run.integration_branch, run.state.get("base_branch")))
+    add("Cycles: {}".format(run.cycle))
+    add("")
+
+    add("## Read these before writing")
+    add("")
+    add("- The spec, with the user's clarifications: `{}`".format(run.spec_path))
+    add("- The plan and its outcomes: `{}`".format(run.tasks_path))
+    add("- What each executor reported: `{}`".format(run.cycle_dir() / "reports"))
+    add("- The verdict: `{}`".format(run.cycle_dir() / "verdict.md"))
+    add("- The merge report: `{}`".format(run.cycle_dir() / "merge-report.md"))
+    add("- The ledger, for the order things happened in: `{}`".format(run.ledger_path))
+    if run.cycle > 1:
+        add("- Earlier cycles under `{}` - a cycle that failed is where the".format(run.root))
+        add("  most useful learnings usually are")
+    add("")
+    add("Existing entries, so you do not repeat a learning already recorded:")
+    add("")
+    add("    {}".format(command(run, "progress", "show")))
+    add("")
+
+    add("## What to write")
+    add("")
+    add("Write the body of the entry - no heading, no date, no separator; the")
+    add("command adds those - to:")
+    add("")
+    add("    {}".format(entry_path))
+    add("")
+    add("Shape:")
+    add("")
+    add("```")
+    add(progress.template())
+    add("```")
+    add("")
+    add(_scribe_prompt.LEARNINGS)
+    add("")
+
+    add("## Then record it")
+    add("")
+    add("    {}".format(command(run, "progress", "append", "--body", str(entry_path))))
+    add("")
+    add("It appends; it never rewrites what is already in the file. If there is")
+    add("genuinely nothing worth recording:")
+    add("")
+    add("    {}".format(command(run, "report", "--role", "scribe", "--status", "SKIPPED", "--detail", "<why>")))
+    add("")
+    add("Return one line.")
     return "\n".join(lines)
 
 

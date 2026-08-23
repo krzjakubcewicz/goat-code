@@ -32,6 +32,10 @@ Do this work before writing a single question. Questions that ignore what is
 already in the repo waste the user's time and make you look careless.
 
 1. Read the spec file and `stack.json` you were given.
+1b. Read the progress log if your dispatch names one. Earlier runs recorded
+   what they found out about this codebase; starting from their learnings
+   beats rediscovering them, and repeating a question they already answered
+   wastes the user's time.
 2. Read `## Clarifications (round N)` sections in the spec — those are
    answers you already have. Never ask them again.
 3. Explore the codebase. Find the existing utilities, patterns, naming

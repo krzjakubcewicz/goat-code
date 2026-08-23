@@ -224,6 +224,22 @@ Python 3.9 and 3.13):
   own block so the next run is not blocked by the change
   the pipeline promised not to touch.
 
+## Two logs, for two readers
+
+`ledger.md` is per-run machine bookkeeping: one line per step, used to
+recover after a crash or a compaction. `progress.txt` is cross-run and
+written for a reader - one entry per completed run.
+
+They exist separately because they answer different questions. The ledger
+answers "what has already happened in this run, so I do not redo it". The
+progress log answers "what does this codebase do that surprised the last
+person who touched it".
+
+Only the second is worth a model's time, which is why an agent writes it and
+a script writes the ledger. The append itself is scripted either way: an
+instruction to never overwrite a file is exactly the kind of instruction
+that eventually gets ignored.
+
 ## Context discipline
 
 Everything pasted into a dispatch, and everything an agent prints back,

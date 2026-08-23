@@ -12,7 +12,7 @@ defined once instead of drifting across five agent files.
 
 ```
 init -> grill -> plan -> validate -> approve -> branch -> execute (waves)
-     -> synthesize -> verify -> e2e -> DONE | replan -> execute ...
+     -> synthesize -> verify -> e2e -> record -> DONE | replan -> execute ...
 ```
 
 The `e2e` phase runs only for a `kind: feature` run: an agent writes and
@@ -41,6 +41,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 | --- | --- |
 | `next` | **the state machine** - the single next action to take |
 | `branch` | name the branch the work lands on, before any code is written |
+| `progress show` / `progress append --body F` | the cross-run log; append never rewrites |
 | `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |
 | `plan validate` / `plan show` / `plan waves` | gate and inspect tasks.yaml |
 | `wave next` | slice ids dispatchable right now, capped at the parallel limit |
@@ -54,6 +55,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 | `report --slice S1 --status DONE` | an executor records its result; a DONE is verified |
 | `report --role synthesizer --status CLEAN\|ESCALATE` | the synthesizer records its result |
 | `report --role e2e --status PASS\|SKIPPED\|FAILED` | the end-to-end agent records its result |
+| `report --role scribe --status WRITTEN\|SKIPPED` | the scribe records its result |
 | `answer QID=answer ...` | record a grill round and count it |
 | `approve --yes\|--revise TEXT\|--abort` | record the plan approval gate |
 | `verdict` | read the verifier PASS/FAIL back and move the run on |
@@ -76,6 +78,7 @@ never commits it.
 
 ```
 .codag/runs/<run-id>/
+  progress.txt         cross-run log: what each run did and what it learnt
   spec.md              the spec, plus appended "## Clarifications (round N)"
   stack.json           detected languages, frameworks, commands, specialists
   state.json           phase, cycle, base commit, branches, worktrees

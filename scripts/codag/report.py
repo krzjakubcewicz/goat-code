@@ -194,10 +194,16 @@ def record_slice(
 ROLE_STATUSES = {
     "synthesizer": ("CLEAN", "ESCALATE"),
     "e2e": ("PASS", "SKIPPED", "FAILED"),
+    "scribe": ("WRITTEN", "SKIPPED"),
 }
 
 #: Statuses that must say why.
-NEEDS_DETAIL = {("synthesizer", "ESCALATE"), ("e2e", "SKIPPED"), ("e2e", "FAILED")}
+NEEDS_DETAIL = {
+    ("synthesizer", "ESCALATE"),
+    ("e2e", "SKIPPED"),
+    ("e2e", "FAILED"),
+    ("scribe", "SKIPPED"),
+}
 
 
 def record_role(run, role, status, detail=None, tests=None):

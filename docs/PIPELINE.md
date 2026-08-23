@@ -182,6 +182,35 @@ the cycle budget.
 A `kind: bugfix` run skips this phase entirely. Its slices already had to be
 written test-first, and that is the right level for a fix.
 
+## `record`
+
+The last thing before `done`, on every completed run - feature or bugfix.
+`codag-scribe` reads the run's artifacts and appends one entry to
+`.codag/progress.txt`:
+
+```
+## 2026-08-23 14:05 - 20260823-140012-magic-link
+Run: .codag/runs/20260823-140012-magic-link
+- What was implemented
+- Files changed
+- **Learnings for future iterations:**
+  - routes register in src/routes/index.ts, not by file convention
+---
+```
+
+The first two sections are brief; git already records what changed. The
+learnings are the reason the file exists, and they are drawn from what
+actually happened - a `DONE_WITH_CONCERNS`, a failed verdict, a path two
+slices both needed. A run that took two cycles has more to teach than one
+that went straight through.
+
+The planner is shown these entries at the start of the next run, which is
+what closes the loop.
+
+Appending is done by `codag progress append`, not by the agent, so "append,
+never replace" is a property of the code. The log lives under `.codag/`, so
+it is git-ignored along with the rest of the run state.
+
 ## `done`
 
 The `stop` action carries the message and the `finish` command, which removes
