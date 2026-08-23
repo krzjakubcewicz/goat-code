@@ -1,6 +1,6 @@
 # cod-ag
 
-A multi-agent feature pipeline for Claude Code. You describe a feature; it
+A multi-agent feature pipeline. You describe a feature; it
 interrogates you until the requirements are unambiguous, splits the work
 into independently-shippable vertical slices, builds them in parallel in
 isolated git worktrees, merges them, verifies the result against your
@@ -8,10 +8,22 @@ acceptance criteria, and either says `DONE` or replans and tries again.
 
 It never commits to the branch you are on.
 
+Run it two ways. In Claude Code:
+
 ```
 /cod-ag "add magic-link login"
 /cod-ag --spec docs/specs/auth.md
 ```
+
+Or in a terminal, with no session at all:
+
+```bash
+python scripts/codag.py run --prompt "add magic-link login"
+python scripts/codag.py run --spec docs/specs/auth.md --yes
+```
+
+Both drive the same state machine and the same agents. See
+[Standalone](#standalone) for what the second one needs.
 
 ## How it works
 
@@ -20,7 +32,8 @@ It never commits to the branch you are on.
          │  request or spec
          ▼
    ┌─────────────────────────────────────────────┐
-   │ orchestrator  (the main Claude Code thread) │
+   │ orchestrator                                │
+   │ the main Claude Code thread, or `codag run` │
    └─────────────────────────────────────────────┘
          │
          ├─ grill ────── planner ⇄ you        up to 3 question rounds
@@ -41,10 +54,11 @@ It never commits to the branch you are on.
          └─ DONE  or  replanner ──▶ execute again  (max 3 cycles)
 ```
 
-The orchestrator is the main thread rather than an agent, because only the
-main thread can spawn subagents and ask you questions. Planner, executor,
-synthesizer, verifier and replanner are real subagents with isolated
-context.
+In the plugin the orchestrator is the main thread rather than an agent,
+because only the main thread can spawn subagents and ask you questions.
+Planner, executor, synthesizer, verifier and replanner are real subagents
+with isolated context. Standalone, `codag run` is the orchestrator and each
+agent is its own headless `claude` process.
 
 **The orchestrator does not decide any of this.** `codag next` reads the run
 state off disk and returns one action - run this command, dispatch these
@@ -102,6 +116,54 @@ CI runs the test suite on all three.
 | `/cod-ag-status [--all]` | phase, cycle, slice states, recent ledger |
 | `/cod-ag-resume` | pick up an interrupted run from its ledger |
 | `/cod-ag-abort` | stop a run and clean up its worktrees |
+
+## Standalone
+
+The pipeline does not need a Claude Code session. `codag run` is the
+orchestrator itself: it reads the same actions from the same state machine
+and spawns each agent as a headless `claude` process.
+
+```bash
+python scripts/codag.py run --prompt "add magic-link login"
+python scripts/codag.py run --spec docs/specs/auth.md --yes
+python scripts/codag.py run --resume        # after an interruption
+```
+
+Needs the [Claude Code CLI](https://claude.com/claude-code) on `PATH` and a
+working login - the same one you already use. Nothing else; still no pip
+install.
+
+| Flag | |
+| --- | --- |
+| `--yes` | take every recommended answer and approve the plan. For CI. |
+| `--max-cost N` | dollar cap per agent dispatch |
+| `--quiet` | receipts only, no per-tool output |
+| `--claude-bin` | the executable, if it is not on `PATH` |
+| `--claude-arg=--safe-mode` | any extra argument for `claude`, repeatable |
+
+Without `--yes` it asks the grill questions and the approval gate in the
+terminal. With no terminal and no `--yes` it stops rather than blocking on a
+read that will never return.
+
+```
+[00:12] execute    wave of 2 slice(s) ready
+    S1         Write test/auth/magic-link.test.js
+    S2         Bash npm test -- session
+    S1         Edit src/auth/session.js
+  ok   S1 251s $0.31
+  ok   S2 228s $0.27
+```
+
+**Permissions.** Agents run headless, so nobody can answer a permission
+prompt; a Bash call that needs one is denied and reported back. If you want
+agents running commands unattended, set `permission_mode: bypassPermissions`
+in `.codag/config.yaml`. That is not the default on purpose.
+
+**Your settings come along.** A dispatched `claude` inherits your `~/.claude`
+configuration, which is how the `superpowers` and `ponytail` skills the
+agents use resolve at all - and also means your own hooks and `CLAUDE.md`
+reach every agent. `--claude-arg=--safe-mode` turns all of it off, including
+those skills.
 
 ## What you get back
 

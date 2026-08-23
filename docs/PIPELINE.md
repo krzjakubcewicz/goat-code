@@ -17,6 +17,17 @@ Each `next` returns one action — `run`, `dispatch`, `ask`, `escalate` or
 Everything below describes what the machine decides at each phase, and the
 artifacts that come out.
 
+`codag run` is that same loop, performed by Python instead of by a Claude
+Code session:
+
+```bash
+python scripts/codag.py run --prompt "add magic-link login"
+```
+
+It does the `init` above, then reads each action and performs it — spawning
+`claude -p` per dispatch, asking you the questions on stdin — until `stop`.
+Everything below applies unchanged to both.
+
 ## `init`
 
 - Preflight: git repo, at least one commit, clean tree, attached HEAD, not a

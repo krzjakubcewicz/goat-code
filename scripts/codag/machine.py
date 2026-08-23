@@ -184,6 +184,24 @@ def next_action(run, stack_profile=None):
     return _log_action(handler(run, evidence, stack_profile))
 
 
+def _entry(agent, model, prompt, slice_id=None, cwd=None):
+    """One dispatch.
+
+    ``cwd`` is where a driver that spawns its own agent processes must start
+    this one. Worktrees live outside the repository, so an agent given only
+    the repo cannot read or write its own slice. Claude Code subagents
+    inherit the main thread's directory and are told the path in their
+    brief, so the plugin ignores this field.
+    """
+    return {
+        "agent": agent,
+        "model": model,
+        "slice": slice_id,
+        "prompt": str(prompt),
+        "cwd": str(cwd) if cwd else None,
+    }
+
+
 def _log_action(action):
     debuglog.log(
         "action",
@@ -195,7 +213,7 @@ def _log_action(action):
     for entry in action.get("dispatches") or []:
         debuglog.log(
             "dispatch", agent=entry.get("agent"), model=entry.get("model"),
-            slice=entry.get("slice"), prompt=entry.get("prompt"),
+            slice=entry.get("slice"), prompt=entry.get("prompt"), cwd=entry.get("cwd"),
         )
     return action
 
@@ -225,14 +243,7 @@ def _grill(run, evidence, _stack):
         "dispatch",
         reason,
         "dispatch codag-planner ({})".format(_model(run, "planner")),
-        dispatches=[
-            {
-                "agent": "codag-planner",
-                "model": _model(run, "planner"),
-                "slice": None,
-                "prompt": str(path),
-            }
-        ],
+        dispatches=[_entry("codag-planner", _model(run, "planner"), path)],
     )
 
 
@@ -307,9 +318,7 @@ def _plan(run, evidence, _stack):
         "dispatch codag-planner to fix the plan (attempt {} of {})".format(
             run.plan_fix_attempts, run.config.get("max_plan_fix_attempts", 2)
         ),
-        dispatches=[
-            {"agent": "codag-planner", "model": _model(run, "planner"), "slice": None, "prompt": str(path)}
-        ],
+        dispatches=[_entry("codag-planner", _model(run, "planner"), path)],
     )
 
 
@@ -320,7 +329,7 @@ def _approve(run, evidence, _stack):
         "ask",
         "chat-mode plan needs approval before any executor runs",
         "show the plan and ask the user to approve it",
-        commands=[_argv(run, "plan", "show")],
+        commands=[cli_argv(run, "plan", "show")],
         ask={
             "kind": "approval",
             "warnings": warnings,
@@ -363,7 +372,7 @@ def _execute(run, evidence, stack_profile):
             "run",
             "the work needs a named branch before any code is written",
             "create the feature branch off {}".format(run.state.get("base_branch")),
-            commands=[_argv(run, "branch")],
+            commands=[cli_argv(run, "branch")],
         )
 
     ready = evidence.ready
@@ -387,8 +396,8 @@ def _execute(run, evidence, stack_profile):
             "{} slice(s) need a worktree and a brief".format(len(missing)),
             "prepare {}".format(", ".join(missing)),
             commands=[
-                _argv(run, "worktree", "create", *missing),
-                _argv(run, "brief", *missing),
+                cli_argv(run, "worktree", "create", *missing),
+                cli_argv(run, "brief", *missing),
             ],
         )
 
@@ -399,7 +408,7 @@ def _execute(run, evidence, stack_profile):
         text = dispatch.executor(run, evidence.doc, slice_id, stack_profile)
         path = dispatch.write(run, slice_id, text)
         dispatches.append(
-            {"agent": "codag-executor", "model": model, "slice": slice_id, "prompt": str(path)}
+            _entry("codag-executor", model, path, slice_id=slice_id, cwd=item.get("worktree"))
         )
 
     return _action(
@@ -456,7 +465,7 @@ def _synthesize(run, evidence, _stack):
             "run",
             "slice branches are not merged yet",
             "merge the finished slice branches",
-            commands=[_argv(run, "merge")],
+            commands=[cli_argv(run, "merge")],
         )
 
     if status == "conflict":
@@ -468,12 +477,12 @@ def _synthesize(run, evidence, _stack):
             "merge conflict in {} file(s)".format(len(state.get("conflicts") or [])),
             "dispatch codag-synthesizer ({})".format(_model(run, "synthesizer")),
             dispatches=[
-                {
-                    "agent": "codag-synthesizer",
-                    "model": _model(run, "synthesizer"),
-                    "slice": None,
-                    "prompt": str(path),
-                }
+                _entry(
+                    "codag-synthesizer",
+                    _model(run, "synthesizer"),
+                    path,
+                    cwd=state.get("worktree"),
+                )
             ],
         )
 
@@ -492,7 +501,7 @@ def _verify(run, evidence, _stack):
             "run",
             "the verifier needs gates and a review package",
             "build the verify package",
-            commands=[_argv(run, "verify-package")],
+            commands=[cli_argv(run, "verify-package")],
         )
 
     package = {
@@ -513,7 +522,7 @@ def _verify(run, evidence, _stack):
         "integration is ready to judge",
         "dispatch codag-verifier ({})".format(_model(run, "verifier")),
         dispatches=[
-            {"agent": "codag-verifier", "model": _model(run, "verifier"), "slice": None, "prompt": str(path)}
+            _entry("codag-verifier", _model(run, "verifier"), path, cwd=package["worktree"])
         ],
     )
 
@@ -549,9 +558,7 @@ def _e2e(run, evidence, stack_profile):
         "dispatch",
         "the feature passed verification and has no end-to-end test yet",
         "dispatch codag-e2e ({})".format(_model(run, "e2e")),
-        dispatches=[
-            {"agent": "codag-e2e", "model": _model(run, "e2e"), "slice": None, "prompt": str(path)}
-        ],
+        dispatches=[_entry("codag-e2e", _model(run, "e2e"), path, cwd=package["worktree"])],
     )
 
 
@@ -566,9 +573,7 @@ def _record(run, evidence, stack_profile):
         "dispatch",
         "the run is finished and has not been written up yet",
         "dispatch codag-scribe ({})".format(_model(run, "scribe")),
-        dispatches=[
-            {"agent": "codag-scribe", "model": _model(run, "scribe"), "slice": None, "prompt": str(path)}
-        ],
+        dispatches=[_entry("codag-scribe", _model(run, "scribe"), path)],
     )
 
 
@@ -592,7 +597,7 @@ def _replan(run, evidence, _stack):
             "run",
             "verification failed; starting the next cycle",
             "carry finished slices forward and open cycle {}".format(run.cycle + 1),
-            commands=[_argv(run, "cycle")],
+            commands=[cli_argv(run, "cycle")],
         )
 
     text = dispatch.replanner(run, run.cycle - 1)
@@ -602,9 +607,7 @@ def _replan(run, evidence, _stack):
         "dispatch",
         "cycle {} needs a remedial plan".format(run.cycle),
         "dispatch codag-replanner ({})".format(_model(run, "replanner")),
-        dispatches=[
-            {"agent": "codag-replanner", "model": _model(run, "replanner"), "slice": None, "prompt": str(path)}
-        ],
+        dispatches=[_entry("codag-replanner", _model(run, "replanner"), path)],
     )
 
 
@@ -639,7 +642,7 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
                 "nothing was committed to your branch {}".format(run.state.get("base_branch")),
             ]
         )
-        payload["finish"] = _argv(run, "finish")
+        payload["finish"] = cli_argv(run, "finish")
     else:
         message = "\n".join(
             ["STOPPED ({})".format(outcome), "", reason or "", ""]
@@ -656,7 +659,7 @@ def _model(run, role):
     return run.config.get("models", {}).get(role, "sonnet")
 
 
-def _argv(run, *args):
+def cli_argv(run, *args):
     """A runnable command, as a list, with repo and run pinned."""
     return [sys.executable, str(dispatch.CLI), "--repo", str(run.repo), "--run", run.run_id] + [
         str(a) for a in args

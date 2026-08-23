@@ -94,16 +94,7 @@ def resolve_exe(name):
 
 def run(argv, cwd=None, check=False, timeout=None, env=None):
     """Run ``argv`` with no shell, capturing UTF-8 output."""
-    argv = [str(a) for a in argv]
-    if argv:
-        resolved = resolve_exe(argv[0])
-        if resolved:
-            argv[0] = resolved
-    merged = dict(os.environ)
-    merged["GIT_OPTIONAL_LOCKS"] = "0"
-    merged.setdefault("PYTHONIOENCODING", "utf-8")
-    if env:
-        merged.update({str(k): str(v) for k, v in env.items()})
+    argv, merged = _invocation(argv, env)
     started = time.time()
     try:
         proc = subprocess.run(
@@ -138,6 +129,62 @@ def run(argv, cwd=None, check=False, timeout=None, env=None):
     if check and not result.ok:
         raise CommandError(argv, result.returncode, result.stdout, result.stderr)
     return result
+
+
+def stream(argv, cwd=None, env=None, on_line=None):
+    """Run ``argv``, handing each stdout line to ``on_line`` as it arrives.
+
+    Same rules as :func:`run` - no shell, resolved executable, uniform
+    environment - but output is not buffered to completion, so a caller can
+    show what a long-running process is doing. The returned Result carries
+    stderr and the exit code; stdout went to ``on_line``.
+    """
+    argv, merged = _invocation(argv, env)
+    started = time.time()
+    try:
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            shell=False,
+            env=merged,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+    except FileNotFoundError:
+        debuglog.log("exec", rc=127, cwd=cwd, argv=argv, error="executable not found")
+        raise CommandError(argv, 127, "", "executable not found: {}".format(argv[0]))
+
+    for line in proc.stdout:
+        if on_line:
+            on_line(line)
+    err = proc.stderr.read()
+    proc.stdout.close()
+    proc.stderr.close()
+    returncode = proc.wait()
+
+    result = Result(argv, returncode, "", err, time.time() - started)
+    debuglog.log("exec", rc=returncode, ms=int(result.duration * 1000), cwd=cwd, argv=argv)
+    return result
+
+
+def _invocation(argv, env=None):
+    """The argv and environment every subprocess here is started with."""
+    argv = [str(a) for a in argv]
+    if argv:
+        resolved = resolve_exe(argv[0])
+        if resolved:
+            argv[0] = resolved
+    merged = dict(os.environ)
+    merged["GIT_OPTIONAL_LOCKS"] = "0"
+    merged.setdefault("PYTHONIOENCODING", "utf-8")
+    if env:
+        merged.update({str(k): str(v) for k, v in env.items()})
+    return argv, merged
 
 
 def _decode(blob):

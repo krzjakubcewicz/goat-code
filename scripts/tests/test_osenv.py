@@ -234,3 +234,37 @@ def test_in_linked_worktree_is_false_outside_a_repo(tmp_path):
     outside = tmp_path / "plain"
     outside.mkdir()
     assert osenv.in_linked_worktree(outside) is False
+
+
+# -- streaming -------------------------------------------------------------
+
+
+def _emit(lines):
+    """A python -c that prints each line and flushes, so we see them arrive."""
+    body = "import sys\n" + "".join(
+        "sys.stdout.write({!r} + chr(10)); sys.stdout.flush()\n".format(line) for line in lines
+    )
+    return [sys.executable, "-c", body]
+
+
+def test_stream_hands_over_every_line():
+    seen = []
+    result = osenv.stream(_emit(["one", "two", "three"]), on_line=seen.append)
+    assert [line.strip() for line in seen] == ["one", "two", "three"]
+    assert result.ok
+
+
+def test_stream_reports_the_exit_code_and_stderr():
+    argv = [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(3)"]
+    result = osenv.stream(argv)
+    assert result.returncode == 3
+    assert "boom" in result.stderr
+
+
+def test_stream_does_not_need_a_consumer():
+    assert osenv.stream(_emit(["ignored"])).ok
+
+
+def test_stream_on_a_missing_binary_fails_like_run():
+    with pytest.raises(osenv.CommandError):
+        osenv.stream(["definitely-not-a-real-binary-xyz"])

@@ -1,21 +1,22 @@
 """Drive a whole cod-ag run through the state machine, with no LLM.
 
 A fake agent does what a real one would - writes the files, commits the
-work, runs the reporting command - and the loop is exactly the one the
-orchestrator skill describes: call ``next``, do what it says, repeat.
+work, runs the reporting command - and the loop is the shipped one,
+``driver.Driver``, with the fake standing in for the ``claude`` backend.
 
-If this passes, the pipeline's control flow is correct independently of any
-model's behaviour. That is the whole point of making the orchestrator
-deterministic.
+So this proves two things at once: the pipeline's control flow is correct
+independently of any model's behaviour, and the loop that runs a standalone
+`codag run` is the loop these tests exercise.
 """
 
 from __future__ import annotations
 
+import io
 import json
 
 import pytest
 
-from codag import machine, miniyaml, osenv, tasks
+from codag import agentcli, driver as drivermod, machine, miniyaml, osenv, tasks
 from tests.test_cli import cli as cli_module  # noqa: F401
 from codag.run import Run
 
@@ -77,6 +78,7 @@ class FakeAgent:
         kind="feature", e2e_status="PASS", subprocess=False,
     ):
         self.subprocess = subprocess
+        self.repo = None  # set by make_driver
         self.slices = slices
         self.kind = kind
         self.e2e_status = e2e_status
@@ -176,7 +178,8 @@ class FakeAgent:
             doc["slices"].append(slice_doc(remedial, "src/fix{}/**".format(run.cycle)))
         miniyaml.dump(doc, run.tasks_path)
 
-    def __call__(self, run, entry):
+    def __call__(self, entry, on_event=None):
+        run = Run.load(self.repo)
         self.dispatched.append((entry["agent"], entry["slice"], entry["model"]))
         handler = {
             "codag-planner": self.planner,
@@ -189,72 +192,29 @@ class FakeAgent:
         }[entry["agent"]]
         assert open(entry["prompt"], encoding="utf-8").read().strip(), "dispatch prompt is empty"
         handler(run, entry)
+        return agentcli.Receipt(entry, ok=True, duration_ms=0)
 
 
-class Driver:
-    """The orchestrator loop, with a fake model."""
-
-    def __init__(self, repo, agent, subprocess=False):
-        self.repo = repo
-        self.agent = agent
-        self.subprocess = subprocess
-        self.phases = []
-        self.waves = []
-
-    def _cli(self, run, *args, **kwargs):
-        runner = cli_subprocess if self.subprocess else cli
-        return runner(run, *args, **kwargs)
-
-    def loop(self, limit=MAX_STEPS):
-        for _ in range(limit):
-            run = Run.load(self.repo)
-            action = machine.next_action(run)
-            self.phases.append(action["phase"])
-
-            if action["action"] == "stop":
-                return action
-            if action["action"] == "escalate":
-                raise AssertionError("escalated: {}".format(action["message"]))
-            self.perform(run, action)
-        raise AssertionError("did not terminate in {} steps: {}".format(limit, self.phases))
-
-    def perform(self, run, action):
-        if action["action"] == "run":
-            for command in action["commands"]:
-                if self.subprocess:
-                    result = osenv.run(command)
-                    assert result.returncode in (0, 1), "{}\n{}".format(command, result.stderr)
-                else:
-                    assert cli_module.main(command[2:]) in (0, 1), command
-            return
-
-        if action["action"] == "dispatch":
-            batch = [d["slice"] for d in action["dispatches"] if d["slice"]]
-            if batch:
-                self.waves.append(batch)
-            for entry in action["dispatches"]:
-                self.agent(Run.load(self.repo), entry)
-            return
-
-        if action["action"] == "ask":
-            if action["ask"].get("kind") == "approval":
-                self._cli(run, "approve", "--yes")
-                return
-            answers = [
-                "{}={}".format(q["id"], _recommended(q))
-                for q in action["ask"]["questions"]
-            ]
-            self._cli(run, "answer", *answers)
-            return
-
-        raise AssertionError("unknown action {!r}".format(action["action"]))
+def make_driver(repo, agent, cls=None):
+    """The shipped loop, wired to a fake backend and a silent console."""
+    agent.repo = repo
+    console = drivermod.Console(stream=io.StringIO(), quiet=True)
+    return (cls or drivermod.Driver)(
+        repo,
+        agent,
+        console=console,
+        prompter=drivermod.Prompter(console, yes=True),
+        limit=MAX_STEPS,
+    )
 
 
-def _recommended(question):
-    for option in question["options"]:
-        if "(Recommended)" in option["label"]:
-            return option["label"].replace(" (Recommended)", "")
-    return question["options"][0]["label"]
+class SubprocessDriver(drivermod.Driver):
+    """Runs every codag command as a real subprocess, exactly as rendered."""
+
+    def cli(self, command):
+        result = osenv.run(command)
+        assert result.returncode in (0, 1), "{}\n{}".format(command, result.stderr)
+        return result.returncode
 
 
 def cli(run, *args, check=True):
@@ -265,14 +225,14 @@ def cli(run, *args, check=True):
     rendered - a couple of tests keep that path, so the command strings
     cod-ag writes into dispatch prompts are still proven to execute.
     """
-    code = cli_module.main(machine._argv(run, *args)[2:])
+    code = cli_module.main(machine.cli_argv(run, *args)[2:])
     if check:
         assert code in (0, 1), "codag {} exited {}".format(" ".join(str(a) for a in args), code)
     return code
 
 
 def cli_subprocess(run, *args, check=True):
-    command = machine._argv(run, *args)
+    command = machine.cli_argv(run, *args)
     result = osenv.run(command)
     if check:
         assert result.ok, "{}\n{}\n{}".format(" ".join(command), result.stdout, result.stderr)
@@ -317,7 +277,7 @@ def test_a_whole_run_reaches_done_with_no_model(started):
             slice_doc("S3", "src/s3/**", depends_on=["S1", "S2"]),
         ]
     )
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     assert final["outcome"] == "done"
@@ -346,7 +306,7 @@ def test_the_waves_are_dispatched_in_parallel_batches(started):
             slice_doc("S3", "src/s3/**", depends_on=["S1", "S2"]),
         ]
     )
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     driver.loop()
     assert driver.waves == [["S1", "S2"], ["S3"]], "wave 1 must go out as one batch"
 
@@ -355,14 +315,14 @@ def test_executors_run_on_the_model_the_plan_names(started):
     agent = FakeAgent(
         [slice_doc("S1", "src/s1/**", model="opus"), slice_doc("S2", "src/s2/**")]
     )
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
     models = {s: m for a, s, m in agent.dispatched if a == "codag-executor"}
     assert models == {"S1": "opus", "S2": "haiku"}
 
 
 def test_each_role_runs_on_its_own_model(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
     by_agent = {a: m for a, _s, m in agent.dispatched}
     assert by_agent["codag-planner"] == "opus"
     assert by_agent["codag-executor"] == "haiku"
@@ -371,7 +331,7 @@ def test_each_role_runs_on_its_own_model(started):
 
 def test_the_work_lands_on_the_integration_branch(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**"), slice_doc("S2", "src/s2/**")])
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
 
     run = Run.load(started)
     listed = osenv.git_out(["ls-tree", "-r", "--name-only", run.integration_branch], cwd=started)
@@ -384,7 +344,7 @@ def test_the_users_branch_is_untouched(started):
     cod-ag wrote on the first run - which it never commits."""
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
     base = osenv.git_out(["rev-parse", "HEAD"], cwd=started)
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
 
     assert osenv.git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd=started) == "main"
     assert osenv.git_out(["rev-parse", "HEAD"], cwd=started) == base
@@ -393,7 +353,7 @@ def test_the_users_branch_is_untouched(started):
 
 def test_the_answers_reach_the_spec(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
     body = Run.load(started).spec_path.read_text(encoding="utf-8")
     assert "## Clarifications (round 1)" in body
     assert "**A:** First name" in body
@@ -401,7 +361,7 @@ def test_the_answers_reach_the_spec(started):
 
 def test_a_precise_spec_skips_the_question_round(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], ask_first=False)
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     driver.loop()
     assert "ask" not in driver.phases
     assert agent.planner_rounds == 1
@@ -412,7 +372,7 @@ def test_a_precise_spec_skips_the_question_round(started):
 
 def test_a_failing_verdict_drives_a_replan_cycle(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], fail_verdicts=1)
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     assert final["outcome"] == "done"
@@ -423,7 +383,7 @@ def test_a_failing_verdict_drives_a_replan_cycle(started):
 
 def test_carried_slices_are_never_re_executed(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], fail_verdicts=1)
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     driver.loop()
 
     executed = [s for a, s, _m in agent.dispatched if a == "codag-executor"]
@@ -433,7 +393,7 @@ def test_carried_slices_are_never_re_executed(started):
 
 def test_the_cycle_cap_stops_instead_of_looping(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], fail_verdicts=99)
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     assert final["action"] == "stop"
@@ -444,7 +404,7 @@ def test_the_cycle_cap_stops_instead_of_looping(started):
 
 def test_a_blocked_slice_is_retried_once_then_the_run_moves_on(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], block={"S1": 99})
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     executed = [s for a, s, m in agent.dispatched if a == "codag-executor"]
@@ -456,7 +416,7 @@ def test_a_blocked_slice_is_retried_once_then_the_run_moves_on(started):
 
 def test_a_slice_that_recovers_on_the_retry_completes(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], block={"S1": 1})
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
     assert final["outcome"] == "done"
 
@@ -468,7 +428,7 @@ def test_a_merge_conflict_wakes_the_synthesizer_and_the_run_finishes(started):
     agent = FakeAgent(
         [slice_doc("S1", "src/s1/**"), slice_doc("S2", "src/s2/**")], conflict=True
     )
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     assert final["outcome"] == "done"
@@ -477,7 +437,7 @@ def test_a_merge_conflict_wakes_the_synthesizer_and_the_run_finishes(started):
 
 def test_a_clean_merge_never_dispatches_the_synthesizer(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**"), slice_doc("S2", "src/s2/**")])
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
     assert not any(a == "codag-synthesizer" for a, _s, _m in agent.dispatched)
 
 
@@ -486,7 +446,7 @@ def test_a_clean_merge_never_dispatches_the_synthesizer(started):
 
 def test_the_run_directory_holds_the_whole_record(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
 
     run = Run.load(started)
     cycle = run.cycle_dir(1)
@@ -507,7 +467,7 @@ def test_the_run_directory_holds_the_whole_record(started):
 
 def test_gate_results_are_recorded(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
     run = Run.load(started)
     report = json.loads((run.cycle_dir(1) / "gates.json").read_text(encoding="utf-8"))
     assert report["gates"]["test"]["status"] == "pass"
@@ -516,7 +476,7 @@ def test_gate_results_are_recorded(started):
 def test_resume_reports_the_true_phase_mid_run(started):
     """The defect that prompted all of this: phase used to be stuck at grill."""
     agent = FakeAgent([slice_doc("S1", "src/s1/**"), slice_doc("S2", "src/s2/**")])
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
 
     seen = []
     for _ in range(6):
@@ -537,7 +497,7 @@ def test_resume_reports_the_true_phase_mid_run(started):
 
 def test_a_feature_run_gets_an_e2e_test(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     assert final["outcome"] == "done"
@@ -551,7 +511,7 @@ def test_a_feature_run_gets_an_e2e_test(started):
 
 def test_the_e2e_agent_runs_on_sonnet(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
-    Driver(started, agent).loop()
+    make_driver(started, agent).loop()
     models = {a: m for a, _s, m in agent.dispatched}
     assert models["codag-e2e"] == "sonnet"
 
@@ -559,7 +519,7 @@ def test_the_e2e_agent_runs_on_sonnet(started):
 def test_a_bugfix_run_skips_the_e2e_phase(started):
     """A bugfix's slices were already forced to be written test-first."""
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], kind="bugfix")
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     assert final["outcome"] == "done"
@@ -573,14 +533,14 @@ def test_the_kind_override_beats_the_planners_classification(started):
     run.set_kind_override("bugfix")
 
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], kind="feature")
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     driver.loop()
     assert "e2e" not in driver.phases
 
 
 def test_a_failing_e2e_stops_the_run_without_replanning(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], e2e_status="FAILED")
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     assert final["action"] == "stop"
@@ -590,7 +550,7 @@ def test_a_failing_e2e_stops_the_run_without_replanning(started):
 
 def test_a_skipped_e2e_still_finishes(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], e2e_status="SKIPPED")
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     final = driver.loop()
 
     assert final["outcome"] == "done"
@@ -606,7 +566,7 @@ def test_e2e_can_be_switched_off(started):
     run.save()
 
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     assert driver.loop()["outcome"] == "done"
     assert "e2e" not in driver.phases
 
@@ -614,7 +574,7 @@ def test_e2e_can_be_switched_off(started):
 def test_the_e2e_prompt_names_the_criteria_and_forbids_reading_the_diff(started):
     """The agent must assert the spec, not describe the implementation."""
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
-    driver = Driver(started, agent)
+    driver = make_driver(started, agent)
     driver.loop()
 
     prompt = (Run.load(started).cycle_dir(1) / "dispatch" / "e2e.md").read_text(encoding="utf-8")
@@ -633,7 +593,7 @@ def test_the_e2e_prompt_names_the_criteria_and_forbids_reading_the_diff(started)
 
 def test_a_whole_run_works_through_real_subprocesses(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], subprocess=True)
-    driver = Driver(started, agent, subprocess=True)
+    driver = make_driver(started, agent, cls=SubprocessDriver)
     final = driver.loop()
 
     assert final["outcome"] == "done"

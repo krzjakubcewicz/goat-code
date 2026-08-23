@@ -262,6 +262,29 @@ captured - gate output is already in `gates.json`, agent output in the
 reports, and a trace carrying both would be too big to read, which is the
 only thing a trace has to be.
 
+## Two front-ends, one loop
+
+`machine.next_action` is the contract. It reads the run off disk and returns
+one action - run this command, dispatch these agents on these models, ask
+this, or stop. Anything that can perform those five actions can run the
+pipeline.
+
+Two things do. The orchestrator skill is one, performed by the Claude Code
+main thread. `driver.Driver` is the other, performed by Python, spawning
+each agent as a headless `claude` process through `agentcli`. They share
+every decision, every prompt, every cap and every agent definition; they
+differ only in what executes a dispatch.
+
+That is why the end-to-end suite matters more than it looks. It drives
+`driver.Driver` with a fake backend, so the loop that ships standalone is
+the loop that is already proven to reach DONE, replan, respect the cycle cap
+and batch its waves - with no model in the loop at all.
+
+The dispatch entry carries a `cwd` for this reason alone. A Claude Code
+subagent inherits the main thread's directory and is told its worktree path
+in its brief; a process spawned by the driver has to be started in the right
+place, because worktrees live outside the repository.
+
 ## Context discipline
 
 Everything pasted into a dispatch, and everything an agent prints back,

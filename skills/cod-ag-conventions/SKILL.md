@@ -40,6 +40,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 | Command | Purpose |
 | --- | --- |
 | `next` | **the state machine** - the single next action to take |
+| `run --prompt "..."` | perform every action itself, without Claude Code (see README) |
 | `branch` | name the branch the work lands on, before any code is written |
 | `progress show` / `progress append --body F` | the cross-run log; append never rewrites |
 | `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |

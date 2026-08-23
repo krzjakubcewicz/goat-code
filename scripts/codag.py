@@ -121,6 +121,59 @@ def load_stack(run):
 
 
 # --------------------------------------------------------------------------
+# run - the whole pipeline, with no Claude Code session
+# --------------------------------------------------------------------------
+
+
+def cmd_run(args):
+    from codag import agentcli, driver as drivermod
+
+    version = agentcli.available({"claude_bin": args.claude_bin})
+    if not version:
+        raise CliError(
+            "cannot run {!r}. Install the Claude Code CLI "
+            "(https://claude.com/claude-code), or pass --claude-bin.".format(args.claude_bin)
+        )
+
+    if not args.resume:
+        code = cmd_init(args)
+        if code != EXIT_OK:
+            return code
+
+    repo = resolve_repo(args)
+    run = resolve_run(args, repo)
+    config = dict(run.config)
+    if args.max_cost:
+        config["max_cost_usd"] = args.max_cost
+    if args.claude_bin:
+        config["claude_bin"] = args.claude_bin
+    config["extra_args"] = args.claude_arg or []
+
+    console = drivermod.Console(quiet=args.quiet)
+    console.write("cod-ag {} | {} | {}".format(run.run_id, version, repo))
+    driver = drivermod.Driver(
+        repo,
+        drivermod.claude_backend(repo, config),
+        console=console,
+        prompter=drivermod.Prompter(console, yes=args.yes),
+    )
+
+    try:
+        final = driver.loop()
+    except drivermod.DriverError as exc:
+        raise CliError(str(exc))
+    except KeyboardInterrupt:
+        console.write("")
+        console.write("interrupted. `codag run --resume` picks up where this stopped.")
+        return EXIT_FAIL
+
+    cost = sum(r.cost_usd or 0 for r in driver.receipts)
+    if cost:
+        console.write("{} dispatches, ${:.2f}".format(len(driver.receipts), cost))
+    return EXIT_OK if final.get("outcome") == "done" else EXIT_FAIL
+
+
+# --------------------------------------------------------------------------
 # init
 # --------------------------------------------------------------------------
 
@@ -1035,6 +1088,28 @@ def build_parser():
     p.add_argument("--force", action="store_true", help="proceed despite preflight problems")
     p.add_argument("--no-baseline", action="store_true", help="skip the baseline gate run")
     p.set_defaults(func=cmd_init)
+
+    p = add(sub, "run", help="run the whole pipeline here, without Claude Code")
+    p.add_argument("--prompt", help="feature request, for chat mode")
+    p.add_argument("--spec", help="path to a markdown spec file")
+    p.add_argument("--resume", action="store_true", help="continue the existing run instead of starting one")
+    p.add_argument("--yes", action="store_true", help="take every recommended answer and approve the plan")
+    p.add_argument(
+        "--kind",
+        choices=runmod.KINDS,
+        help="override the planner's classification; a bugfix skips the end-to-end phase",
+    )
+    p.add_argument("--force", action="store_true", help="proceed despite preflight problems")
+    p.add_argument("--no-baseline", action="store_true", help="skip the baseline gate run")
+    p.add_argument("--max-cost", type=float, help="dollar cap per agent dispatch")
+    p.add_argument("--claude-bin", default="claude", help="the Claude Code executable")
+    p.add_argument(
+        "--claude-arg",
+        action="append",
+        help="extra argument for every claude invocation, as --claude-arg=--safe-mode (repeatable)",
+    )
+    p.add_argument("--quiet", action="store_true", help="receipts only, no per-tool output")
+    p.set_defaults(func=cmd_run)
 
     p = add(sub, "stack", help="stack detection")
     s = p.add_subparsers(dest="stack_command", required=True)

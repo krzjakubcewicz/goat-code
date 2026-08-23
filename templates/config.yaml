@@ -76,6 +76,20 @@ worktree_setup: true
 # CODAG_DEBUG=0 turns it off regardless.
 debug: false
 
+# Standalone (`codag run`) only - the plugin uses Claude Code's own
+# permissions. How a headless agent's tool calls are permitted:
+#   acceptEdits       - it may write files, but a Bash call needs permission,
+#                       and nothing can grant one in a headless run, so it is
+#                       denied and reported back to you
+#   bypassPermissions - no ceiling: agents run any command unattended
+permission_mode: acceptEdits
+
+# Hard dollar cap per agent dispatch. null for none.
+max_cost_usd: null
+
+# The Claude Code executable, if it is not on PATH.
+claude_bin: claude
+
 # Seconds before a gate command or a setup command is killed.
 gate_timeout_seconds: 1800
 setup_timeout_seconds: 1800

@@ -90,6 +90,16 @@ DEFAULT_CONFIG = {
     # .codag/runs/<id>/log.txt. CODAG_DEBUG=1 overrides this per invocation.
     "debug": False,
     "worktree_setup": True,
+    # Standalone (`codag run`) only. How a headless agent's tool calls are
+    # permitted. acceptEdits lets it write files, but a Bash call still needs
+    # permission - and nothing can grant one in a headless run, so it is
+    # denied and reported. bypassPermissions removes that ceiling and lets an
+    # agent run any command unattended.
+    "permission_mode": "acceptEdits",
+    # Hard dollar cap per agent dispatch. null for none.
+    "max_cost_usd": None,
+    # The Claude Code executable, if it is not on PATH.
+    "claude_bin": "claude",
     "models": {
         "planner": "opus",
         "executor": "haiku",
