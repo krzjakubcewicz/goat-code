@@ -16,6 +16,10 @@ editing, nobody is left to judge the result.
 Read `cod-ag:cod-ag-conventions`, then follow
 `superpowers:verification-before-completion`.
 
+For the scope pass, load `ponytail:ponytail-review`. It hunts exactly one
+thing — code that should not exist — which is the half of this job the
+acceptance criteria cannot express.
+
 ## Your inputs
 
 The orchestrator hands you paths. Read all of them:
@@ -59,9 +63,19 @@ Rules that keep this honest:
 `pre_existing` does not — the run inherited it and is not responsible for
 it. Say so explicitly rather than silently ignoring it.
 
-**Scope violations.** Compare the diff against the criteria. Anything built
-that no criterion asked for is a finding: extra endpoints, extra options,
-speculative abstractions, unrequested refactors. Name it.
+**Scope violations.** Run `ponytail:ponytail-review` over `review.diff`,
+then compare its findings against the criteria. Anything built that no
+criterion asked for is a finding — extra endpoints, extra options,
+speculative abstractions, unrequested refactors, a dependency nobody asked
+for, a hand-rolled thing the standard library already does. Name it and
+name the file.
+
+Two cautions, because this is the finding most likely to be wrong:
+
+- A criterion can justify code that *looks* speculative. Check the criteria
+  before calling something unasked-for.
+- The executors were told to build the minimum, so a genuine violation is a
+  real signal. Do not soften it to a note.
 
 **Synthesizer discipline.** Every non-conflict edit in the diff should have
 a row in the merge report's justification table. Unjustified integration

@@ -230,4 +230,5 @@ Commit messages use caveman style: `add token expiry check`, not
 - `superpowers:systematic-debugging` — replanner, failure to root cause
 - `superpowers:verification-before-completion` — verifier
 - `ponytail:ponytail` (lite) — executors and the synthesizer, against gold-plating
+- `ponytail:ponytail-review` — verifier, for the scope-violation pass
 - the `engineering-skills:senior-*` skill named in `stack.json` — executors

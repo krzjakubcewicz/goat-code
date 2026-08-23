@@ -330,3 +330,28 @@ def test_readme_model_table_matches_reality():
         assert rows.get(role) == model, "README says {} for {}, config says {}".format(
             rows.get(role), role, model
         )
+
+
+# -- the skills each agent is told to load --------------------------------
+
+EXPECTED_SKILLS = {
+    "codag-executor": ["superpowers:test-driven-development", "ponytail:ponytail"],
+    "codag-planner": ["superpowers:writing-plans", "grilling"],
+    "codag-verifier": ["superpowers:verification-before-completion", "ponytail:ponytail-review"],
+    "codag-replanner": ["superpowers:systematic-debugging"],
+}
+
+
+@pytest.mark.parametrize("name,skills", sorted(EXPECTED_SKILLS.items()))
+def test_agents_are_pointed_at_their_skills(name, skills):
+    """A skill an agent is meant to use, silently dropped, is invisible."""
+    text = (ROOT / "agents" / (name + ".md")).read_text(encoding="utf-8")
+    for skill in skills:
+        assert skill in text, "{} no longer names {}".format(name, skill)
+
+
+def test_the_conventions_skill_lists_them_all():
+    text = (ROOT / "skills" / "cod-ag-conventions" / "SKILL.md").read_text(encoding="utf-8")
+    for skills in EXPECTED_SKILLS.values():
+        for skill in skills:
+            assert skill in text, "conventions does not list {}".format(skill)
