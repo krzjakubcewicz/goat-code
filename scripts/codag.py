@@ -104,7 +104,6 @@ def _start_trace(run):
     debuglog.configure(run.config.get("debug", False))
     if debuglog.enabled() and debuglog.target() is None:
         debuglog.attach(run.root)
-    return debuglog.target()
 
 
 def load_plan(run):

@@ -256,23 +256,11 @@ traces every subprocess, `osenv.write_text` every file written,
 dispatch. Four hooks cover the whole tool, so a new command is traced
 without anyone remembering to trace it.
 
-Three properties matter more than completeness:
-
-- **It cannot break the pipeline.** Every write is wrapped; a failure to log
-  is swallowed. A debug facility that can take down the run it is debugging
-  is worse than no debug facility.
-- **It survives having nowhere to write yet.** Events logged before the run
-  directory exists are buffered and flushed on attach, because a failing
-  `init` is exactly the trace you want and it happens before there is
-  anywhere to put it.
-- **It is append-only and lock-free.** Each line is one `write` call under
-  the pipe-buffer limit and carries its own pid, so parallel executors
-  interleave lines without a lock and without losing any.
-
-Command output is deliberately not captured. Gate output already goes to
-`gates.json`, agent output already goes to reports, and a trace that
-included both would be too big to read - which is the only thing a trace has
-to be.
+A failure to log is swallowed rather than raised: a debug facility that can
+take down the run it is debugging is worse than none. Command output is not
+captured - gate output is already in `gates.json`, agent output in the
+reports, and a trace carrying both would be too big to read, which is the
+only thing a trace has to be.
 
 ## Context discipline
 

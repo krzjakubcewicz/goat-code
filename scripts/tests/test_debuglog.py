@@ -47,7 +47,7 @@ def test_other_env_values_leave_it_off(monkeypatch, value):
 
 
 def test_config_turns_it_on():
-    assert debuglog.configure(True) is True
+    debuglog.configure(True)
     assert debuglog.enabled() is True
 
 

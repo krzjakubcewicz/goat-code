@@ -15,6 +15,7 @@ into it, so a dependency back would be circular. Stdlib only.
 
 from __future__ import annotations
 
+import collections
 import datetime
 import os
 import pathlib
@@ -27,7 +28,10 @@ MAX_LINE = 2000
 
 _TARGET = None
 _ENABLED = None
-_PENDING = []
+
+#: Events logged before there is a run directory to write them to. Bounded,
+#: because a process that never attaches must not grow forever.
+_PENDING = collections.deque(maxlen=500)
 
 #: Values of CODAG_DEBUG that mean "on". Anything else, including the empty
 #: string, means off - so `CODAG_DEBUG=` in a shell profile does not
@@ -47,7 +51,6 @@ def configure(from_config=None):
     """Record the config setting. ``CODAG_DEBUG`` still overrides it."""
     global _ENABLED
     _ENABLED = bool(from_config)
-    return enabled()
 
 
 def attach(run_dir):
@@ -57,24 +60,22 @@ def attach(run_dir):
     parsing - are held in memory and written here. That is exactly the part
     of a failing ``init`` you want to see.
     """
-    global _TARGET, _PENDING
+    global _TARGET
     if not enabled():
-        _PENDING = []
-        return None
+        _PENDING.clear()
+        return
     _TARGET = pathlib.Path(run_dir) / FILENAME
     _TARGET.parent.mkdir(parents=True, exist_ok=True)
-    pending, _PENDING = _PENDING, []
-    for line in pending:
-        _append(line)
-    return _TARGET
+    while _PENDING:
+        _append(_PENDING.popleft())
 
 
 def detach():
     """Stop writing. For tests, and for a process that changes runs."""
-    global _TARGET, _PENDING, _ENABLED
+    global _TARGET, _ENABLED
     _TARGET = None
-    _PENDING = []
     _ENABLED = None
+    _PENDING.clear()
 
 
 def target():
@@ -84,18 +85,15 @@ def target():
 def log(event, **fields):
     """Record one action. Never raises - a broken log must not stop a run."""
     if not enabled():
-        return None
+        return
     try:
         line = _render(event, fields)
     except Exception:  # noqa: BLE001 - formatting must never break the tool
-        return None
+        return
     if _TARGET is None:
         _PENDING.append(line)
-        if len(_PENDING) > 500:
-            del _PENDING[:100]
-        return line
-    _append(line)
-    return line
+    else:
+        _append(line)
 
 
 def _render(event, fields):
@@ -138,6 +136,4 @@ def _append(line):
 def read(run_dir):
     """The trace for a run, as a list of lines. Empty when there is none."""
     path = pathlib.Path(run_dir) / FILENAME
-    if not path.exists():
-        return []
-    return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
