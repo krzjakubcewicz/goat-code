@@ -224,21 +224,55 @@ Python 3.9 and 3.13):
   own block so the next run is not blocked by the change
   the pipeline promised not to touch.
 
-## Two logs, for two readers
+## Three logs, for three readers
 
 `ledger.md` is per-run machine bookkeeping: one line per step, used to
 recover after a crash or a compaction. `progress.txt` is cross-run and
-written for a reader - one entry per completed run.
+written for a reader - one entry per completed run. `log.txt` is the debug
+trace, off by default and written only when debug mode is on.
 
 They exist separately because they answer different questions. The ledger
 answers "what has already happened in this run, so I do not redo it". The
 progress log answers "what does this codebase do that surprised the last
-person who touched it".
+person who touched it". The trace answers "what exactly did the tool do,
+in what order, and which subprocess was it that failed".
 
 Only the second is worth a model's time, which is why an agent writes it and
-a script writes the ledger. The append itself is scripted either way: an
+a script writes the other two. The append itself is scripted either way: an
 instruction to never overwrite a file is exactly the kind of instruction
 that eventually gets ignored.
+
+## Debug mode
+
+`debug: true` in the config, or `CODAG_DEBUG=1` in the environment, makes
+every CLI invocation append to `.codag/runs/<run-id>/log.txt`. The
+environment wins over the config in both directions, so a single run can be
+traced without editing a file and a noisy config can be silenced the same
+way.
+
+Instrumentation sits at choke points rather than at call sites: `osenv.run`
+traces every subprocess, `osenv.write_text` every file written,
+`Run.set_phase` every phase change, `machine.next_action` every action and
+dispatch. Four hooks cover the whole tool, so a new command is traced
+without anyone remembering to trace it.
+
+Three properties matter more than completeness:
+
+- **It cannot break the pipeline.** Every write is wrapped; a failure to log
+  is swallowed. A debug facility that can take down the run it is debugging
+  is worse than no debug facility.
+- **It survives having nowhere to write yet.** Events logged before the run
+  directory exists are buffered and flushed on attach, because a failing
+  `init` is exactly the trace you want and it happens before there is
+  anywhere to put it.
+- **It is append-only and lock-free.** Each line is one `write` call under
+  the pipe-buffer limit and carries its own pid, so parallel executors
+  interleave lines without a lock and without losing any.
+
+Command output is deliberately not captured. Gate output already goes to
+`gates.json`, agent output already goes to reports, and a trace that
+included both would be too big to read - which is the only thing a trace has
+to be.
 
 ## Context discipline
 

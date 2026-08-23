@@ -30,6 +30,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 from codag import (  # noqa: E402
     brief as briefmod,
+    debuglog,
     diffpkg,
     dispatch as dispatchmod,
     gates as gatesmod,
@@ -87,9 +88,23 @@ def resolve_run(args, repo=None):
     locating the repository costs a subprocess."""
     repo = repo or resolve_repo(args)
     try:
-        return Run.load(repo, getattr(args, "run", None))
+        run = Run.load(repo, getattr(args, "run", None))
     except RunError as exc:
         raise CliError(str(exc))
+    _start_trace(run)
+    return run
+
+
+def _start_trace(run):
+    """Point the debug trace at this run, if debug is on.
+
+    Config is read from the run's own state, so a run started with debug on
+    keeps tracing even when the environment does not say so.
+    """
+    debuglog.configure(run.config.get("debug", False))
+    if debuglog.enabled() and debuglog.target() is None:
+        debuglog.attach(run.root)
+    return debuglog.target()
 
 
 def load_plan(run):
@@ -138,6 +153,7 @@ def cmd_init(args):
     worktreemod.reap_orphans(repo)
 
     run = Run.create(repo, title, "spec" if args.spec else "chat", spec_text=spec_text)
+    _start_trace(run)
     profile = stackmod.write(repo, run.stack_path)
 
     baseline = None
@@ -179,6 +195,7 @@ def cmd_init(args):
         "specialist_skills": profile.get("specialist_skills", []),
         "baseline": (baseline or {}).get("summary"),
         "gitignore_updated": gitignored,
+        "debug_log": str(debuglog.target()) if debuglog.target() else None,
         "divergence": diverged,
         "kind_override": run.kind_override,
         "warnings": problems,
@@ -1183,20 +1200,27 @@ def main(argv=None):
     osenv.require_python()
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # Logged before the run is known, so it is buffered and flushed once the
+    # run directory exists - which is what makes a failing `init` traceable.
+    debuglog.log("cli", command=args.command, argv=argv if argv is not None else sys.argv[1:])
+    code = EXIT_OK
     try:
-        return args.func(args)
+        code = args.func(args)
     except CliError as exc:
         if getattr(args, "json", False):
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
             sys.stderr.write("codag: {}\n".format(exc))
-        return EXIT_USAGE
+        code = EXIT_USAGE
     except (RunError, tasksmod.TaskError, worktreemod.WorktreeError, mergemod.MergeError) as exc:
         if getattr(args, "json", False):
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
             sys.stderr.write("codag: {}\n".format(exc))
-        return EXIT_FAIL
+        code = EXIT_FAIL
+    debuglog.log("cli-done", command=args.command, rc=code)
+    return code
 
 
 if __name__ == "__main__":

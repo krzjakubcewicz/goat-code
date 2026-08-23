@@ -68,6 +68,14 @@ write_progress: true
 # where install is slow and the tests do not need it.
 worktree_setup: true
 
+# Write a low-level trace of everything the tool does to log.txt in the run
+# directory: every CLI command and its exit code, every subprocess with its
+# duration, every phase change, every agent dispatch, every file written.
+# Command output is not captured - the trace says what ran, not what it
+# printed. CODAG_DEBUG=1 in the environment turns it on regardless, and
+# CODAG_DEBUG=0 turns it off regardless.
+debug: false
+
 # Seconds before a gate command or a setup command is killed.
 gate_timeout_seconds: 1800
 setup_timeout_seconds: 1800

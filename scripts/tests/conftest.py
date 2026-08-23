@@ -21,8 +21,21 @@ SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from codag import osenv  # noqa: E402
+from codag import debuglog, osenv  # noqa: E402
 from codag.run import Run  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def no_stray_tracing(monkeypatch):
+    """Debug tracing off unless a test asks for it.
+
+    Without this, a CODAG_DEBUG exported in someone's shell would make every
+    test in the suite write a log file.
+    """
+    monkeypatch.delenv("CODAG_DEBUG", raising=False)
+    debuglog.detach()
+    yield
+    debuglog.detach()
 
 
 @pytest.fixture(autouse=True)

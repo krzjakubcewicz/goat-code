@@ -83,6 +83,7 @@ never commits it.
   stack.json           detected languages, frameworks, commands, specialists
   state.json           phase, cycle, base commit, branches, worktrees
   ledger.md            append-only progress; the recovery map
+  log.txt              debug trace, only when debug mode is on
   baseline-gates.json  gate results at the base commit
   tasks.yaml           THE plan - every agent reads this
   cycle-N/

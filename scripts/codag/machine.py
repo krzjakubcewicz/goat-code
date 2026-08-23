@@ -15,7 +15,7 @@ import pathlib
 
 import sys
 
-from . import dispatch, merge, miniyaml, progress, report, schema, tasks
+from . import debuglog, dispatch, merge, miniyaml, progress, report, schema, tasks
 
 #: Actions the orchestrator knows how to perform.
 ACTIONS = ("run", "dispatch", "ask", "escalate", "stop")
@@ -180,8 +180,24 @@ def next_action(run, stack_profile=None):
     }.get(phase)
 
     if handler is None:
-        return _stop(run, evidence)
-    return handler(run, evidence, stack_profile)
+        return _log_action(_stop(run, evidence))
+    return _log_action(handler(run, evidence, stack_profile))
+
+
+def _log_action(action):
+    debuglog.log(
+        "action",
+        kind=action.get("action"),
+        phase=action.get("phase"),
+        cycle=action.get("cycle"),
+        reason=action.get("reason"),
+    )
+    for entry in action.get("dispatches") or []:
+        debuglog.log(
+            "dispatch", agent=entry.get("agent"), model=entry.get("model"),
+            slice=entry.get("slice"), prompt=entry.get("prompt"),
+        )
+    return action
 
 
 # -- grill -----------------------------------------------------------------

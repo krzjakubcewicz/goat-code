@@ -247,6 +247,28 @@ regardless of what the orchestrator remembers.
 python scripts/codag.py resume --json   # the same picture, for a human
 ```
 
+## Tracing a run
+
+```bash
+CODAG_DEBUG=1 python scripts/codag.py next     # or debug: true in the config
+```
+
+Appends to `.codag/runs/<run-id>/log.txt`: one timestamped line per CLI
+command and exit code, per subprocess with its duration, per phase change,
+per dispatch and per file written. Command output is not captured - gate
+output is already in `gates.json` and agent output in the reports.
+
+```
+2026-08-23T14:05:11.208 pid=23732 cli command=next
+2026-08-23T14:05:11.331 pid=23732 exec rc=0 ms=118 argv="git rev-parse HEAD"
+2026-08-23T14:05:11.402 pid=23732 phase was=plan now=approve
+2026-08-23T14:05:11.404 pid=23732 action kind=ask reason=approval
+```
+
+The environment variable overrides the config in both directions, so one run
+can be traced without editing anything, and `CODAG_DEBUG=0` silences a config
+that has it on.
+
 ## Aborting
 
 ```bash

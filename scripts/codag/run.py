@@ -12,7 +12,7 @@ import datetime
 import pathlib
 import re
 
-from . import miniyaml, osenv
+from . import debuglog, miniyaml, osenv
 
 CODAG_DIR = ".codag"
 STATE_VERSION = 1
@@ -86,6 +86,9 @@ DEFAULT_CONFIG = {
     # earlier entries when planning. The learnings are the point: they stop a
     # later run rediscovering what this one found out.
     "write_progress": True,
+    # Write a low-level trace of everything cod-ag does to
+    # .codag/runs/<id>/log.txt. CODAG_DEBUG=1 overrides this per invocation.
+    "debug": False,
     "worktree_setup": True,
     "models": {
         "planner": "opus",
@@ -565,6 +568,8 @@ class Run:
     def set_phase(self, phase):
         if phase not in PHASES:
             raise RunError("unknown phase {!r}".format(phase))
+        if phase != self.state.get("phase"):
+            debuglog.log("phase", was=self.state.get("phase"), now=phase, cycle=self.cycle)
         self.state["phase"] = phase
         self.save()
 

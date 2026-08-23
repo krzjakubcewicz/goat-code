@@ -24,6 +24,8 @@ import sys
 import tempfile
 import time
 
+from . import debuglog
+
 IS_WINDOWS = os.name == "nt"
 
 #: Extra ``-c`` settings applied to every git invocation.
@@ -113,10 +115,12 @@ def run(argv, cwd=None, check=False, timeout=None, env=None):
             env=merged,
         )
     except FileNotFoundError:
+        debuglog.log("exec", rc=127, cwd=cwd, argv=argv, error="executable not found")
         raise CommandError(argv, 127, "", "executable not found: {}".format(argv[0]))
     except subprocess.TimeoutExpired as exc:
         out = _decode(exc.stdout)
         err = _decode(exc.stderr)
+        debuglog.log("exec", rc=124, cwd=cwd, argv=argv, error="timed out after {}s".format(timeout))
         result = Result(argv, 124, out, err + "\ntimed out after {}s".format(timeout), time.time() - started)
         if check:
             raise CommandError(argv, 124, result.stdout, result.stderr)
@@ -127,6 +131,9 @@ def run(argv, cwd=None, check=False, timeout=None, env=None):
         _decode(proc.stdout),
         _decode(proc.stderr),
         time.time() - started,
+    )
+    debuglog.log(
+        "exec", rc=result.returncode, ms=int(result.duration * 1000), cwd=cwd, argv=argv
     )
     if check and not result.ok:
         raise CommandError(argv, result.returncode, result.stdout, result.stderr)
@@ -295,6 +302,7 @@ def write_text(path, text):
     tmp = path.with_name(path.name + ".tmp{}".format(os.getpid()))
     tmp.write_text(text, encoding="utf-8", newline="\n")
     os.replace(str(tmp), str(path))
+    debuglog.log("write", path=path, bytes=len(text))
 
 
 def read_text(path):

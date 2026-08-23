@@ -185,6 +185,11 @@ Everything lives in `.codag/` in the target repo, hidden from git via
     briefs/  reports/  merge-report.md  gates.json  review.diff  verdict.md
 ```
 
+Set `debug: true` in the config, or `CODAG_DEBUG=1` in the environment, and
+each run also gets a `log.txt` next to its state: every command, subprocess,
+phase change, dispatch and file write, timestamped and appended. Off by
+default; the environment variable wins over the config either way.
+
 Worktrees live outside the repo, at `<tempdir>/codag/<hash>/<slice>` — short
 paths, so a deep `node_modules` cannot hit the Windows path limit, and a
 failed cleanup cannot litter your project.
