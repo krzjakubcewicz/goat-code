@@ -166,3 +166,22 @@ def test_timeout_is_reported_as_a_failure(run, git_repo):
     report = gates.run_all(run, git_repo, profile=profile(test=python_cmd("import time; time.sleep(30)")))
     assert report["gates"]["test"]["status"] == "fail"
     assert report["gates"]["test"]["returncode"] == 124
+
+
+def test_gates_run_inside_the_detected_project_dir(git_repo, run):
+    (git_repo / "backend").mkdir()
+    marker = python_cmd(
+        "import pathlib; print(pathlib.Path.cwd().name)"
+    )
+    spec = profile(test=marker)
+    spec["project_dir"] = "backend"
+    report = gates.run_all(run, git_repo, profile=spec)
+    assert report["gates"]["test"]["status"] == "pass"
+    assert "backend" in report["gates"]["test"]["output_tail"]
+
+
+def test_a_missing_project_dir_falls_back_to_the_worktree_root(git_repo, run):
+    spec = profile(test=PASS)
+    spec["project_dir"] = "nope"
+    report = gates.run_all(run, git_repo, profile=spec)
+    assert report["gates"]["test"]["status"] == "pass"

@@ -33,6 +33,7 @@ def run_all(run, cwd, profile=None, only=None, ref=None):
     commands = (profile or {}).get("commands") or {}
     timeout = run.config.get("gate_timeout_seconds", 1800)
     wanted = list(only) if only else list(GATE_ORDER)
+    where = _project_cwd(cwd, profile)
 
     report = {
         "generated_at": datetime.datetime.now().replace(microsecond=0).isoformat(),
@@ -55,7 +56,7 @@ def run_all(run, cwd, profile=None, only=None, ref=None):
                 "note": "no {} command detected for this stack".format(name),
             }
             continue
-        result = osenv.run(command, cwd=cwd, timeout=timeout)
+        result = osenv.run(command, cwd=where, timeout=timeout)
         report["gates"][name] = {
             "command": list(command),
             "status": "pass" if result.ok else "fail",
@@ -189,6 +190,20 @@ def _profile(run, profile):
         return profile
     path = pathlib.Path(run.stack_path)
     return osenv.read_json(path) if path.exists() else {}
+
+
+def _project_cwd(cwd, profile):
+    """Where the gate commands run: the detected project dir, else ``cwd``.
+
+    ``stack.detect`` sets ``project_dir`` when the build system sits one
+    level down (an app under ``backend/``). The git ref still comes from
+    ``cwd`` - the worktree root is the thing being judged.
+    """
+    rel = (profile or {}).get("project_dir")
+    if not rel:
+        return cwd
+    candidate = pathlib.Path(cwd) / rel
+    return candidate if candidate.is_dir() else cwd
 
 
 def _head(cwd):

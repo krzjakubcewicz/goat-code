@@ -308,3 +308,38 @@ def test_python_e2e_libraries_are_detected(tmp_path):
     write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['playwright']\n")
     profile = stack.detect(tmp_path)
     assert profile["e2e_framework"] == "playwright"
+
+
+# -- projects that live one level down ------------------------------------
+
+
+def test_detects_a_python_app_under_backend(tmp_path):
+    write(tmp_path, "Makefile", "test:\n\tdocker compose run api pytest\n")
+    write(tmp_path, "docker-compose.yml", "services:\n  api:\n    build: ./backend\n")
+    write(
+        tmp_path,
+        "backend/pyproject.toml",
+        "[project]\nname='api'\ndependencies=['django','pytest','ruff']\n",
+    )
+    profile = stack.detect(tmp_path)
+    assert profile["project_dir"] == "backend"
+    assert profile["languages"] == ["python"]
+    assert "django" in profile["frameworks"]
+    assert profile["commands"]["test"] == ["pytest"]
+    assert profile["commands"]["lint"] == ["ruff", "check", "."]
+
+
+def test_a_root_build_system_wins_over_a_child(tmp_path):
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n")
+    write(tmp_path, "backend/package.json", package_json(name="nested"))
+    profile = stack.detect(tmp_path)
+    assert profile["project_dir"] is None
+    assert profile["languages"] == ["python"]
+
+
+def test_two_candidate_children_stay_undetected(tmp_path):
+    write(tmp_path, "backend/pyproject.toml", "[project]\nname='api'\n")
+    write(tmp_path, "frontend/package.json", package_json(name="web"))
+    profile = stack.detect(tmp_path)
+    assert profile["project_dir"] is None
+    assert profile["commands"]["test"] is None

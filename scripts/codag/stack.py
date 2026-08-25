@@ -109,10 +109,15 @@ def detect(repo):
         "test_dirs": [],
         "specialist_skills": [],
         "notes": [],
+        "project_dir": None,
     }
 
     markers = _present_markers(repo)
     profile["root_markers"] = markers
+
+    nested = _nested_project(repo, markers)
+    if nested is not None:
+        repo, markers = _adopt_nested_project(repo, nested, profile)
 
     if "package.json" in markers:
         _detect_javascript(repo, profile)
@@ -347,6 +352,57 @@ def _all_deps(pkg):
         if isinstance(section, dict):
             deps.update(section)
     return deps
+
+
+_BUILD_MARKERS = (
+    "package.json",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "requirements.txt",
+    "go.mod",
+    "Cargo.toml",
+    "Gemfile",
+    "composer.json",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "mix.exs",
+)
+
+
+def _nested_project(repo, markers):
+    """The single child directory holding the build system, if the root has none.
+
+    A repo that keeps its app under ``backend/`` or ``server/`` looks empty
+    from the root: ``Makefile`` and ``docker-compose.yml`` name no language.
+    Detecting one level down is what keeps the gates from reporting
+    ``missing`` for such a layout. Ambiguity is left undetected on purpose -
+    two candidates is a monorepo, which the caller must configure.
+    """
+    if any(m in markers for m in _BUILD_MARKERS):
+        return None
+    repo = pathlib.Path(repo)
+    if not repo.is_dir():
+        return None
+    found = [
+        child
+        for child in sorted(repo.iterdir())
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and any((child / m).exists() for m in _BUILD_MARKERS)
+    ]
+    return found[0] if len(found) == 1 else None
+
+
+def _adopt_nested_project(repo, nested, profile):
+    """Re-root detection onto ``nested`` and record where the gates must run."""
+    rel = nested.name
+    profile["project_dir"] = rel
+    profile["notes"].append(
+        "build system lives in {}/, not the repo root; gates run there".format(rel)
+    )
+    return nested, _present_markers(nested)
 
 
 def _present_markers(repo):
