@@ -110,8 +110,10 @@ def detect(repo):
         "specialist_skills": [],
         "notes": [],
         "project_dir": None,
+        "commands_cwd": None,
     }
 
+    root = repo
     markers = _present_markers(repo)
     profile["root_markers"] = markers
 
@@ -138,6 +140,8 @@ def detect(repo):
             profile["notes"].append(
                 "no build system recognised; agents must infer commands from the repo"
             )
+
+    _containerize(root, profile)
 
     profile["source_dirs"] = _existing(repo, ["src", "lib", "app", "pkg", "cmd", "internal"])
     profile["test_dirs"] = _existing(repo, ["tests", "test", "spec", "__tests__", "e2e"])
@@ -369,6 +373,82 @@ _BUILD_MARKERS = (
     "build.gradle.kts",
     "mix.exs",
 )
+
+
+_COMPOSE_FILES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml")
+
+#: Emptying the entrypoint matters: an app image usually starts a server.
+_COMPOSE_RUN = ("docker", "compose", "run", "--rm", "--entrypoint", "")
+
+_CONTAINERISED_GATES = ("build", "typecheck", "lint", "test", "e2e")
+
+
+def _containerize(root, profile):
+    """Run the gates inside the compose service that owns the code.
+
+    A project whose toolchain only exists in its image - the common shape
+    once there is a Dockerfile - has nothing to run on the host: ``pytest``
+    is simply not installed there. When a compose file defines a service
+    built from the project directory, the same commands go through
+    ``docker compose run`` instead, from the repo root where the compose
+    file lives.
+    """
+    service = _compose_service(root, profile.get("project_dir"))
+    if not service:
+        return
+    commands = profile["commands"]
+    if not any(commands.get(name) for name in _CONTAINERISED_GATES):
+        return
+    for name in _CONTAINERISED_GATES:
+        if commands.get(name):
+            commands[name] = list(_COMPOSE_RUN) + [service] + list(commands[name])
+    profile["commands"]["setup"] = None
+    profile["commands_cwd"] = ""
+    profile["notes"].append(
+        "gates run in the '{}' compose service; the toolchain lives in the image".format(service)
+    )
+
+
+def _compose_service(root, project_dir):
+    """Name the compose service whose build context is the project.
+
+    Deliberately a line scan rather than a YAML parse: all it needs is the
+    service name above a ``build:`` that points at the project directory,
+    and a wrong guess here would silently run the gates in the wrong
+    container.
+    """
+    text = ""
+    for name in _COMPOSE_FILES:
+        text = _read_text(pathlib.Path(root) / name) or ""
+        if text:
+            break
+    if not text:
+        return None
+
+    wanted = {".", "./"}
+    if project_dir:
+        wanted = {project_dir, "./" + project_dir, project_dir + "/", "./" + project_dir + "/"}
+
+    in_services = False
+    service = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            in_services = stripped.startswith("services:")
+            service = None
+            continue
+        if not in_services:
+            continue
+        if indent <= 2 and stripped.endswith(":"):
+            service = stripped[:-1].strip()
+            continue
+        key, _, value = stripped.partition(":")
+        if service and key.strip() in ("build", "context") and value.strip() in wanted:
+            return service
+    return None
 
 
 def _nested_project(repo, markers):

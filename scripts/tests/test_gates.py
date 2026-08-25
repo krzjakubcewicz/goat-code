@@ -185,3 +185,19 @@ def test_a_missing_project_dir_falls_back_to_the_worktree_root(git_repo, run):
     spec["project_dir"] = "nope"
     report = gates.run_all(run, git_repo, profile=spec)
     assert report["gates"]["test"]["status"] == "pass"
+
+
+def test_a_tool_missing_from_this_host_is_reported_not_raised(git_repo, run):
+    """The toolchain often lives only in the project's image."""
+    report = gates.run_all(run, git_repo, profile=profile(test=["definitely-not-installed-xyz"]))
+    assert report["gates"]["test"]["status"] == "missing"
+    assert "definitely-not-installed-xyz" in report["gates"]["test"]["note"]
+
+
+def test_commands_cwd_overrides_project_dir(git_repo, run):
+    (git_repo / "backend").mkdir()
+    spec = profile(test=python_cmd("import pathlib; print(pathlib.Path.cwd().name)"))
+    spec["project_dir"] = "backend"
+    spec["commands_cwd"] = ""
+    report = gates.run_all(run, git_repo, profile=spec)
+    assert "backend" not in report["gates"]["test"]["output_tail"]

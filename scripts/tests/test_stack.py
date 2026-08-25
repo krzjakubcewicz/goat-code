@@ -314,8 +314,7 @@ def test_python_e2e_libraries_are_detected(tmp_path):
 
 
 def test_detects_a_python_app_under_backend(tmp_path):
-    write(tmp_path, "Makefile", "test:\n\tdocker compose run api pytest\n")
-    write(tmp_path, "docker-compose.yml", "services:\n  api:\n    build: ./backend\n")
+    write(tmp_path, "Makefile", "test:\n\tpytest\n")
     write(
         tmp_path,
         "backend/pyproject.toml",
@@ -343,3 +342,51 @@ def test_two_candidate_children_stay_undetected(tmp_path):
     profile = stack.detect(tmp_path)
     assert profile["project_dir"] is None
     assert profile["commands"]["test"] is None
+
+
+# -- toolchains that only exist in a container ----------------------------
+
+
+COMPOSE = """services:
+  postgres:
+    image: postgres:16
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+"""
+
+
+def test_gates_go_through_the_compose_service_that_builds_the_project(tmp_path):
+    write(tmp_path, "docker-compose.yml", COMPOSE)
+    write(
+        tmp_path,
+        "backend/pyproject.toml",
+        "[project]\nname='api'\ndependencies=['django','pytest','ruff']\n",
+    )
+    profile = stack.detect(tmp_path)
+    assert profile["project_dir"] == "backend"
+    assert profile["commands_cwd"] == ""
+    assert profile["commands"]["test"] == [
+        "docker", "compose", "run", "--rm", "--entrypoint", "", "api", "pytest",
+    ]
+    assert profile["commands"]["lint"][:7] == [
+        "docker", "compose", "run", "--rm", "--entrypoint", "", "api",
+    ]
+
+
+def test_a_compose_service_building_the_root_is_used_too(tmp_path):
+    write(tmp_path, "docker-compose.yml", "services:\n  web:\n    build: .\n")
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n")
+    profile = stack.detect(tmp_path)
+    assert profile["commands"]["test"][:7] == [
+        "docker", "compose", "run", "--rm", "--entrypoint", "", "web",
+    ]
+
+
+def test_a_compose_file_with_no_build_leaves_the_commands_alone(tmp_path):
+    write(tmp_path, "docker-compose.yml", "services:\n  db:\n    image: postgres:16\n")
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n")
+    profile = stack.detect(tmp_path)
+    assert profile["commands"]["test"] == ["pytest"]
+    assert profile["commands_cwd"] is None

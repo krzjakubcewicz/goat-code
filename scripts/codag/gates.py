@@ -56,7 +56,21 @@ def run_all(run, cwd, profile=None, only=None, ref=None):
                 "note": "no {} command detected for this stack".format(name),
             }
             continue
-        result = osenv.run(command, cwd=where, timeout=timeout)
+        try:
+            result = osenv.run(command, cwd=where, timeout=timeout)
+        except osenv.CommandError as exc:
+            # The tool is not on this host: often it only exists inside the
+            # project's container. Unrunnable is not the same as failing, and
+            # it must never take down the command that asked for the gate.
+            report["gates"][name] = {
+                "command": list(command),
+                "status": "missing",
+                "returncode": exc.returncode,
+                "duration": 0.0,
+                "output_tail": "",
+                "note": exc.stderr.strip() or "could not run {}".format(command[0]),
+            }
+            continue
         report["gates"][name] = {
             "command": list(command),
             "status": "pass" if result.ok else "fail",
@@ -199,7 +213,9 @@ def _project_cwd(cwd, profile):
     level down (an app under ``backend/``). The git ref still comes from
     ``cwd`` - the worktree root is the thing being judged.
     """
-    rel = (profile or {}).get("project_dir")
+    override = (profile or {}).get("commands_cwd")
+    # "" is a real answer - the repo root - so only None defers to project_dir.
+    rel = override if override is not None else (profile or {}).get("project_dir")
     if not rel:
         return cwd
     candidate = pathlib.Path(cwd) / rel
