@@ -61,6 +61,22 @@ def _registered(repo, path):
     return False
 
 
+def start_point(run):
+    """Where a new slice branch begins: the integration tip, else the base.
+
+    In cycle 1 the integration branch still sits on the base commit, so the
+    two are the same. From cycle 2 on they are not: a remedial slice fixes
+    code that only exists on the integration branch, and branching it off
+    the base commit hands the executor an empty repo.
+    """
+    branch = getattr(run, "integration_branch", None)
+    if not branch:
+        return run.base_commit
+    result = osenv.git(["rev-parse", "--verify", "--quiet", branch], cwd=run.repo)
+    head = (result.stdout or "").strip() if result.ok else ""
+    return head or run.base_commit
+
+
 def create(run, slice_id, branch=None, start=None, setup=None, stack_profile=None):
     """Add a worktree for ``slice_id``. Idempotent for an existing one.
 
@@ -69,7 +85,7 @@ def create(run, slice_id, branch=None, start=None, setup=None, stack_profile=Non
     repo = run.repo
     path = path_for(run, slice_id)
     branch = branch or branch_name(run.run_id, slice_id)
-    start = start or run.base_commit
+    start = start or start_point(run)
 
     if path.exists() and _registered(repo, path):
         return path, branch, None
