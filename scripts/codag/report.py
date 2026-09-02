@@ -36,7 +36,74 @@ class ReportError(RuntimeError):
 # --------------------------------------------------------------------------
 
 
-def verify_done(run, doc, slice_id, status="DONE", profile=None):
+#: An evidence value: a path inside the worktree and a line number in it.
+EVIDENCE_RE = re.compile(r"^(?P<path>.+):(?P<line>\d+)$")
+
+
+def evidence_findings(item, evidence, worktree_path):
+    """Every acceptance criterion must name a test line that really exists.
+
+    The failure this catches is the slice whose code is right and whose proof
+    is missing - by far the most common reason a cycle is spent. Naming the
+    line is cheap when the test exists and impossible when it does not, which
+    is the whole point: it is the same question the verifier will ask, asked
+    while the executor is still holding the context to answer it.
+    """
+    criteria = tasks.criterion_ids(item)
+    if not criteria:
+        return []
+    evidence = evidence or {}
+
+    problems = []
+    missing = [cid for cid in criteria if not str(evidence.get(cid, "")).strip()]
+    if missing:
+        problems.append(
+            "no --evidence for {}; give each criterion the test path:line that"
+            " would fail if the behaviour were wrong".format(", ".join(missing))
+        )
+
+    unknown = sorted(set(evidence) - set(criteria))
+    if unknown:
+        problems.append(
+            "--evidence names {}, which {} not an acceptance criterion of this"
+            " slice (its criteria are {})".format(
+                ", ".join(unknown), "are" if len(unknown) > 1 else "is", ", ".join(criteria)
+            )
+        )
+
+    for cid in criteria:
+        raw = str(evidence.get(cid, "")).strip()
+        if not raw:
+            continue
+        match = EVIDENCE_RE.match(raw)
+        if not match:
+            problems.append(
+                "evidence for {} is {!r}; it must be <test path>:<line>".format(cid, raw)
+            )
+            continue
+        problems.extend(_evidence_target(cid, match, worktree_path))
+    return problems
+
+
+def _evidence_target(cid, match, worktree_path):
+    """The named file and line have to exist in the worktree being reported."""
+    target = pathlib.Path(worktree_path) / match.group("path")
+    if not target.is_file():
+        return ["evidence for {} names {}, which does not exist".format(cid, match.group("path"))]
+    # ponytail: line-exists only. Whether that line holds a real assertion is
+    # the verifier's judgement, not something a script should guess at.
+    total = len(osenv.read_text(target).splitlines())
+    line = int(match.group("line"))
+    if line < 1 or line > total:
+        return [
+            "evidence for {} names {}:{}, but that file has {} lines".format(
+                cid, match.group("path"), line, total
+            )
+        ]
+    return []
+
+
+def verify_done(run, doc, slice_id, status="DONE", evidence=None, profile=None):
     """Cheaply falsifiable checks on a claimed DONE. Returns the problems.
 
     Not an attempt to judge the work - the verifier does that. This only
@@ -78,6 +145,7 @@ def verify_done(run, doc, slice_id, status="DONE", profile=None):
             problems.append("the brief requires a test at {} and it does not exist".format(relpath))
 
     if status == "DONE":
+        problems.extend(evidence_findings(item, evidence, path))
         problems.extend(tdd_findings(run, item, path, profile))
 
     return problems
@@ -118,7 +186,16 @@ def _tdd_messages(worktree_path, item, base, head, profile):
 
 
 def record_slice(
-    run, slice_id, status, tests=None, concerns=None, reason=None, head=None, force=False, profile=None
+    run,
+    slice_id,
+    status,
+    tests=None,
+    concerns=None,
+    reason=None,
+    head=None,
+    evidence=None,
+    force=False,
+    profile=None,
 ):
     """Record an executor's own report. Raises :class:`ReportError` if rejected."""
     status = (status or "").strip().upper()
@@ -134,7 +211,7 @@ def record_slice(
         raise ReportError(str(exc))
 
     if status in FINISHED and not force:
-        problems = verify_done(run, doc, slice_id, status=status, profile=profile)
+        problems = verify_done(run, doc, slice_id, status=status, evidence=evidence, profile=profile)
         if problems:
             raise ReportError(
                 "cannot accept {} for {}:\n  - ".format(status, slice_id)
@@ -142,11 +219,14 @@ def record_slice(
                 + _tdd_hint(problems)
             )
 
-    # An honest DONE_WITH_CONCERNS is the escape hatch from the TDD check,
-    # but the violation still goes on the record - it cannot be hidden behind
-    # a vague concern string.
+    # An honest DONE_WITH_CONCERNS is the escape hatch from the TDD and
+    # evidence checks, but the gap still goes on the record - it cannot be
+    # hidden behind a vague concern string.
     if status == "DONE_WITH_CONCERNS" and not force and item.get("worktree"):
-        late = tdd_findings(run, item, pathlib.Path(item["worktree"]), profile)
+        worktree_path = pathlib.Path(item["worktree"])
+        late = evidence_findings(item, evidence, worktree_path) + tdd_findings(
+            run, item, worktree_path, profile
+        )
         if late:
             concerns = "; ".join([c for c in [concerns] if c] + late)
 
@@ -163,6 +243,9 @@ def record_slice(
             "tests": tests,
             "concerns": concerns,
             "reason": reason,
+            # The verifier reads these as data: the executor's own claim about
+            # which test proves which criterion, there to be checked.
+            "evidence": dict(evidence) if evidence else None,
         }
         if resolved_head:
             commits = target.setdefault("commits", {"base": None, "head": None})
@@ -182,6 +265,7 @@ def record_slice(
         "tests": tests,
         "concerns": concerns,
         "reason": reason,
+        "evidence": dict(evidence) if evidence else None,
     }
 
 

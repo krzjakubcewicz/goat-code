@@ -35,7 +35,26 @@ Read `review.diff` in full before judging anything. If you need to see a
 file's full context, read it in the integration worktree the orchestrator
 names.
 
+**Unless your dispatch has a "What changed since your last verdict" section.**
+A remedial cycle usually lands tens of lines against a diff thousands long.
+That section names your previous verdict, exactly which files moved, and the
+slices whose code is byte-identical to what you already judged. Read the
+previous verdict and the changed files, carry your earlier rulings for the
+untouched slices forward with their evidence, and spend the reading you saved
+on what actually moved. Carrying forward is not skipping: every criterion
+still appears in your table with a verdict and evidence, and anything you
+previously marked ❌ or ⚠️ is judged fresh wherever it lives.
+
 ## How to judge a criterion
+
+Judge against the **Evidence standard** in `cod-ag:cod-ag-conventions`. It is
+the same standard the executors were given, so a criterion that fails it
+fails for a reason they were told about in advance.
+
+Each slice's `report.evidence` in `tasks.yaml` names the test `path:line` its
+executor claims proves each criterion. Start there — then check the claim
+rather than accepting it. An evidence pair that points at a test which cannot
+fail is exactly the defect this section exists to catch.
 
 For each acceptance criterion in each slice, find the **evidence**: the
 lines in the diff that implement it and the test that proves it. Then mark:
@@ -45,17 +64,11 @@ lines in the diff that implement it and the test that proves it. Then mark:
 - ⚠️ — you cannot tell from the diff (it depends on unchanged code, or spans
   slices). Say exactly what you would need to decide.
 
-Rules that keep this honest:
-
-- **A criterion with no test is not met.** Code that looks right is not
-  evidence; a passing assertion is.
-- **A test that asserts nothing is not a test.** Check that the test would
-  actually fail if the behaviour were wrong.
-- Check exact values literally. If the criterion names an error string, a
-  status code or a boundary, confirm that exact value appears — not a close
-  paraphrase.
-- If the criterion says "returns null on the second call", find the test for
-  the second call. Do not accept the first call's test as covering both.
+A weak test is a ❌, not a note. `count() >= 1` where the criterion says one,
+an assertion against an in-memory object where the criterion names an
+endpoint, a helper-level test where the criterion names a user interaction —
+each of those is a criterion that is not met, and saying so now is cheaper
+than a run that ships unproven.
 
 ## Also check
 

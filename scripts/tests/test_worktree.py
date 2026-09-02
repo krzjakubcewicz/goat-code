@@ -358,3 +358,24 @@ def test_brief_warns_that_test_first_is_checked(run, plan):
     text = brief.build(run, plan, "S1")
     assert "This is checked" in text
     assert "the report is refused" in text
+
+
+# -- where a slice branch starts -------------------------------------------
+
+
+def test_a_slice_branches_off_the_integration_tip(run, git_repo):
+    """A remedial slice must see the code earlier slices already landed."""
+    integration, _branch = worktree.create_integration(run)
+    (integration / "shipped.txt").write_text("from cycle 1", encoding="utf-8")
+    osenv.git(["add", "shipped.txt"], cwd=integration)
+    osenv.git(["commit", "-m", "cycle 1 work"], cwd=integration)
+    tip = osenv.git_out(["rev-parse", "HEAD"], cwd=integration)
+
+    assert worktree.start_point(run) == tip
+    path, _branch, _setup = worktree.create(run, "R1", setup=False)
+    assert (path / "shipped.txt").exists()
+
+
+def test_start_point_is_the_base_commit_before_anything_merges(run):
+    worktree.create_integration(run)
+    assert worktree.start_point(run) == run.base_commit

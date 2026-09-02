@@ -50,6 +50,46 @@ def ids(doc):
     return [s.get("id") for s in slices(doc) if s.get("id")]
 
 
+def criterion_ids(item):
+    """The acceptance criterion ids of one slice, in order.
+
+    The evidence contract is keyed on these: the brief lists them, the
+    dispatch renders them into the report command, and ``report`` refuses a
+    DONE that does not account for every one.
+    """
+    out = []
+    for criterion in item.get("acceptance") or []:
+        if isinstance(criterion, dict) and criterion.get("id"):
+            out.append(str(criterion["id"]))
+    return out
+
+
+def unchanged_slices(doc, changed_files):
+    """Slice ids owning none of ``changed_files``, in plan order.
+
+    What a remedial cycle actually costs: the verifier is handed the whole
+    diff again and told to re-judge all of it, when a two-assertion fix moved
+    one slice's files and left every other criterion sitting against byte-
+    identical code. These are the ones it already judged.
+
+    Deliberately conservative in the same direction as ``schema.overlaps``: a
+    slice is only called unchanged when nothing it owns *or* appends to moved,
+    because a wrong "unchanged" hides a real regression and a wrong "changed"
+    only costs a re-read.
+    """
+    from . import schema
+
+    paths = [schema.normalise(p) for p in changed_files or []]
+    out = []
+    for item in slices(doc):
+        patterns = list(item.get("owns") or []) + list(item.get("touches_shared") or [])
+        if any(schema.matches(pattern, path) for pattern in patterns for path in paths):
+            continue
+        if item.get("id"):
+            out.append(item["id"])
+    return out
+
+
 def update(path, mutate):
     """Apply ``mutate(doc)`` under a lock and write the result atomically.
 

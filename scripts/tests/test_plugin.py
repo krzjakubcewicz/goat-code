@@ -20,9 +20,23 @@ SCRIPTS = ROOT / "scripts"
 AGENTS = sorted((ROOT / "agents").glob("*.md"))
 COMMANDS = sorted((ROOT / "commands").glob("*.md"))
 SKILLS = sorted((ROOT / "skills").glob("*/SKILL.md"))
-MARKDOWN = sorted(
-    p for p in ROOT.rglob("*.md") if ".git" not in p.parts and "node_modules" not in p.parts
-)
+#: Directories that are not part of the plugin: git internals, installed
+#: dependencies, and everything `.gitignore` keeps out - local run telemetry,
+#: caches, virtualenvs, a run directory left behind by a self-test. A stray
+#: `.md` in any of them is not a plugin file and must not be cross-referenced
+#: as one; copied run artifacts in particular are full of paths that look like
+#: agent and command names.
+EXCLUDED_DIRS = {
+    ".git",
+    ".codag",
+    ".pytest_cache",
+    ".venv",
+    ".worktrees",
+    "__pycache__",
+    "node_modules",
+    "telemetry",
+}
+MARKDOWN = sorted(p for p in ROOT.rglob("*.md") if not EXCLUDED_DIRS & set(p.parts))
 
 
 def frontmatter(path):
@@ -179,6 +193,21 @@ def test_orchestrator_defers_to_the_state_machine():
     assert "next" in text
     assert "do **not** decide what happens next" in text
     assert "## Step 1" not in text, "the eight-step prose is now machine.py"
+
+
+def test_the_evidence_standard_is_defined_once_and_cited_by_both_sides():
+    """The executor is graded on the verifier's bar, so it is given that bar.
+
+    A rubric that lives only in the verifier is a rubric the work is judged
+    against and never built to - which is what a whole cycle used to be spent
+    discovering.
+    """
+    conventions = (ROOT / "skills" / "cod-ag-conventions" / "SKILL.md").read_text(encoding="utf-8")
+    assert "## Evidence standard" in conventions
+
+    for name in ("codag-executor", "codag-verifier"):
+        text = (ROOT / "agents" / "{}.md".format(name)).read_text(encoding="utf-8")
+        assert "Evidence standard" in text, "{} does not cite the shared standard".format(name)
 
 
 # -- cross-references ------------------------------------------------------

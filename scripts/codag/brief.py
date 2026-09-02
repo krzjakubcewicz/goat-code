@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pathlib
 
-from . import osenv, stack as stackmod
+from . import osenv, stack as stackmod, tasks
 
 _TDD_RULES = """\
 1. Write the failing test first. Run it. Watch it fail for the right reason.
@@ -36,6 +36,29 @@ _OWNERSHIP_RULES = """\
   editing that file right now and your change would be lost at merge.
 - Do not run git merge, rebase, push, or switch branches. You are already
   on your branch in your own worktree."""
+
+_EVIDENCE_STANDARD = """\
+A criterion is met when a named test would fail if the behaviour were wrong.
+Not when the code looks right, and not when a test near it passes. This is
+the same standard the verifier judges by - see the Evidence standard in
+`cod-ag:cod-ag-conventions` for the full version.
+
+- **No test, not met.** A passing assertion is the evidence, not the code.
+- **A test that asserts nothing is not a test.** Ask whether it could fail.
+- **Exact values, literally.** The error string, status code or boundary the
+  criterion names - not a paraphrase, not a type check, not "contains".
+- **Exact counts.** `== 1` when the criterion says exactly one. `>= 1` passes
+  while the behaviour is wrong.
+- **Read back through the real surface.** For a criterion about what an
+  endpoint returns, assert a second GET - not an in-memory object that never
+  reached the database.
+- **Drive the thing the criterion names.** A UI branch or event listener
+  needs the component rendered and driven; a thorough test of the helper
+  underneath does not cover the branch that calls it.
+- **Placement, not just counts.** "Grouped under its exercise" means
+  asserting the row is inside that group.
+- **Every clause.** "null on the second call" needs a test for the second
+  call. Four clauses need four assertions."""
 
 
 def build(run, doc, slice_id, stack_profile=None):
@@ -75,8 +98,8 @@ def build(run, doc, slice_id, stack_profile=None):
     _section_acceptance(add, item)
     _section_tests(add, item)
     _section_scope(add, item)
-    _section_method(add, run, profile)
-    _section_report(add, run, slice_id)
+    _section_method(add, run, profile, item)
+    _section_report(add, run, slice_id, item)
 
     return "\n".join(lines).rstrip() + "\n"
 
@@ -187,6 +210,16 @@ def _section_acceptance(add, item):
         else:
             add("- {}".format(criterion))
     add("")
+    add("### The evidence bar")
+    add("")
+    add(_EVIDENCE_STANDARD)
+    add("")
+    ids = tasks.criterion_ids(item)
+    if ids:
+        add("When you report DONE you must name, for each of {}, the test".format(", ".join(ids)))
+        add("`path:line` that would fail if the behaviour were wrong. If you cannot")
+        add("name one, that criterion is not met - write the test.")
+        add("")
 
 
 def _section_tests(add, item):
@@ -219,27 +252,60 @@ def _section_scope(add, item):
     add("")
 
 
-def _section_method(add, run, profile):
+def _section_method(add, run, profile, item):
     add("## Method: test-driven, committed in small steps")
     add("")
     add(_TDD_RULES)
     add("")
     commands = (profile or {}).get("commands") or {}
-    if commands.get("test"):
-        add("Run your tests with: `{}`".format(stackmod.command_text(commands["test"])))
+    _section_test_commands(add, commands, item)
     for name in ("typecheck", "lint", "build"):
         if commands.get(name):
             add("Before you report DONE, {} must pass: `{}`".format(name, stackmod.command_text(commands[name])))
     add("")
 
 
-def _section_report(add, run, slice_id):
+def _section_test_commands(add, commands, item):
+    """The loop command first, the whole suite once.
+
+    Executors launched 909 test containers across the recorded runs, and one
+    ran the identical full-suite command 25 times - because the brief named
+    the suite and nothing else, so every red-green iteration paid for it.
+    """
+    suite = commands.get("test")
+    per_file = _per_file_commands(commands.get("test_one"), item)
+    if per_file:
+        add("While you work, run only the test you are on:")
+        add("")
+        for line in per_file:
+            add("    {}".format(line))
+        add("")
+        if suite:
+            add("Run the whole suite once before you report: `{}`.".format(
+                stackmod.command_text(suite)
+            ))
+            add("A green slice that breaks something else is not done.")
+    elif suite:
+        add("Run your tests with: `{}`".format(stackmod.command_text(suite)))
+
+
+def _section_report(add, run, slice_id, item=None):
     add("## What to report")
     add("")
     add("Write your full report to:")
     add("")
     add("    {}".format(run.report_path(slice_id)))
     add("")
+    ids = tasks.criterion_ids(item or {})
+    if ids:
+        add("A `DONE` carries one `--evidence` flag per criterion:")
+        add("")
+        for cid in ids:
+            add("    --evidence {}=<path>:<line>".format(cid))
+        add("")
+        add("The path is resolved inside your worktree and the line must exist.")
+        add("The exact command is in your dispatch.")
+        add("")
     add("Return to the orchestrator ONLY: a status line, the commit range, a")
     add("one-line test summary, and any concerns. Everything else goes in the")
     add("report file.")
@@ -252,6 +318,20 @@ def _section_report(add, run, slice_id):
     add("- `BLOCKED` - you cannot finish; say precisely why")
     add("")
     add("Do not report DONE with failing tests or uncommitted changes.")
+
+
+def _per_file_commands(template, item):
+    """The per-file test command, once per test path the brief declares."""
+    if not template:
+        return []
+    out = []
+    for entry in item.get("tests") or []:
+        path = entry.get("path") if isinstance(entry, dict) else entry
+        if not path:
+            continue
+        argv = [str(part).replace(stackmod.PATH_TOKEN, str(path)) for part in template]
+        out.append(stackmod.command_text(argv))
+    return out
 
 
 def _providers(doc):

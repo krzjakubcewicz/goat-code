@@ -231,6 +231,26 @@ def test_set_phase_rejects_an_unknown_phase(git_repo):
         run.set_phase("dancing")
 
 
+def test_set_phase_records_the_transition_in_the_ledger(git_repo):
+    """Phase timing is the one thing the recorded runs could never answer.
+
+    debug was off in all eleven of them, so no log.txt was ever written and
+    there is no record of where a run's hours went. The ledger is not
+    optional, so this is.
+    """
+    run = make_run(git_repo)
+    run.set_phase("execute")
+    assert any("phase init -> execute" in entry for entry in ledger.entries(run))
+
+
+def test_set_phase_records_nothing_when_the_phase_is_unchanged(git_repo):
+    run = make_run(git_repo)
+    run.set_phase("execute")
+    before = len(ledger.entries(run))
+    run.set_phase("execute")
+    assert len(ledger.entries(run)) == before
+
+
 def test_advance_cycle_creates_the_next_directory(git_repo):
     run = make_run(git_repo)
     assert run.advance_cycle() == 2
@@ -437,3 +457,21 @@ def test_preflight_names_several_dirty_paths(git_repo):
     _root, problems = runmod.preflight(git_repo)
     message = " ".join(problems)
     assert "README.md" in message and "extra.txt" in message
+
+
+def test_the_same_ledger_line_is_not_appended_twice_in_a_row(git_repo):
+    """A recorded run logged 'scribe written' twice, seven seconds apart."""
+    run = make_run(git_repo)
+    ledger.append(run, "scribe written")
+    ledger.append(run, "scribe written")
+    assert [e for e in ledger.entries(run) if "scribe written" in e] == [
+        e for e in ledger.entries(run) if "scribe written" in e
+    ][:1]
+
+
+def test_a_repeated_line_is_appended_again_once_something_else_intervenes(git_repo):
+    run = make_run(git_repo)
+    ledger.append(run, "slice S1 done")
+    ledger.append(run, "slice S2 done")
+    ledger.append(run, "slice S1 done")
+    assert len([e for e in ledger.entries(run) if "slice S1 done" in e]) == 2

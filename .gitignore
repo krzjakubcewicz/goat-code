@@ -5,3 +5,6 @@ __pycache__/
 .worktrees/
 *.egg-info/
 .venv/
+
+# local run telemetry (large transcripts, never committed)
+telemetry/

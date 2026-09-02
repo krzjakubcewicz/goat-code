@@ -64,6 +64,17 @@ write_e2e_tests: true
 # stops the next run rediscovering what this one found out.
 write_progress: true
 
+# The subdirectory holding the build system, when detection cannot tell on
+# its own. A monorepo with a backend/ and a frontend/ has two, and cod-ag
+# will not guess which one the gates belong to - so it finds neither, and
+# the run has no automated safety net. Name the one to gate:
+#
+#   project_dir: backend
+#
+# null auto-detects, which is right for a single-project repository and for
+# one whose only build system sits one level down.
+project_dir: null
+
 # Install dependencies in each new worktree. Turn this off for projects
 # where install is slow and the tests do not need it.
 worktree_setup: true

@@ -103,6 +103,13 @@ def test_executor_prompt_carries_the_report_command(run, plan):
     assert str(run.report_path("S1")) in text
 
 
+def test_executor_prompt_demands_evidence_per_criterion(run, plan):
+    """The command an executor copies out has a slot for every criterion."""
+    text = dispatch.executor(run, plan, "S1")
+    assert "--evidence A1=<path>:<line>" in text
+    assert "One `--evidence` per acceptance criterion (A1)" in text
+
+
 def test_executor_prompt_warns_that_done_is_checked(run, plan):
     text = dispatch.executor(run, plan, "S1")
     assert "refuses a `DONE` you have not earned" in text
@@ -278,3 +285,103 @@ def test_write_creates_the_directory_for_a_later_cycle(run, plan):
     path = dispatch.write(run, "S1", "hello")
     assert path.parent == run.cycle_dir(2) / "dispatch"
     assert path.exists()
+
+
+# -- incremental verification ----------------------------------------------
+#
+# The recorded cycle-3 verifier dispatch ordered a re-judge of all 52 criteria
+# across a 6168-line diff for a 213-line delta whose slice changed no
+# production file. Nine of twenty-six verifier dispatches were remedial, each
+# on opus.
+
+
+def test_the_first_cycle_asks_for_a_full_judgement(run):
+    package = package_for(run)
+    text = dispatch.verifier(run, package)
+    assert "2 across 2 slices. Every one needs a verdict" in text
+    assert "already judged" not in text
+
+
+def test_a_later_cycle_points_at_the_previous_verdict(run):
+    package = package_for(run)
+    package["previous_verdict"] = str(run.root / "cycle-1" / "verdict.md")
+    package["previous_ref"] = "abc1234"
+    package["changed_files"] = ["src/s2/index.js"]
+    package["unchanged_slices"] = ["S1"]
+
+    text = dispatch.verifier(run, package)
+    assert package["previous_verdict"] in text
+    assert "S1" in text
+    assert "src/s2/index.js" in text
+
+
+def test_a_later_cycle_says_the_unchanged_code_was_already_judged(run):
+    package = package_for(run)
+    package["previous_verdict"] = str(run.root / "cycle-1" / "verdict.md")
+    package["previous_ref"] = "abc1234"
+    package["changed_files"] = ["src/s2/index.js"]
+    package["unchanged_slices"] = ["S1"]
+
+    text = dispatch.verifier(run, package)
+    assert "already judged" in text
+    assert "carry" in text.lower()
+
+
+def test_a_later_cycle_that_changed_everything_asks_for_a_full_judgement(run):
+    package = package_for(run)
+    package["previous_verdict"] = str(run.root / "cycle-1" / "verdict.md")
+    package["changed_files"] = ["src/s1/index.js", "src/s2/index.js"]
+    package["unchanged_slices"] = []
+
+    text = dispatch.verifier(run, package)
+    assert "already judged" not in text
+
+
+def test_the_verifier_is_pointed_at_weak_assertions_without_being_told_to_fail(run):
+    package = package_for(run)
+    package["weak_assertions"] = [
+        {"path": "tests/test_audit.py", "line": 12, "reason": "count/length compared with an inequality", "source": "assert rows.count() >= 1"}
+    ]
+    text = dispatch.verifier(run, package)
+    assert "tests/test_audit.py:12" in text
+    assert "leads, not findings" in text
+
+
+def test_no_weak_assertion_section_when_the_scan_found_nothing(run):
+    text = dispatch.verifier(run, package_for(run))
+    assert "leads, not findings" not in text
+
+
+def test_a_mapping_assumption_renders_as_prose_not_a_python_dict(run):
+    """Seen verbatim in a recorded cycle-3 dispatch: the verifier was handed
+    `{'Cycle 2 verdict, S3/A2': 'the offline production code is complete...'}`."""
+    package = package_for(run)
+    package["assumptions"] = [{"Cycle 2 verdict": "S5's readiness body is correct."}]
+    text = dispatch.verifier(run, package)
+    assert "Cycle 2 verdict: S5's readiness body is correct." in text
+    assert "{'" not in text
+
+
+def test_a_multi_key_mapping_assumption_renders_every_pair(run):
+    package = package_for(run)
+    package["assumptions"] = [{"one": "first", "two": "second"}]
+    text = dispatch.verifier(run, package)
+    assert "one: first" in text
+    assert "two: second" in text
+
+
+def test_the_scribe_is_told_to_promote_a_learning_that_recurred(run, plan):
+    """The assertion-gap lesson was written in all eight recorded entries and
+    the failure recurred all eight times. Writing it again is not the move."""
+    text = dispatch.scribe(run, plan, [])
+    assert "progress promote" in text
+    assert "second time" in text
+
+
+def test_the_planner_is_shown_the_capped_view_not_the_whole_log(run):
+    from codag import progress as progressmod
+
+    progressmod.append(run.repo, run, "- What was implemented\n  - a thing")
+    text = dispatch.planner(run, 1)
+    assert "progress show" in text
+    assert "progress show --all" not in text

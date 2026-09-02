@@ -58,6 +58,10 @@ def plan(run):
 #: The test file each fixture slice's brief declares.
 DECLARED_TEST = {"S1": "tests/auth.test.js", "S2": "tests/mail.test.js"}
 
+#: What an executor names as the test line proving each criterion. Every
+#: fixture slice has exactly one criterion, A1.
+EVIDENCE = {sid: {"A1": "{}:1".format(path)} for sid, path in DECLARED_TEST.items()}
+
 
 def prepare(run, slice_id, commit=True, tests=True):
     """Create the worktree and, by default, do the work an executor would."""
@@ -85,7 +89,7 @@ def prepare(run, slice_id, commit=True, tests=True):
 
 def test_done_is_accepted_when_the_work_is_real(run, plan):
     path = prepare(run, "S1")
-    result = report.record_slice(run, "S1", "DONE", tests="3 passed")
+    result = report.record_slice(run, "S1", "DONE", tests="3 passed", evidence=EVIDENCE["S1"])
 
     assert result["status"] == "DONE"
     assert result["slice_status"] == "done"
@@ -95,7 +99,7 @@ def test_done_is_accepted_when_the_work_is_real(run, plan):
 
 def test_done_records_the_head_commit(run, plan):
     path = prepare(run, "S1")
-    report.record_slice(run, "S1", "DONE")
+    report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
     commits = tasks.get(tasks.load(run.tasks_path), "S1")["commits"]
     assert commits["head"] == worktree.head_commit(path)
     assert commits["base"] == run.base_commit
@@ -103,14 +107,16 @@ def test_done_records_the_head_commit(run, plan):
 
 def test_done_writes_a_ledger_entry(run, plan):
     prepare(run, "S1")
-    report.record_slice(run, "S1", "DONE", tests="3 passed")
+    report.record_slice(run, "S1", "DONE", tests="3 passed", evidence=EVIDENCE["S1"])
     assert ledger.completed_slices(run) == set()  # "done", not the word "complete"
     assert any("slice S1 done" in entry for entry in ledger.entries(run))
 
 
 def test_done_with_concerns_still_counts_as_finished(run, plan):
     prepare(run, "S1")
-    result = report.record_slice(run, "S1", "DONE_WITH_CONCERNS", concerns="file is getting large")
+    result = report.record_slice(
+        run, "S1", "DONE_WITH_CONCERNS", concerns="file is getting large", evidence=EVIDENCE["S1"]
+    )
     assert result["slice_status"] == "done"
     stored = tasks.get(tasks.load(run.tasks_path), "S1")
     assert stored["report"]["concerns"] == "file is getting large"
@@ -118,7 +124,7 @@ def test_done_with_concerns_still_counts_as_finished(run, plan):
 
 def test_the_report_is_stored_on_the_slice(run, plan):
     prepare(run, "S1")
-    report.record_slice(run, "S1", "DONE", tests="3 passed, 0 failed")
+    report.record_slice(run, "S1", "DONE", tests="3 passed, 0 failed", evidence=EVIDENCE["S1"])
     stored = tasks.get(tasks.load(run.tasks_path), "S1")["report"]
     assert stored["status"] == "DONE"
     assert stored["tests"] == "3 passed, 0 failed"
@@ -168,6 +174,72 @@ def test_rejection_names_every_problem_at_once(run, plan):
     assert "not clean" in message
     assert "base commit" in message
     assert "tests/auth.test.js" in message
+
+
+# -- the evidence gate -----------------------------------------------------
+#
+# The failure this exists to catch: a slice whose code is right and whose
+# proof is missing. It was the cause of every cycle-1 verification failure in
+# the recorded runs, and the learning had been written to progress.txt after
+# every one of them without changing anything.
+
+
+def test_done_is_rejected_when_a_criterion_has_no_evidence(run, plan):
+    prepare(run, "S1")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", tests="3 passed")
+    message = str(excinfo.value)
+    assert "no --evidence for A1" in message
+    assert tasks.get(tasks.load(run.tasks_path), "S1")["status"] == "pending"
+
+
+def test_done_is_rejected_when_the_evidence_file_does_not_exist(run, plan):
+    prepare(run, "S1")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence={"A1": "tests/imagined.test.js:4"})
+    assert "tests/imagined.test.js, which does not exist" in str(excinfo.value)
+
+
+def test_done_is_rejected_when_the_evidence_line_is_past_the_end(run, plan):
+    prepare(run, "S1")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence={"A1": "tests/auth.test.js:900"})
+    message = str(excinfo.value)
+    assert "tests/auth.test.js:900" in message
+    assert "1 lines" in message
+
+
+def test_done_is_rejected_when_the_evidence_is_not_a_path_and_line(run, plan):
+    prepare(run, "S1")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence={"A1": "tests/auth.test.js"})
+    assert "<test path>:<line>" in str(excinfo.value)
+
+
+def test_evidence_for_an_unknown_criterion_is_rejected(run, plan):
+    prepare(run, "S1")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(
+            run, "S1", "DONE", evidence={"A1": "tests/auth.test.js:1", "A9": "tests/auth.test.js:1"}
+        )
+    assert "A9" in str(excinfo.value)
+
+
+def test_accepted_evidence_is_stored_for_the_verifier(run, plan):
+    prepare(run, "S1")
+    report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    stored = tasks.get(tasks.load(run.tasks_path), "S1")["report"]
+    assert stored["evidence"] == {"A1": "tests/auth.test.js:1"}
+
+
+def test_done_with_concerns_records_the_missing_evidence(run, plan):
+    """The honest escape hatch, but the gap still goes on the record."""
+    prepare(run, "S1")
+    result = report.record_slice(run, "S1", "DONE_WITH_CONCERNS", concerns="ran out of time")
+    assert result["slice_status"] == "done"
+    concerns = tasks.get(tasks.load(run.tasks_path), "S1")["report"]["concerns"]
+    assert "ran out of time" in concerns
+    assert "no --evidence for A1" in concerns
 
 
 def test_force_overrides_the_checks(run, plan):

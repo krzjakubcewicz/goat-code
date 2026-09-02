@@ -10,8 +10,9 @@ import copy
 
 import pytest
 
-from codag import machine, merge, miniyaml, osenv, report, tasks, worktree
+from codag import ledger, machine, merge, miniyaml, osenv, report, tasks, worktree
 from codag.run import Run
+from tests import conftest
 
 PLAN = {
     "version": 1,
@@ -125,7 +126,12 @@ def finish_slice(run, slice_id):
     src.write_text("module.exports = 1;\n", encoding="utf-8")
     osenv.git(["add", "-A"], cwd=path, check=True)
     osenv.git(["commit", "-qm", "{}: work".format(slice_id)], cwd=path, check=True)
-    report.record_slice(run, slice_id, "DONE", tests="1 passed")
+    doc = tasks.load(run.tasks_path)
+    evidence = {
+        cid: "tests/{}.test.js:1".format(slice_id)
+        for cid in tasks.criterion_ids(tasks.get(doc, slice_id))
+    }
+    report.record_slice(run, slice_id, "DONE", tests="1 passed", evidence=evidence)
     return path
 
 
@@ -546,6 +552,30 @@ def test_verify_dispatches_the_verifier_once_the_package_exists(run):
     assert "3 across 3 slices" in text
 
 
+def test_a_remedial_cycle_narrows_the_verifier_to_what_moved(run, git_repo):
+    """The most expensive thing the pipeline repeats, and mostly needlessly."""
+    write_plan(run)
+    approved(run)
+    first = conftest.commit_file(git_repo, "src/s1/index.js", "one", "s1")
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "ref": first})
+    osenv.write_text(run.cycle_dir() / "verdict.md", "VERDICT: FAIL" + "\n")
+
+    run.advance_cycle()
+    second = conftest.commit_file(git_repo, "src/s2/index.js", "two", "s2")
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": str(git_repo), "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "ref": second})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+    action = machine.next_action(run)
+    text = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "already judged" in text
+    assert "src/s2/index.js" in text
+    assert "S1" in text
+
+
 # -- replan ----------------------------------------------------------------
 
 
@@ -765,3 +795,26 @@ def test_the_scribe_prompt_points_at_the_run_artifacts(run):
     assert str(run.cycle_dir() / "verdict.md") in prompt
     assert "progress append" in prompt
     assert "Learnings" in prompt or "learnings" in prompt
+
+
+def test_a_dispatch_records_which_model_the_machine_chose(run):
+    """`escalations` read empty in every recorded run while 65 of 90 executors
+    ran on a model the config never asked for. Nothing wrote down the choice,
+    so nothing could notice."""
+    action = machine.next_action(run)
+    assert action["action"] == "dispatch"
+
+    entries = ledger.entries(run)
+    assert any("dispatch codag-planner on opus" in entry for entry in entries), entries
+
+
+def test_an_executor_dispatch_records_its_slice_and_model(run):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2"):
+        path, _b, _s = worktree.create(run, slice_id, setup=False)
+        tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
+    machine.next_action(run)
+
+    entries = ledger.entries(run)
+    assert any("dispatch codag-executor S1 on haiku" in entry for entry in entries), entries

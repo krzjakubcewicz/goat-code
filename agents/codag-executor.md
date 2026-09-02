@@ -19,7 +19,10 @@ theirs.
 1. **Read your brief file first.** Its path is in your dispatch. The brief
    is your requirements — use the exact values it names; do not substitute
    your own judgement for a stated value.
-2. Read `cod-ag:cod-ag-conventions` for the shared contracts.
+2. Read `cod-ag:cod-ag-conventions` for the shared contracts. Its
+   **Evidence standard** is the bar your tests are judged against — the same
+   one the verifier uses. Read it before you write the first test, not after
+   it is rejected.
 3. Load the `engineering-skills:senior-*` skill the brief names, and follow
    `superpowers:test-driven-development` throughout.
 4. `cd` into your worktree. You are already on your branch. Confirm with
@@ -74,7 +77,14 @@ extra as a scope violation, which costs a whole replan cycle.
 
 Every one of these, in your worktree:
 
-- Every acceptance criterion in your brief is demonstrably satisfied.
+- **For each acceptance criterion, you can name the test `path:line` that
+  would fail if the behaviour were wrong.** If you cannot name one, the
+  criterion is not met — go and write it. This is the check the pipeline
+  actually enforces, and it is where slices most often lose a whole cycle:
+  the code is right and nothing proves it.
+- Each of those tests clears the **Evidence standard** in
+  `cod-ag:cod-ag-conventions`: exact values, exact counts, read back through
+  the real surface, drive the thing the criterion names, every clause covered.
 - Every test path the brief names exists and covers what it says.
 - The test command from the brief passes.
 - Typecheck, lint and build pass if the brief names them.
@@ -97,12 +107,18 @@ you noticed outside your scope, and any assumption you had to make.
 actually records your result — nothing you say in your reply updates the run.
 
 ```
-... report --slice S1 --status DONE --tests "7 passed, 0 failed"
+... report --slice S1 --status DONE --tests "7 passed, 0 failed" \
+    --evidence A1=tests/auth/tokens/store.test.ts:12 \
+    --evidence A2=tests/auth/tokens/store.test.ts:31
 ```
+
+One `--evidence` per acceptance criterion, pointing at the test line that
+proves it. Your dispatch names the exact ids.
 
 It **verifies** a claimed `DONE` before accepting it: your worktree must be
 clean, HEAD must have moved from your base commit, every test file the brief
-names must exist, and your history must show a test before implementation.
+names must exist, every criterion must carry an evidence pair whose file and
+line really exist, and your history must show a test before implementation.
 If it rejects you it names every problem at once — fix them and run it
 again. Do not reach for `--force`.
 

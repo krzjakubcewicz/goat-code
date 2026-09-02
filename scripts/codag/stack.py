@@ -66,6 +66,10 @@ _JS_LOCKFILES = (
 #: Unit-level runners. Ordered: the first match names ``test_framework``.
 _JS_TEST_LIBS = ("vitest", "jest", "mocha", "ava", "node:test")
 
+#: Stands in for the test file in a ``test_one`` command. The brief
+#: substitutes it; only runners that genuinely take a path get one.
+PATH_TOKEN = "{path}"
+
 #: End-to-end runners, detected separately. A repo commonly has both a unit
 #: runner and an E2E one, and reporting only the first would hide the E2E
 #: runner the e2e agent needs.
@@ -85,8 +89,13 @@ _PY_TEST_LIBS = ("pytest", "unittest2", "nose2")
 _PY_E2E_LIBS = ("playwright", "selenium", "splinter")
 
 
-def detect(repo):
-    """Inspect ``repo`` and return the stack profile as a plain dict."""
+def detect(repo, project_dir=None, _siblings=True):
+    """Inspect ``repo`` and return the stack profile as a plain dict.
+
+    ``project_dir`` names the subdirectory holding the build system, for a
+    repo where detection cannot tell on its own - a monorepo with several.
+    It comes from ``project_dir`` in ``.codag/config.yaml``.
+    """
     repo = pathlib.Path(repo)
     profile = {
         "detected_at": datetime.datetime.now().replace(microsecond=0).isoformat(),
@@ -103,16 +112,29 @@ def detect(repo):
             "typecheck": None,
             "lint": None,
             "test": None,
+            # The same suite narrowed to one file. The red-green loop runs
+            # this; the whole suite runs once before reporting.
+            "test_one": None,
             "e2e": None,
         },
         "source_dirs": [],
         "test_dirs": [],
         "specialist_skills": [],
         "notes": [],
+        "project_dir": None,
+        "commands_cwd": None,
+        "sibling_projects": [],
     }
 
+    root = repo
     markers = _present_markers(repo)
     profile["root_markers"] = markers
+
+    nested = _configured_project(repo, project_dir) or _nested_project(repo, markers)
+    if nested is not None:
+        repo, markers = _adopt_nested_project(repo, nested, profile)
+        if _siblings:
+            profile["sibling_projects"] = _sibling_projects(root, nested)
 
     if "package.json" in markers:
         _detect_javascript(repo, profile)
@@ -131,8 +153,12 @@ def detect(repo):
                 profile["languages"].append(language)
         if not profile["languages"]:
             profile["notes"].append(
-                "no build system recognised; agents must infer commands from the repo"
+                "no build system recognised here; if this run creates one it is "
+                "re-detected once the run has built it, and the gates start "
+                "working from that point"
             )
+
+    _containerize(root, profile)
 
     profile["source_dirs"] = _existing(repo, ["src", "lib", "app", "pkg", "cmd", "internal"])
     profile["test_dirs"] = _existing(repo, ["tests", "test", "spec", "__tests__", "e2e"])
@@ -194,6 +220,10 @@ def _detect_javascript(repo, profile):
         profile["commands"]["typecheck"] = _js_exec(manager, ["tsc", "--noEmit"])
     if profile["commands"]["test"] is None and profile["test_framework"]:
         profile["commands"]["test"] = _js_exec(manager, [profile["test_framework"], "run"])
+    if profile["test_framework"] == "vitest":
+        profile["commands"]["test_one"] = _js_exec(manager, ["vitest", "run", PATH_TOKEN])
+    elif profile["test_framework"] == "jest":
+        profile["commands"]["test_one"] = _js_exec(manager, ["jest", PATH_TOKEN])
 
     e2e_script = next((s for s in _JS_E2E_SCRIPTS if s in scripts), None)
     if e2e_script:
@@ -264,6 +294,8 @@ def _detect_python(repo, profile):
 
     test_cmd = ["pytest"] if (profile["test_framework"] or "pytest") == "pytest" else ["python", "-m", "unittest"]
     profile["commands"]["test"] = profile["commands"]["test"] or (runner + test_cmd)
+    if test_cmd[0] == "pytest":
+        profile["commands"]["test_one"] = runner + ["pytest", PATH_TOKEN]
 
     if "ruff" in pyproject or (repo / "ruff.toml").exists() or (repo / ".ruff.toml").exists():
         profile["commands"]["lint"] = runner + ["ruff", "check", "."]
@@ -349,6 +381,163 @@ def _all_deps(pkg):
     return deps
 
 
+_BUILD_MARKERS = (
+    "package.json",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "requirements.txt",
+    "go.mod",
+    "Cargo.toml",
+    "Gemfile",
+    "composer.json",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "mix.exs",
+)
+
+
+_COMPOSE_FILES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml")
+
+#: Emptying the entrypoint matters: an app image usually starts a server.
+_COMPOSE_RUN = ("docker", "compose", "run", "--rm", "--entrypoint", "")
+
+_CONTAINERISED_GATES = ("build", "typecheck", "lint", "test", "e2e")
+
+
+def _containerize(root, profile):
+    """Run the gates inside the compose service that owns the code.
+
+    A project whose toolchain only exists in its image - the common shape
+    once there is a Dockerfile - has nothing to run on the host: ``pytest``
+    is simply not installed there. When a compose file defines a service
+    built from the project directory, the same commands go through
+    ``docker compose run`` instead, from the repo root where the compose
+    file lives.
+    """
+    service = _compose_service(root, profile.get("project_dir"))
+    if not service:
+        return
+    commands = profile["commands"]
+    if not any(commands.get(name) for name in _CONTAINERISED_GATES):
+        return
+    for name in _CONTAINERISED_GATES:
+        if commands.get(name):
+            commands[name] = list(_COMPOSE_RUN) + [service] + list(commands[name])
+    profile["commands"]["setup"] = None
+    profile["commands_cwd"] = ""
+    profile["notes"].append(
+        "gates run in the '{}' compose service; the toolchain lives in the image".format(service)
+    )
+
+
+def _compose_service(root, project_dir):
+    """Name the compose service whose build context is the project.
+
+    Deliberately a line scan rather than a YAML parse: all it needs is the
+    service name above a ``build:`` that points at the project directory,
+    and a wrong guess here would silently run the gates in the wrong
+    container.
+    """
+    text = ""
+    for name in _COMPOSE_FILES:
+        text = _read_text(pathlib.Path(root) / name) or ""
+        if text:
+            break
+    if not text:
+        return None
+
+    wanted = {".", "./"}
+    if project_dir:
+        wanted = {project_dir, "./" + project_dir, project_dir + "/", "./" + project_dir + "/"}
+
+    in_services = False
+    service = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            in_services = stripped.startswith("services:")
+            service = None
+            continue
+        if not in_services:
+            continue
+        if indent <= 2 and stripped.endswith(":"):
+            service = stripped[:-1].strip()
+            continue
+        key, _, value = stripped.partition(":")
+        if service and key.strip() in ("build", "context") and value.strip() in wanted:
+            return service
+    return None
+
+
+def _sibling_projects(root, adopted):
+    """The build systems beside the one the gates were pointed at.
+
+    Gating one half of a monorepo and calling it a safety net is how a run
+    ships with its other half untested: in the recorded runs the frontend
+    suite was never gated once, and the verifier ran it by hand instead and
+    said so in three separate verdicts.
+
+    Each sibling is detected in full but never adopted, so the brief and the
+    specialist skill still describe the primary project.
+    """
+    out = []
+    for child in sorted(pathlib.Path(root).iterdir()):
+        if child == adopted or not child.is_dir() or child.name.startswith("."):
+            continue
+        if not any((child / marker).exists() for marker in _BUILD_MARKERS):
+            continue
+        nested = detect(child, _siblings=False)
+        out.append({"dir": child.name, "commands": nested.get("commands") or {}})
+    return out
+
+
+def _configured_project(repo, project_dir):
+    """The explicitly configured project directory, if it exists."""
+    if not project_dir:
+        return None
+    candidate = pathlib.Path(repo) / project_dir
+    return candidate if candidate.is_dir() else None
+
+
+def _nested_project(repo, markers):
+    """The single child directory holding the build system, if the root has none.
+
+    A repo that keeps its app under ``backend/`` or ``server/`` looks empty
+    from the root: ``Makefile`` and ``docker-compose.yml`` name no language.
+    Detecting one level down is what keeps the gates from reporting
+    ``missing`` for such a layout. Ambiguity is left undetected on purpose -
+    two candidates is a monorepo, which the caller must configure.
+    """
+    if any(m in markers for m in _BUILD_MARKERS):
+        return None
+    repo = pathlib.Path(repo)
+    if not repo.is_dir():
+        return None
+    found = [
+        child
+        for child in sorted(repo.iterdir())
+        if child.is_dir()
+        and not child.name.startswith(".")
+        and any((child / m).exists() for m in _BUILD_MARKERS)
+    ]
+    return found[0] if len(found) == 1 else None
+
+
+def _adopt_nested_project(repo, nested, profile):
+    """Re-root detection onto ``nested`` and record where the gates must run."""
+    rel = nested.name
+    profile["project_dir"] = rel
+    profile["notes"].append(
+        "build system lives in {}/, not the repo root; gates run there".format(rel)
+    )
+    return nested, _present_markers(nested)
+
+
 def _present_markers(repo):
     names = [
         "package.json",
@@ -427,11 +616,54 @@ def _read_text(path):
         return None
 
 
-def write(repo, path):
+def write(repo, path, project_dir=None):
     """Detect and persist the profile. Returns the profile."""
-    profile = detect(repo)
+    profile = detect(repo, project_dir=project_dir)
     osenv.write_json(path, profile)
     return profile
+
+
+def usable(profile):
+    """Whether this profile can actually gate anything.
+
+    The test command is the proxy: a stack with no way to run tests gives the
+    pipeline no automated safety net at all, whatever else it detected.
+    """
+    return bool(((profile or {}).get("commands") or {}).get("test"))
+
+
+def fill_gaps(where, path, project_dir=None):
+    """Re-detect once the build system exists, and keep what was already there.
+
+    ``init`` detects against the base commit, but a greenfield run's build
+    system is the thing the run is about to create - so the first run of a new
+    project detects nothing and gates nothing. Phase 1's own stack.json
+    records the manual workaround in its notes: "detected at init against an
+    empty repo; re-wired by the cycle-2 replanner once the stack existed".
+    Phases 1 and 2 both ran to a verdict with every gate reporting `missing`.
+
+    Only gaps are filled. A profile that can already gate is left untouched,
+    and any command the stored profile carried survives re-detection, because
+    a hand-tuned command is worth more than a freshly guessed one.
+    """
+    path = pathlib.Path(path)
+    stored = osenv.read_json(path) if path.exists() else {}
+    if usable(stored):
+        return stored
+
+    fresh = detect(where, project_dir=project_dir)
+    if not usable(fresh):
+        return stored or fresh
+
+    for name, command in (stored.get("commands") or {}).items():
+        if command:
+            fresh.setdefault("commands", {})[name] = command
+    fresh.setdefault("notes", []).append(
+        "the build system did not exist at init; re-detected against {} once "
+        "the run had created it".format(where)
+    )
+    osenv.write_json(path, fresh)
+    return fresh
 
 
 def summary_line(profile):
