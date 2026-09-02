@@ -588,4 +588,7 @@ def dumps(value):
 
 def dump(value, path):
     """Write ``value`` to ``path`` as UTF-8 with LF endings."""
-    pathlib.Path(path).write_text(dumps(value), encoding="utf-8", newline="\n")
+    # Path.open takes newline on every version; Path.write_text only from
+    # 3.10, and the floor is 3.9.
+    with pathlib.Path(path).open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(dumps(value))

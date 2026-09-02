@@ -180,7 +180,32 @@ MINIMUM_PYTHON = (3, 9)
 #: `Path.write_text`/`read_text` only accept `newline` from 3.10. Passing it
 #: on 3.9 raises TypeError, and since every file the tool writes goes through
 #: `osenv.write_text`, that breaks the whole tool at its first write.
-_TOO_NEW = re.compile(r"\b(write_text|read_text)\s*\([^)]*\bnewline\s*=")
+_PATHLIB_CALL = re.compile(r"\b(write_text|read_text)\s*\(")
+
+
+def _newline_arguments(text):
+    """Every write_text/read_text call in ``text`` that passes ``newline=``.
+
+    Parenthesis-balanced on purpose. The first version of this bounded the
+    argument list with `[^)]*` and so missed
+    `write_text(dumps(value), ..., newline="\\n")` entirely - the nested call
+    closed the group early, the guard went green, and CI stayed red.
+    """
+    found = []
+    for match in _PATHLIB_CALL.finditer(text):
+        depth = 0
+        index = match.end() - 1
+        while index < len(text):
+            if text[index] == "(":
+                depth += 1
+            elif text[index] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        if re.search(r"\bnewline\s*=", text[match.end():index]):
+            found.append((match.group(1), text.count("\n", 0, match.start()) + 1))
+    return found
 
 
 def test_no_module_uses_a_pathlib_argument_newer_than_the_floor():
@@ -197,11 +222,13 @@ def test_no_module_uses_a_pathlib_argument_newer_than_the_floor():
     assert sys.version_info[:2] >= MINIMUM_PYTHON
     package = pathlib.Path(osenv.__file__).parent
     modules = list(package.glob("*.py")) + [package.parent / "goatcode.py"]
+    offenders = []
     for module in modules:
-        found = _TOO_NEW.search(module.read_text(encoding="utf-8"))
-        assert not found, "{} passes newline= to {}, which needs Python 3.10".format(
-            module.name, found.group(1)
-        )
+        for method, line in _newline_arguments(module.read_text(encoding="utf-8")):
+            offenders.append("{}:{} passes newline= to {}".format(module.name, line, method))
+    assert not offenders, "needs Python 3.10, floor is {}.{}:\n  ".format(
+        *MINIMUM_PYTHON
+    ) + "\n  ".join(offenders)
 
 
 def test_resolve_exe_finds_git():
