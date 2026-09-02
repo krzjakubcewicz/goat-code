@@ -98,9 +98,30 @@ no model at all. That is what the end-to-end test does.
 ## Install
 
 ```
-/plugin marketplace add /path/to/cod-ag
+/plugin marketplace add krzjakubcewicz/cod-ag
 /plugin install cod-ag@cod-ag
 ```
+
+`/plugin marketplace add /path/to/cod-ag` instead, for a local checkout.
+
+To install it for a repository rather than for yourself, commit this to that
+repo's `.claude/settings.json` - anyone who opens it gets the plugin after
+one trust prompt:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "cod-ag": {
+      "source": { "source": "github", "repo": "krzjakubcewicz/cod-ag" }
+    }
+  },
+  "enabledPlugins": { "cod-ag@cod-ag": true }
+}
+```
+
+A local checkout works there too - `{ "source": "local", "path": "/path/to/cod-ag" }` -
+but the path is machine-specific, so put that one in the gitignored
+`.claude/settings.local.json`.
 
 Requires **Python 3.9+** and **git**. No pip install — the script layer is
 stdlib-only, including its YAML reader. Works on Windows, macOS and Linux;
