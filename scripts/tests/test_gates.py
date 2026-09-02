@@ -201,3 +201,136 @@ def test_commands_cwd_overrides_project_dir(git_repo, run):
     spec["commands_cwd"] = ""
     report = gates.run_all(run, git_repo, profile=spec)
     assert "backend" not in report["gates"]["test"]["output_tail"]
+
+
+# -- weak assertions -------------------------------------------------------
+#
+# Across eleven recorded runs the gates found a real regression in 1 of 21
+# cycles while the verifier failed 13 of 21, every time on assertion strength.
+# The cheap deterministic layer was pointed at the wrong failure. This is not
+# blocking - it is a lead for the executor, replanner and verifier, who all
+# read gates.json.
+
+
+def test_a_count_assertion_that_cannot_discriminate_is_flagged(tmp_path):
+    target = tmp_path / "test_thing.py"
+    target.write_text("def test_x():\n    assert AuditLog.objects.count() >= 1\n", encoding="utf-8")
+    found = gates.weak_assertions(tmp_path, ["test_thing.py"])
+    assert found[0]["path"] == "test_thing.py"
+    assert found[0]["line"] == 2
+    assert "count" in found[0]["reason"]
+
+
+def test_a_length_assertion_with_an_inequality_is_flagged(tmp_path):
+    target = tmp_path / "test_thing.py"
+    target.write_text("def test_x():\n    assert len(prs_updated) >= 2\n", encoding="utf-8")
+    assert gates.weak_assertions(tmp_path, ["test_thing.py"])
+
+
+def test_an_exact_count_is_not_flagged(tmp_path):
+    target = tmp_path / "test_thing.py"
+    target.write_text("def test_x():\n    assert AuditLog.objects.count() == 1\n", encoding="utf-8")
+    assert gates.weak_assertions(tmp_path, ["test_thing.py"]) == []
+
+
+def test_a_test_function_with_no_assertion_at_all_is_flagged(tmp_path):
+    target = tmp_path / "test_thing.py"
+    target.write_text("def test_x():\n    do_the_thing()\n", encoding="utf-8")
+    found = gates.weak_assertions(tmp_path, ["test_thing.py"])
+    assert any("no assertion" in entry["reason"] for entry in found)
+
+
+def test_a_self_comparison_is_flagged(tmp_path):
+    target = tmp_path / "test_thing.py"
+    target.write_text("def test_x():\n    assert ids() == ids()\n", encoding="utf-8")
+    found = gates.weak_assertions(tmp_path, ["test_thing.py"])
+    assert any("cannot fail" in entry["reason"] for entry in found)
+
+
+def test_only_test_files_are_scanned(tmp_path):
+    target = tmp_path / "service.py"
+    target.write_text("def check():\n    assert rows.count() >= 1\n", encoding="utf-8")
+    assert gates.weak_assertions(tmp_path, ["service.py"]) == []
+
+
+def test_a_missing_file_is_skipped_rather_than_raising(tmp_path):
+    assert gates.weak_assertions(tmp_path, ["tests/gone.py"]) == []
+
+
+def test_the_report_carries_weak_assertions_for_the_changed_tests(run, git_repo):
+    target = git_repo / "tests" / "test_thing.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_x():\n    assert rows.count() >= 1\n", encoding="utf-8")
+
+    report = gates.run_and_classify(
+        run, git_repo, profile=profile(test=PASS), changed=["tests/test_thing.py"]
+    )
+    assert report["weak_assertions"][0]["path"] == "tests/test_thing.py"
+
+
+def test_weak_assertions_never_block_the_run(run, git_repo):
+    target = git_repo / "tests" / "test_thing.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("def test_x():\n    assert rows.count() >= 1\n", encoding="utf-8")
+
+    report = gates.run_and_classify(
+        run, git_repo, profile=profile(test=PASS), changed=["tests/test_thing.py"]
+    )
+    assert gates.blocking(report) == []
+    assert gates.passed(report) is True
+
+
+def test_the_report_has_an_empty_list_when_nothing_changed(run, git_repo):
+    report = gates.run_and_classify(run, git_repo, profile=profile(test=PASS))
+    assert report["weak_assertions"] == []
+
+
+# -- gating both halves of a monorepo --------------------------------------
+
+
+def test_a_siblings_gates_run_too_and_are_named_by_its_directory(run, git_repo):
+    (git_repo / "frontend").mkdir()
+    stack_profile = profile(test=PASS)
+    stack_profile["sibling_projects"] = [{"dir": "frontend", "commands": {"test": PASS, "lint": PASS}}]
+
+    report = gates.run_all(run, git_repo, profile=stack_profile)
+    assert report["gates"]["test [frontend]"]["status"] == "pass"
+    assert report["gates"]["lint [frontend]"]["status"] == "pass"
+
+
+def test_a_failing_sibling_gate_fails_the_report(run, git_repo):
+    (git_repo / "frontend").mkdir()
+    stack_profile = profile(test=PASS)
+    stack_profile["sibling_projects"] = [{"dir": "frontend", "commands": {"test": FAIL}}]
+
+    report = gates.run_all(run, git_repo, profile=stack_profile)
+    assert report["ok"] is False
+    assert report["gates"]["test [frontend]"]["status"] == "fail"
+
+
+def test_a_sibling_failing_at_the_baseline_too_is_not_a_regression(run, git_repo):
+    (git_repo / "frontend").mkdir()
+    stack_profile = profile(test=PASS)
+    stack_profile["sibling_projects"] = [{"dir": "frontend", "commands": {"test": FAIL}}]
+
+    gates.capture_baseline(run, git_repo, profile=stack_profile)
+    report = gates.run_and_classify(run, git_repo, profile=stack_profile)
+    assert report["regressions"] == []
+    assert "test [frontend]" in report["pre_existing"]
+
+
+def test_a_sibling_directory_that_is_gone_is_skipped(run, git_repo):
+    stack_profile = profile(test=PASS)
+    stack_profile["sibling_projects"] = [{"dir": "frontend", "commands": {"test": PASS}}]
+
+    report = gates.run_all(run, git_repo, profile=stack_profile)
+    assert "test [frontend]" not in report["gates"]
+
+
+def test_the_rendered_summary_names_the_sibling_gates(run, git_repo):
+    (git_repo / "frontend").mkdir()
+    stack_profile = profile(test=PASS)
+    stack_profile["sibling_projects"] = [{"dir": "frontend", "commands": {"test": PASS}}]
+
+    report = gates.run_all(run, git_repo, profile=stack_profile)
+    assert "test [frontend]" in gates.render(report)

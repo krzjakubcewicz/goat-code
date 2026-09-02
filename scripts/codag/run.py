@@ -89,6 +89,10 @@ DEFAULT_CONFIG = {
     # Write a low-level trace of everything cod-ag does to
     # .codag/runs/<id>/log.txt. CODAG_DEBUG=1 overrides this per invocation.
     "debug": False,
+    # Subdirectory holding the build system, for a repo where detection
+    # cannot tell on its own - a monorepo with a backend/ and a frontend/.
+    # null lets stack detection decide.
+    "project_dir": None,
     "worktree_setup": True,
     # Standalone (`codag run`) only. How a headless agent's tool calls are
     # permitted. acceptEdits lets it write files, but a Bash call still needs
@@ -578,10 +582,18 @@ class Run:
     def set_phase(self, phase):
         if phase not in PHASES:
             raise RunError("unknown phase {!r}".format(phase))
-        if phase != self.state.get("phase"):
-            debuglog.log("phase", was=self.state.get("phase"), now=phase, cycle=self.cycle)
+        was = self.state.get("phase")
         self.state["phase"] = phase
         self.save()
+        if phase == was:
+            return
+        debuglog.log("phase", was=was, now=phase, cycle=self.cycle)
+        # Not behind `debug`. Across eleven recorded runs debug was never on,
+        # so no log.txt was ever written and nothing says where a run's hours
+        # went. The ledger is always written, so phase timing belongs here.
+        from . import ledger
+
+        ledger.append(self, "phase {} -> {}".format(was, phase))
 
     # -- counters, all capped in code rather than in prose ---------------
 

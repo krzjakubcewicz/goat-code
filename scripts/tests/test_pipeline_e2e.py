@@ -120,7 +120,12 @@ class FakeAgent:
         _write(path, target, "{}{}".format(body, slice_id))
         osenv.git(["add", "-A"], cwd=path, check=True)
         osenv.git(["commit", "-qm", "{}: work".format(slice_id)], cwd=path, check=True)
-        self.cli(run, "report", "--slice", slice_id, "--status", "DONE", "--tests", "1 passed")
+        # A real executor names the test line proving each criterion; the fake
+        # one has to as well, or it is not driving the loop that ships.
+        args = ["report", "--slice", slice_id, "--status", "DONE", "--tests", "1 passed"]
+        for cid in tasks.criterion_ids(tasks.get(doc, slice_id)):
+            args += ["--evidence", "{}=tests/{}.test.js:1".format(cid, slice_id)]
+        self.cli(run, *args)
 
     def synthesizer(self, run, _dispatch):
         state = run.state.get("merge") or {}
@@ -617,6 +622,11 @@ def test_the_rendered_report_command_runs_verbatim(started):
     osenv.git(["add", "-A"], cwd=path, check=True)
     osenv.git(["commit", "-qm", "S1: work"], cwd=path, check=True)
 
-    result = cli_subprocess(run, "report", "--slice", "S1", "--status", "DONE", "--tests", "1 passed")
+    result = cli_subprocess(
+        run, "report", "--slice", "S1", "--status", "DONE", "--tests", "1 passed",
+        "--evidence", "A1=tests/S1.test.js:1",
+    )
     assert result.ok, result.stderr
-    assert tasks.get(tasks.load(run.tasks_path), "S1")["status"] == "done"
+    stored = tasks.get(tasks.load(run.tasks_path), "S1")
+    assert stored["status"] == "done"
+    assert stored["report"]["evidence"] == {"A1": "tests/S1.test.js:1"}

@@ -15,7 +15,7 @@ import pathlib
 
 import sys
 
-from . import debuglog, dispatch, merge, miniyaml, progress, report, schema, tasks
+from . import debuglog, diffpkg, dispatch, ledger, merge, miniyaml, osenv, progress, report, schema, tasks
 
 #: Actions the orchestrator knows how to perform.
 ACTIONS = ("run", "dispatch", "ask", "escalate", "stop")
@@ -180,8 +180,8 @@ def next_action(run, stack_profile=None):
     }.get(phase)
 
     if handler is None:
-        return _log_action(_stop(run, evidence))
-    return _log_action(handler(run, evidence, stack_profile))
+        return _log_action(run, _stop(run, evidence))
+    return _log_action(run, handler(run, evidence, stack_profile))
 
 
 def _entry(agent, model, prompt, slice_id=None, cwd=None):
@@ -202,7 +202,19 @@ def _entry(agent, model, prompt, slice_id=None, cwd=None):
     }
 
 
-def _log_action(action):
+def _log_action(run, action):
+    """Trace the action, and put every dispatch on the durable record.
+
+    The ledger rather than the debug trace, because debug was never on in any
+    recorded run: `escalations` read empty in all eleven while 65 of 90
+    executors ran on a model the config never asked for. Nothing wrote the
+    choice down, so nothing could notice.
+    """
+    for entry in action.get("dispatches") or []:
+        target = " {}".format(entry["slice"]) if entry.get("slice") else ""
+        ledger.append(
+            run, "dispatch {}{} on {}".format(entry.get("agent"), target, entry.get("model"))
+        )
     debuglog.log(
         "action",
         kind=action.get("action"),
@@ -514,6 +526,8 @@ def _verify(run, evidence, _stack):
         "criteria": _criteria(evidence.doc),
         "assumptions": (evidence.doc or {}).get("assumptions") or [],
     }
+    package["weak_assertions"] = (osenv.read_json(package_path) or {}).get("weak_assertions") or []
+    package.update(diffpkg.previous_judgement(run, evidence.doc))
     text = dispatch.verifier(run, package)
     path = dispatch.write(run, "verifier", text)
     return _action(

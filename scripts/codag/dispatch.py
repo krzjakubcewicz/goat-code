@@ -16,7 +16,7 @@ from __future__ import annotations
 import pathlib
 import sys
 
-from . import _scribe_prompt, osenv, progress
+from . import _scribe_prompt, osenv, progress, tasks
 
 #: Absolute path to the CLI, resolved from this file so a rendered command
 #: is correct regardless of the agent's working directory or PATH.
@@ -204,13 +204,24 @@ def executor(run, doc, slice_id, stack=None):
     add("")
     add("Then run **exactly this**, from anywhere:")
     add("")
-    add("    {}".format(
-        command(run, "report", "--slice", slice_id, "--status", "DONE", "--tests", "<one line>")
-    ))
+    criterion_ids = tasks.criterion_ids(item)
+    args = ["report", "--slice", slice_id, "--status", "DONE", "--tests", "<one line>"]
+    for cid in criterion_ids:
+        args.extend(["--evidence", "{}=<path>:<line>".format(cid)])
+    add("    {}".format(command(run, *args)))
     add("")
+    if criterion_ids:
+        add("One `--evidence` per acceptance criterion ({}), each naming the".format(
+            ", ".join(criterion_ids)
+        ))
+        add("test line that would fail if the behaviour were wrong. A criterion you")
+        add("cannot point a test at is not met - write the test rather than")
+        add("stretching an existing one to cover it.")
+        add("")
     add("It refuses a `DONE` you have not earned: it checks your worktree is")
-    add("clean, that HEAD has moved, and that the test files the brief names")
-    add("exist. If it rejects you, fix what it names and run it again.")
+    add("clean, that HEAD has moved, that the test files the brief names")
+    add("exist, and that every evidence path and line really exist in your")
+    add("worktree. If it rejects you, fix what it names and run it again.")
     add("")
     add("If you cannot finish, report the truth instead:")
     add("")
@@ -304,6 +315,89 @@ def synthesizer(run, doc, merge_state):
     return "\n".join(lines)
 
 
+def _assumption_text(assumption):
+    """A recorded assumption as prose.
+
+    The planner may record one as a mapping, and formatting that straight
+    handed the verifier a raw Python dict repr - seen verbatim in a recorded
+    cycle-3 dispatch.
+    """
+    if isinstance(assumption, dict):
+        return "; ".join("{}: {}".format(key, value) for key, value in assumption.items())
+    if isinstance(assumption, (list, tuple)):
+        return "; ".join(_assumption_text(entry) for entry in assumption)
+    return str(assumption)
+
+
+def _verifier_scope(add, package):
+    """Narrow a remedial cycle to what actually moved.
+
+    A replan cycle typically lands tens of lines. Re-judging every criterion
+    against the whole diff again is the single most expensive thing the
+    pipeline repeats, and most of it re-reads byte-identical code.
+
+    This never asserts a criterion passed - only that its code did not
+    change, and where the verifier's own previous ruling on it is written.
+    """
+    previous = package.get("previous_verdict")
+    unchanged = package.get("unchanged_slices") or []
+    if not previous or not unchanged:
+        return
+
+    add("## What changed since your last verdict")
+    add("")
+    add("Your previous verdict: `{}`".format(previous))
+    if package.get("previous_ref"):
+        add("It judged `{}`.".format(package["previous_ref"]))
+    add("")
+    changed = package.get("changed_files") or []
+    add("Files changed since then ({}):".format(len(changed)))
+    add("")
+    for path in changed[:40]:
+        add("- `{}`".format(path))
+    if len(changed) > 40:
+        add("- ... and {} more".format(len(changed) - 40))
+    add("")
+    add("These slices own none of them, so their code is byte-identical to what")
+    add("you already judged: **{}**.".format(", ".join(unchanged)))
+    add("")
+    add("Read your previous verdict and carry its rulings for those slices")
+    add("forward verbatim, evidence included. Re-judge only:")
+    add("")
+    add("- every criterion of a slice not in that list")
+    add("- every criterion you previously marked ❌ or ⚠️, wherever it lives")
+    add("- anything the gates now report differently")
+    add("")
+    add("A criterion whose ruling you carry forward still appears in your table")
+    add("with its verdict and its evidence. Carrying forward is not skipping -")
+    add("if you cannot find the previous ruling for one, judge it fresh.")
+    add("")
+
+
+def _verifier_weak_assertions(add, package):
+    """Hand over the cheap scan's suspicions, without letting them rule.
+
+    A regex cannot tell whether an assertion proves its criterion. It can tell
+    where to look first, and where to look is where thirteen of twenty-one
+    recorded verdicts turned out to fail.
+    """
+    found = package.get("weak_assertions") or []
+    if not found:
+        return
+    add("## Assertions worth a second look")
+    add("")
+    add("A scan of the test files this run changed. These are **leads, not findings**:")
+    add("a regex cannot tell whether an assertion proves its criterion. Check")
+    add("each against the criterion it is supposed to cover; ignore the ones")
+    add("that are fine and say nothing about them.")
+    add("")
+    for entry in found[:30]:
+        add("- `{}:{}` - {}".format(entry.get("path"), entry.get("line"), entry.get("reason")))
+    if len(found) > 30:
+        add("- ... and {} more in `gates.json`".format(len(found) - 30))
+    add("")
+
+
 def verifier(run, package):
     lines = []
     add = lines.append
@@ -324,6 +418,9 @@ def verifier(run, package):
     add("")
     add("    {}".format(package["worktree"]))
     add("")
+    _verifier_scope(add, package)
+    _verifier_weak_assertions(add, package)
+
     add("## Criteria to judge")
     add("")
     add("{} across {} slices. Every one needs a verdict and evidence.".format(
@@ -336,7 +433,7 @@ def verifier(run, package):
         add("what was decided on their behalf:")
         add("")
         for assumption in assumptions:
-            add("- {}".format(assumption))
+            add("- {}".format(_assumption_text(assumption)))
     add("")
     add("## Write your verdict to")
     add("")
@@ -465,9 +562,23 @@ def scribe(run, doc, criteria, merge_state=None):
         add("- Earlier cycles under `{}` - a cycle that failed is where the".format(run.root))
         add("  most useful learnings usually are")
     add("")
-    add("Existing entries, so you do not repeat a learning already recorded:")
+    add("Existing entries and standing constraints, so you do not repeat a")
+    add("learning already recorded:")
     add("")
-    add("    {}".format(command(run, "progress", "show")))
+    add("    {}".format(command(run, "progress", "show", "--all")))
+    add("")
+    add("### A learning you are writing for the second time is a rule, not a note")
+    add("")
+    add("If this run hit something an earlier entry already warned about, do not")
+    add("write it again - the earlier entry was read and it did not change the")
+    add("outcome. Promote it, so every future plan carries it as a constraint:")
+    add("")
+    add("    {}".format(command(run, "progress", "promote", "<the rule, one sentence>")))
+    add("")
+    add("Write it as a rule that binds a plan (\"audit rows come from service")
+    add("functions, never signals\"), not as a story about this run. Promote at")
+    add("most two per run: a list nobody can hold in their head constrains")
+    add("nothing.")
     add("")
 
     add("## What to write")

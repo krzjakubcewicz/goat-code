@@ -42,7 +42,8 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 | `next` | **the state machine** - the single next action to take |
 | `run --prompt "..."` | perform every action itself, without Claude Code (see README) |
 | `branch` | name the branch the work lands on, before any code is written |
-| `progress show` / `progress append --body F` | the cross-run log; append never rewrites |
+| `progress show` / `progress append --body F` | the cross-run log; append never rewrites. `show` gives the planner's view - every standing constraint plus the last few entries - and `--all` the whole file |
+| `progress promote "<rule>"` | promote a learning that has now recurred into a standing constraint every future plan carries |
 | `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |
 | `plan validate` / `plan show` / `plan waves` | gate and inspect tasks.yaml |
 | `wave next` | slice ids dispatchable right now, capped at the parallel limit |
@@ -61,6 +62,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/codag.py" <command> [--json]
 | `approve --yes\|--revise TEXT\|--abort` | record the plan approval gate |
 | `verdict` | read the verifier PASS/FAIL back and move the run on |
 | `ledger "..."` | append to the durable progress ledger |
+| `stats` | where this run's time went: per-phase durations, cycles, remedial slices, gate outcomes |
 | `cycle` | advance to the next replan cycle |
 | `status` / `resume` / `finish` / `abort` | lifecycle |
 
@@ -80,6 +82,7 @@ never commits it.
 ```
 .codag/runs/<run-id>/
   progress.txt         cross-run log: what each run did and what it learnt
+  constraints.md       rules promoted out of that log, shown to every planner
   spec.md              the spec, plus appended "## Clarifications (round N)"
   stack.json           detected languages, frameworks, commands, specialists
   state.json           phase, cycle, base commit, branches, worktrees
@@ -132,6 +135,8 @@ slices:
       - "createToken(email: string): Promise<Token>"
     uses_interfaces:         # must be published by a slice in depends_on
       - "sendMail(to: string, body: string): Promise<void>"
+    changes_contract:        # shapes this slice REDEFINES for everyone
+      - "GET /api/health/"
     acceptance:              # checkable assertions, at least one
       - id: A1
         text: "consumeToken returns the email on first call and null on second."
@@ -157,6 +162,7 @@ slices:
 - `uses_interfaces` naming something no slice publishes, or published by a
   slice this one does not depend on
 - a `touches_shared` path that another slice claims in `owns`
+- **two slices in the same wave declaring the same `changes_contract`**
 
 Warnings (non-blocking): more than 8 acceptance criteria in a slice, more
 than 6 slices in a wave, cross-wave ownership overlap, a missing `intent`.
@@ -172,8 +178,61 @@ These four rules are what make the parallel executor wave safe.
    Anything genuinely shared goes in `touches_shared` and is append-only.
 3. **Fixed interfaces.** A slice publishes signatures before its dependents
    are written; those names and shapes cannot drift afterwards.
+   A slice that **redefines** an existing shape everyone else already codes
+   against - an endpoint's response body, a stored enum, an error code -
+   declares it in `changes_contract`. Ownership is by path and cannot see
+   this: a run was written off when one slice extended an endpoint's response
+   while another owned an untouched test asserting the old one exactly. Before
+   declaring one, grep the whole tree for existing assertions on that shape,
+   including tests no diff will touch.
 4. **Checkable acceptance.** Each criterion is an assertion someone can
    confirm from the diff and the tests. "Handles errors well" is not one.
+
+## Evidence standard
+
+The bar a criterion must clear. The executor builds to it and the verifier
+judges by it — one standard, so the work is not graded against a rule it was
+never given.
+
+**A criterion is met when a named test would fail if the behaviour were
+wrong.** Not when the code looks right. Not when a test near it passes.
+
+- **No test, not met.** Code that reads correctly is not evidence; a failing
+  assertion that turns green is.
+- **A test that asserts nothing is not a test.** Ask whether it could fail.
+  `assert ids() == ids()` cannot.
+- **Exact values, literally.** If the criterion names an error string, a
+  status code, a weight or a boundary, assert that value. Not a paraphrase,
+  not a type check, not "contains".
+- **Exact counts.** `== 1` when the criterion says exactly one. `>= 1` and
+  `len(...) >= 2` pass while the behaviour is wrong, which is why they keep
+  being written.
+- **Read back through the real surface.** If the criterion is about what an
+  endpoint returns, assert the response of a second `GET`, not a serialized
+  in-memory object that never reached the database.
+- **Drive the thing the criterion names.** If it describes a user
+  interaction, a UI branch or an event listener, render the component and
+  drive it. A thorough test of the helper underneath does not cover the
+  branch that calls the helper.
+- **Placement, not just counts.** "Grouped under its exercise" needs an
+  assertion that the row is inside *that* group, not that two rows exist.
+- **Every clause.** "Returns null on the second call" needs a test for the
+  second call. A criterion with four clauses needs four assertions.
+
+When you cannot satisfy this for a criterion, say so — a truthful
+`DONE_WITH_CONCERNS` naming the gap is worth more than a `DONE` the verifier
+has to catch a cycle later.
+
+### Evidence is recorded, not asserted
+
+`report --status DONE` requires one `--evidence <criterion-id>=<path>:<line>`
+per acceptance criterion, pointing at the test that proves it. The path is
+resolved inside the slice's worktree and the line must exist. A `DONE`
+missing an evidence pair, or naming a file or line that does not exist, is
+refused.
+
+The pairs land in `tasks.yaml` under the slice's `report.evidence`, so the
+verifier and the replanner read them as data.
 
 ## Agent status codes
 
@@ -203,7 +262,9 @@ command is written into every dispatch prompt.
 
 A claimed `DONE` is checked before it is accepted: the worktree must be
 clean, HEAD must have moved from the slice's base commit, every test file
-the brief declares must exist, and the commit history must show the slice
+the brief declares must exist, every acceptance criterion must carry an
+`--evidence` pair naming a real test line (see **Evidence standard**), and
+the commit history must show the slice
 touching a test before it added implementation (`enforce_tdd`, default on). A rejection names every problem at once
 and changes nothing, so the agent can fix and retry.
 

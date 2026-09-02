@@ -255,6 +255,17 @@ def test_brief_writes_one_file_per_slice(capsys, node_repo):
     assert "No new runtime dependencies" in text
 
 
+def test_the_brief_carries_the_evidence_bar_and_the_criterion_ids(capsys, node_repo):
+    """The executor is graded on this standard, so it is given it up front."""
+    run = make_run(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "brief", "S1")
+    text = pathlib.Path(payload["briefs"][0]).read_text(encoding="utf-8")
+    assert "### The evidence bar" in text
+    assert "**Exact counts.**" in text
+    assert "--evidence A1=<path>:<line>" in text
+
+
 # -- lifecycle -------------------------------------------------------------
 
 
@@ -544,3 +555,26 @@ def test_init_refuses_to_start_from_a_linked_worktree(capsys, node_repo):
     code, _out, err = invoke(capsys, "--repo", str(inside), "init", "--prompt", "y", "--no-baseline")
     assert code == cli.EXIT_USAGE
     assert "linked worktree" in err
+
+
+def test_the_brief_names_a_per_file_test_command_for_the_loop(capsys, node_repo):
+    """909 test containers across the recorded runs; one executor ran the
+    identical full-suite command 25 times, because the brief named only it."""
+    run = make_run(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    profile = osenv.read_json(run.stack_path)
+    profile["commands"]["test_one"] = ["npx", "vitest", "run", "{path}"]
+    osenv.write_json(run.stack_path, profile)
+
+    _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "brief", "S1")
+    text = pathlib.Path(payload["briefs"][0]).read_text(encoding="utf-8")
+    assert "npx vitest run tests/S1.test.js" in text
+    assert "whole suite once before you report" in text
+
+
+def test_the_brief_falls_back_to_the_suite_when_there_is_no_per_file_command(capsys, node_repo):
+    run = make_run(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "brief", "S1")
+    text = pathlib.Path(payload["briefs"][0]).read_text(encoding="utf-8")
+    assert "whole suite once before you report" not in text

@@ -277,7 +277,65 @@ def validate(doc):
     _validate_dependencies(valid, report)
     _validate_interfaces(valid, report)
     _validate_ownership(valid, report)
+    _validate_contracts(valid, report)
     return report
+
+
+def _validate_contracts(slices, report):
+    """Two slices must not redefine the same contract in the same wave.
+
+    Ownership is by path; this collision is by *contract*. A run was written
+    off when one slice extended an endpoint's response body to satisfy its own
+    criterion while another owned an untouched test asserting that body
+    exactly - no file was shared, so nothing caught it, and the synthesizer
+    correctly refused to pick a side.
+
+    Same wave is an error, because both are being written right now against
+    incompatible shapes. Across waves it is only a warning: the later slice
+    can be written against what the earlier one published, and the planner
+    saying so is what makes that deliberate rather than lucky.
+    """
+    declared = {}
+    for item in slices:
+        value = item.get("changes_contract")
+        if value is None:
+            continue
+        slice_id = item.get("id") or "<unnamed>"
+        if not isinstance(value, list):
+            report.error("{}: 'changes_contract' must be a list of strings".format(slice_id))
+            continue
+        for entry in value:
+            if not _nonempty_str(entry):
+                report.error("{}: every 'changes_contract' entry must be a non-empty string".format(slice_id))
+                continue
+            declared.setdefault(str(entry).strip(), []).append(slice_id)
+
+    if not declared:
+        return
+
+    wave_of = {}
+    for index, group in enumerate(waves(slices)):
+        for slice_id in group:
+            wave_of[slice_id] = index
+
+    for contract, owners in sorted(declared.items()):
+        if len(owners) < 2:
+            continue
+        together = [s for s in owners if s in wave_of]
+        same_wave = {s for s in together if [wave_of[o] for o in together].count(wave_of[s]) > 1}
+        if same_wave:
+            report.error(
+                "{} both declare changes_contract {!r} and run in the same wave;"
+                " they cannot both define it - give one the change and make the"
+                " other depend on it".format(" and ".join(sorted(owners)), contract)
+            )
+        else:
+            report.warn(
+                "{} all declare changes_contract {!r}; the later ones must be"
+                " written against what the earlier one publishes".format(
+                    " and ".join(sorted(owners)), contract
+                )
+            )
 
 
 def _validate_ids(slices, report):

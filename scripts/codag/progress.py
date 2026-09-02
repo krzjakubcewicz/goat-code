@@ -67,6 +67,75 @@ def recent(repo, limit=5):
     return found[-limit:] if limit else found
 
 
+#: Rules promoted out of the narrative, shown to every planner regardless of
+#: age. A learning written into a run's entry is read once and then scrolls
+#: out of reach; the log reached 43 KB over eight runs and the same
+#: assertion-gap lesson was written in every one of them while the failure
+#: recurred every time. Prose does not change behaviour - a standing rule the
+#: planner must fold into `global_constraints` does.
+CONSTRAINTS_FILE = "constraints.md"
+
+CONSTRAINTS_HEADER = """\
+# Standing constraints
+
+Promoted out of the run log because they kept coming back. The planner folds
+these into every plan's `global_constraints`. Add one when a learning has now
+appeared twice - the third time should be prevented, not recorded again.
+"""
+
+
+def constraints_path(repo):
+    return runmod.codag_dir(repo) / CONSTRAINTS_FILE
+
+
+def constraints(repo):
+    """The standing rules, in the order they were promoted."""
+    target = constraints_path(repo)
+    if not target.exists():
+        return []
+    out = []
+    for line in osenv.read_text(target).splitlines():
+        line = line.strip()
+        if line.startswith("- "):
+            out.append(line[2:].strip())
+    return out
+
+
+def add_constraint(repo, text):
+    """Promote one rule. Appends; never rewrites, and never duplicates."""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("refusing to add an empty constraint")
+    existing = constraints(repo)
+    if text in existing:
+        return existing
+
+    target = constraints_path(repo)
+    body = osenv.read_text(target) if target.exists() else CONSTRAINTS_HEADER
+    if not body.endswith("\n"):
+        body += "\n"
+    osenv.write_text(target, body + "- " + text + "\n")
+    return existing + [text]
+
+
+def planner_view(repo, limit=5):
+    """What the planner is shown: every standing rule, the last few entries.
+
+    Not the whole log. It grows without bound, it is read at the start of
+    every run, and an old entry's narrative is worth far less than the rule
+    that entry should have become.
+    """
+    parts = []
+    rules = constraints(repo)
+    if rules:
+        parts.append(
+            "## Standing constraints\n\nFold every one of these into the plan's "
+            "`global_constraints`:\n\n" + "\n".join("- " + rule for rule in rules)
+        )
+    parts.extend(recent(repo, limit))
+    return "\n\n".join(parts).strip()
+
+
 def render_header(run, now=None):
     stamp = (now or datetime.datetime.now()).replace(microsecond=0)
     return "\n".join(

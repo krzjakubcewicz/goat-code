@@ -208,3 +208,81 @@ def test_the_log_is_hidden_from_git(capsys, node_repo):
 
     assert progress.path_for(node_repo).exists()
     assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == ""
+
+
+# -- what the planner actually reads ---------------------------------------
+#
+# The log reached 43 KB over eight runs, all of it read at the start of every
+# run, and the same assertion-gap learning was written in every entry while
+# the failure recurred every time. Narrative for a human; standing rules for
+# the planner.
+
+
+def bodies(repo, run, count):
+    for index in range(count):
+        progress.append(repo, run, "- Run {}\n- **Learnings:**\n  - thing {}".format(index, index))
+
+
+def test_the_planner_sees_only_the_most_recent_entries(git_repo, run):
+    bodies(git_repo, run, 8)
+    view = progress.planner_view(git_repo, limit=3)
+    assert "Run 7" in view
+    assert "Run 5" in view
+    assert "Run 4" not in view
+
+
+def test_standing_constraints_are_always_shown_however_old(git_repo, run):
+    progress.add_constraint(git_repo, "Audit rows come from service functions, never signals.")
+    bodies(git_repo, run, 8)
+
+    view = progress.planner_view(git_repo, limit=2)
+    assert "Audit rows come from service functions" in view
+    assert "Run 7" in view
+    assert "Run 4" not in view
+
+
+def test_a_constraint_is_appended_not_replaced(git_repo, run):
+    progress.add_constraint(git_repo, "First rule.")
+    progress.add_constraint(git_repo, "Second rule.")
+    listed = progress.constraints(git_repo)
+    assert listed == ["First rule.", "Second rule."]
+
+
+def test_the_same_constraint_is_not_added_twice(git_repo, run):
+    progress.add_constraint(git_repo, "Only once.")
+    progress.add_constraint(git_repo, "Only once.")
+    assert progress.constraints(git_repo) == ["Only once."]
+
+
+def test_constraints_survive_a_later_entry_being_appended(git_repo, run):
+    progress.add_constraint(git_repo, "Survives.")
+    progress.append(git_repo, run, BODY)
+    assert progress.constraints(git_repo) == ["Survives."]
+    assert "magic-link sign in" in progress.read(git_repo)
+
+
+def test_no_constraints_and_no_entries_reads_as_empty(git_repo):
+    assert progress.planner_view(git_repo) == ""
+
+
+def test_progress_show_gives_the_planner_view_by_default(capsys, git_repo, run):
+    progress.add_constraint(git_repo, "Weights stay Decimal.")
+    bodies(git_repo, run, 8)
+    _code, out, _err = invoke(capsys, "--repo", str(git_repo), "progress", "show")
+    assert "Weights stay Decimal." in out
+    assert "Run 7" in out
+    assert "Run 1" not in out
+
+
+def test_progress_show_all_still_prints_the_whole_log(capsys, git_repo, run):
+    bodies(git_repo, run, 8)
+    _code, out, _err = invoke(capsys, "--repo", str(git_repo), "progress", "show", "--all")
+    assert "Run 1" in out
+
+
+def test_progress_promote_records_a_standing_constraint(capsys, git_repo, run):
+    code, _out, _err = invoke(
+        capsys, "--repo", str(git_repo), "progress", "promote", "Audit rows come from services."
+    )
+    assert code == 0
+    assert progress.constraints(git_repo) == ["Audit rows come from services."]

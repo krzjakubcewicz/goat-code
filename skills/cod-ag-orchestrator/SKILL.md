@@ -61,6 +61,14 @@ that are not obvious.
 All entries go out in **one message**. One per message runs them in sequence
 and throws away the parallelism the design exists for.
 
+**Use each entry's `model` verbatim.** It is not a suggestion and not a
+default to improve on: the machine resolved it from the run's config and its
+escalation policy, and it is recorded in the ledger as the model this
+dispatch ran on. Substituting a stronger one silently spends several times
+the tokens the run was budgeted, and makes the escalation counters describe
+something that did not happen. If a slice genuinely needs a stronger model,
+that is what `BLOCKED` is for - the machine escalates it and says so.
+
 Each prompt file already contains everything the agent needs, including the
 command it runs to report back. So the prompt you pass is one line:
 

@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from codag import stack
+from codag import osenv, stack
 
 
 def write(root, relpath, text):
@@ -390,3 +390,160 @@ def test_a_compose_file_with_no_build_leaves_the_commands_alone(tmp_path):
     profile = stack.detect(tmp_path)
     assert profile["commands"]["test"] == ["pytest"]
     assert profile["commands_cwd"] is None
+
+
+def test_a_configured_project_dir_settles_an_ambiguous_repo(tmp_path):
+    """Two build systems: detection cannot guess, so config decides."""
+    write(tmp_path, "backend/pyproject.toml", "[project]\nname='api'\ndependencies=['pytest']\n")
+    write(tmp_path, "frontend/package.json", package_json(name="web"))
+
+    assert stack.detect(tmp_path)["project_dir"] is None
+
+    profile = stack.detect(tmp_path, project_dir="backend")
+    assert profile["project_dir"] == "backend"
+    assert profile["languages"] == ["python"]
+    assert profile["commands"]["test"] == ["pytest"]
+
+
+def test_a_configured_project_dir_that_does_not_exist_is_ignored(tmp_path):
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n")
+    profile = stack.detect(tmp_path, project_dir="nope")
+    assert profile["project_dir"] is None
+    assert profile["commands"]["test"] == ["pytest"]
+
+
+# -- the other half of a monorepo ------------------------------------------
+#
+# In the recorded runs the frontend suite was never gated, so the verifier ran
+# `npm test` by hand and said so in three verdicts. Gating one half of a
+# monorepo and calling that a safety net is how a run ships with an untested
+# half.
+
+
+def test_the_other_build_system_is_recorded_as_a_sibling(tmp_path):
+    write(tmp_path, "backend/pyproject.toml", "[project]\nname='api'\ndependencies=['pytest']\n")
+    write(tmp_path, "frontend/package.json", package_json(name="web", scripts={"test": "vitest run"}))
+
+    profile = stack.detect(tmp_path, project_dir="backend")
+    siblings = profile["sibling_projects"]
+    assert [s["dir"] for s in siblings] == ["frontend"]
+    assert siblings[0]["commands"]["test"] == ["npm", "run", "test"]
+
+
+def test_a_single_project_repo_has_no_siblings(tmp_path):
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n")
+    assert stack.detect(tmp_path)["sibling_projects"] == []
+
+
+def test_a_nested_project_with_nothing_beside_it_has_no_siblings(tmp_path):
+    write(tmp_path, "backend/pyproject.toml", "[project]\nname='api'\ndependencies=['pytest']\n")
+    profile = stack.detect(tmp_path)
+    assert profile["project_dir"] == "backend"
+    assert profile["sibling_projects"] == []
+
+
+# -- running one file instead of the whole suite ---------------------------
+#
+# Across the recorded runs executors launched 909 test containers; one ran the
+# identical full-suite command 25 times. The brief named one Test command and
+# it was always the whole suite, so every red-green iteration paid for it.
+
+
+@pytest.mark.parametrize(
+    "marker,content,expected",
+    [
+        ("pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n", ["pytest", "{path}"]),
+        ("package.json", None, ["npx", "--no-install", "vitest", "run", "{path}"]),
+    ],
+)
+def test_a_single_file_test_command_is_detected(tmp_path, marker, content, expected):
+    if marker == "package.json":
+        write(tmp_path, marker, package_json(name="x", scripts={"test": "vitest run"}, devDependencies={"vitest": "2.0.0"}))
+    else:
+        write(tmp_path, marker, content)
+    assert stack.detect(tmp_path)["commands"]["test_one"] == expected
+
+
+def test_the_single_file_command_is_absent_when_the_runner_is_unknown(tmp_path):
+    write(tmp_path, "Makefile", "test:\n\techo hi\n")
+    assert stack.detect(tmp_path)["commands"].get("test_one") is None
+
+
+# -- a stack that did not exist at init ------------------------------------
+#
+# init detects against the base commit, but a greenfield run's build system is
+# the thing the run is about to create. Phase 1's stack.json says so in its own
+# notes: "detected at init against an empty repo; re-wired by the cycle-2
+# replanner once the stack existed". Phases 1 and 2 ran with no gates at all.
+
+
+def stored(tmp_path, profile):
+    target = tmp_path / "stack.json"
+    osenv.write_json(target, profile)
+    return target
+
+
+def test_gaps_are_filled_once_the_build_system_exists(tmp_path):
+    empty = stack.detect(tmp_path)
+    assert empty["commands"]["test"] is None
+    path = stored(tmp_path, empty)
+
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n")
+    profile = stack.fill_gaps(tmp_path, path)
+
+    assert profile["commands"]["test"] == ["pytest"]
+    assert osenv.read_json(path)["commands"]["test"] == ["pytest"]
+
+
+def test_a_usable_stack_is_left_exactly_as_it_is(tmp_path):
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n")
+    tuned = stack.detect(tmp_path)
+    tuned["commands"]["test"] = ["make", "test"]
+    path = stored(tmp_path, tuned)
+
+    profile = stack.fill_gaps(tmp_path, path)
+    assert profile["commands"]["test"] == ["make", "test"]
+
+
+def test_a_command_the_stored_profile_already_had_is_never_lost(tmp_path):
+    empty = stack.detect(tmp_path)
+    empty["commands"]["lint"] = ["make", "lint"]
+    path = stored(tmp_path, empty)
+
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest','ruff']\n")
+    profile = stack.fill_gaps(tmp_path, path)
+
+    assert profile["commands"]["test"] == ["pytest"]
+    assert profile["commands"]["lint"] == ["make", "lint"], "a tuned command must survive"
+
+
+def test_filling_records_why_the_profile_changed(tmp_path):
+    path = stored(tmp_path, stack.detect(tmp_path))
+    write(tmp_path, "pyproject.toml", "[project]\nname='x'\ndependencies=['pytest']\n")
+
+    profile = stack.fill_gaps(tmp_path, path)
+    assert any("did not exist at init" in note for note in profile["notes"]), profile["notes"]
+
+
+def test_still_nothing_to_detect_leaves_the_file_alone(tmp_path):
+    empty = stack.detect(tmp_path)
+    path = stored(tmp_path, empty)
+
+    profile = stack.fill_gaps(tmp_path, path)
+    assert profile["commands"]["test"] is None
+    assert osenv.read_json(path)["commands"]["test"] is None
+
+
+def test_a_build_system_that_appeared_one_level_down_is_found(tmp_path):
+    path = stored(tmp_path, stack.detect(tmp_path))
+    write(tmp_path, "backend/pyproject.toml", "[project]\nname='api'\ndependencies=['pytest']\n")
+
+    profile = stack.fill_gaps(tmp_path, path)
+    assert profile["project_dir"] == "backend"
+    assert profile["commands"]["test"] == ["pytest"]
+
+
+def test_an_undetectable_repo_says_the_stack_will_be_re_detected(tmp_path):
+    """Not "agents must infer": on a greenfield run the answer arrives later."""
+    profile = stack.detect(tmp_path)
+    assert any("re-detected once the run has built it" in n for n in profile["notes"]), profile["notes"]

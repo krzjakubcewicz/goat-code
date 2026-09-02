@@ -82,3 +82,58 @@ def changed_files(repo, base, head, cwd=None):
     where = cwd or repo
     result = osenv.git(["diff", "--name-only", "{}..{}".format(base, head)], cwd=where)
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+#: What a remedial cycle adds to the verifier's package when there is a
+#: previous ruling to narrow it against. Empty on cycle 1, and whenever the
+#: evidence to narrow safely is not there.
+NOTHING_JUDGED_YET = {
+    "previous_verdict": None,
+    "previous_ref": None,
+    "changed_files": [],
+    "unchanged_slices": [],
+}
+
+
+def previous_judgement(run, doc):
+    """The previous cycle's verdict, and which slices it still covers.
+
+    Each cycle's ``gates.json`` records the ref it judged, so the delta
+    between two cycles is exactly ``previous ref .. this ref``. A slice
+    owning none of those paths sits against byte-identical code, and the
+    verifier can carry its own earlier ruling forward instead of re-deriving
+    it from a diff thousands of lines long.
+
+    Every branch falls back to judging everything: narrowing wrongly would
+    hide a regression, while not narrowing only costs what the pipeline
+    already pays today.
+    """
+    from . import tasks
+
+    if run.cycle < 2:
+        return dict(NOTHING_JUDGED_YET)
+
+    verdict_path = run.cycle_dir(run.cycle - 1) / "verdict.md"
+    if not verdict_path.exists():
+        return dict(NOTHING_JUDGED_YET)
+
+    before = _judged_ref(run, run.cycle - 1)
+    now = _judged_ref(run, run.cycle)
+    if not before or not now:
+        return dict(NOTHING_JUDGED_YET)
+
+    changed = changed_files(run.repo, before, now)
+    return {
+        "previous_verdict": str(verdict_path),
+        "previous_ref": before,
+        "changed_files": changed,
+        "unchanged_slices": tasks.unchanged_slices(doc, changed),
+    }
+
+
+def _judged_ref(run, cycle):
+    """The integration commit a cycle's gates ran against."""
+    path = run.cycle_dir(cycle) / "gates.json"
+    if not path.exists():
+        return None
+    return (osenv.read_json(path) or {}).get("ref")

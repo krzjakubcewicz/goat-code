@@ -44,6 +44,7 @@ from codag import (  # noqa: E402
     run as runmod,
     schema,
     stack as stackmod,
+    stats as statsmod,
     tasks as tasksmod,
     worktree as worktreemod,
 )
@@ -206,7 +207,7 @@ def cmd_init(args):
 
     run = Run.create(repo, title, "spec" if args.spec else "chat", spec_text=spec_text)
     _start_trace(run)
-    profile = stackmod.write(repo, run.stack_path)
+    profile = stackmod.write(repo, run.stack_path, project_dir=run.config.get("project_dir"))
 
     baseline = None
     integration = None
@@ -311,7 +312,7 @@ def cmd_stack(args):
             target = run.stack_path
         except RunError:
             target = None
-        profile = stackmod.detect(repo)
+        profile = stackmod.detect(repo, project_dir=runmod.load_config(repo).get("project_dir"))
         if target:
             osenv.write_json(target, profile)
         emit(args, profile, stackmod.summary_line(profile))
@@ -533,10 +534,36 @@ def cmd_worktree(args):
     raise CliError("unknown worktree command")
 
 
+def _stack_for_briefs(run, doc, slice_ids):
+    """The stack, re-detected if a wave has since built the thing init missed.
+
+    On the first run of a new project the build system does not exist at init,
+    so wave 1's executors are told "not detected" and left to guess. By wave 2
+    it does exist - in each slice's own worktree, which starts at the
+    integration tip - so the guessing can stop there rather than at the end of
+    the run.
+    """
+    profile = load_stack(run)
+    if stackmod.usable(profile):
+        return profile
+    for slice_id in slice_ids:
+        try:
+            where = tasksmod.get(doc, slice_id).get("worktree")
+        except tasksmod.TaskError:
+            continue
+        if where and pathlib.Path(where).exists():
+            profile = stackmod.fill_gaps(
+                where, run.stack_path, project_dir=run.config.get("project_dir")
+            )
+            if stackmod.usable(profile):
+                break
+    return profile
+
+
 def cmd_brief(args):
     run = resolve_run(args)
     doc = load_plan(run)
-    profile = load_stack(run)
+    profile = _stack_for_briefs(run, doc, args.slices)
     written = []
     for slice_id in args.slices:
         try:
@@ -629,14 +656,22 @@ def cmd_verify_package(args):
     """Everything the verifier agent needs, in one call."""
     run = resolve_run(args)
     doc = load_plan(run)
-    profile = load_stack(run)
     where = mergemod.state_of(run).get("worktree") or worktreemod.integration_path(run)
     if not pathlib.Path(where).exists():
         raise CliError("no integration worktree; run 'codag merge' first")
 
-    report = gatesmod.run_and_classify(run, where, profile=profile)
+    # The first run of a new project detects nothing at init - the build
+    # system is what it is about to create. The integration worktree is the
+    # first place that code exists, and it is the tree the gates run in.
+    profile = stackmod.fill_gaps(
+        where, run.stack_path, project_dir=run.config.get("project_dir")
+    )
+
     head = mergemod.integration_head(run)
     review = diffpkg.write(run.repo, run.base_commit, head, out=run.cycle_dir() / "review.diff", cwd=where)
+    report = gatesmod.run_and_classify(
+        run, where, profile=profile, changed=diffpkg.changed_files(run.repo, run.base_commit, head, cwd=where)
+    )
 
     criteria = []
     for item in tasksmod.slices(doc):
@@ -651,6 +686,8 @@ def cmd_verify_package(args):
                     }
                 )
 
+    previous = diffpkg.previous_judgement(run, doc)
+
     payload = {
         "run_id": run.run_id,
         "cycle": run.cycle,
@@ -659,6 +696,7 @@ def cmd_verify_package(args):
         "head": head,
         "gates": report["path"],
         "gates_blocking": gatesmod.blocking(report),
+        "weak_assertions": report.get("weak_assertions") or [],
         "review": str(review),
         "merge_report": str(run.cycle_dir() / "merge-report.md"),
         "spec": str(run.spec_path),
@@ -666,6 +704,7 @@ def cmd_verify_package(args):
         "criteria": criteria,
         "assumptions": doc.get("assumptions") or [],
     }
+    payload.update(previous)
     lines = [
         "verify package for {} cycle {}".format(run.run_id, run.cycle),
         "  gates:   {}".format(payload["gates"]),
@@ -691,10 +730,29 @@ def cmd_progress(args):
     repo = resolve_repo(args)
 
     if args.progress_command == "show":
-        found = progressmod.recent(repo, args.limit)
-        payload = {"path": str(progressmod.path_for(repo)), "count": len(found), "entries": found}
-        joiner = "\n\n{}\n\n".format(progressmod.SEPARATOR)
-        emit(args, payload, joiner.join(found) or "(no entries yet)")
+        rules = progressmod.constraints(repo)
+        found = progressmod.entries(repo) if args.all else progressmod.recent(repo, args.limit)
+        payload = {
+            "path": str(progressmod.path_for(repo)),
+            "count": len(found),
+            "entries": found,
+            "constraints": rules,
+        }
+        if args.all:
+            joiner = "\n\n{}\n\n".format(progressmod.SEPARATOR)
+            text = joiner.join(found) or "(no entries yet)"
+        else:
+            text = progressmod.planner_view(repo, args.limit) or "(no entries yet)"
+        emit(args, payload, text)
+        return EXIT_OK
+
+    if args.progress_command == "promote":
+        try:
+            rules = progressmod.add_constraint(repo, args.text)
+        except ValueError as exc:
+            raise CliError(str(exc))
+        payload = {"path": str(progressmod.constraints_path(repo)), "constraints": rules}
+        emit(args, payload, "standing constraints:\n" + "\n".join("- " + r for r in rules))
         return EXIT_OK
 
     if args.progress_command == "append":
@@ -812,6 +870,7 @@ def cmd_report(args):
                 concerns=args.concerns,
                 reason=args.reason,
                 head=args.head,
+                evidence=reportmod.parse_pairs(args.evidence),
                 force=args.force,
                 profile=load_stack(run),
             )
@@ -948,6 +1007,14 @@ def cmd_ledger(args):
         return EXIT_OK
     listed = ledgermod.entries(run)
     emit(args, {"entries": listed, "completed": sorted(ledgermod.completed_slices(run))}, "\n".join(listed))
+    return EXIT_OK
+
+
+def cmd_stats(args):
+    """Where this run's time and cycles went, off the artifacts it always writes."""
+    run = resolve_run(args)
+    report = statsmod.collect(run)
+    emit(args, report, statsmod.render(report))
     return EXIT_OK
 
 
@@ -1199,7 +1266,11 @@ def build_parser():
     s = p.add_subparsers(dest="progress_command", required=True)
     shower = add(s, "show")
     shower.add_argument("--limit", type=int, default=5, help="how many recent entries (0 for all)")
+    shower.add_argument("--all", action="store_true", help="the whole log, not the planner's view")
     shower.set_defaults(func=cmd_progress)
+    promoter = add(s, "promote", help="promote a recurring learning to a standing constraint")
+    promoter.add_argument("text", help="the rule, in one sentence")
+    promoter.set_defaults(func=cmd_progress)
     appender = add(s, "append")
     appender.add_argument("--body", help="file holding the entry body")
     appender.add_argument("--text", help="the entry body inline, instead of --body")
@@ -1224,6 +1295,12 @@ def build_parser():
     p.add_argument("--reason", help="why you are blocked or need context")
     p.add_argument("--detail", help="what disagrees, for an ESCALATE")
     p.add_argument("--head", help="override the commit sha (default: your worktree's HEAD)")
+    p.add_argument(
+        "--evidence",
+        action="append",
+        metavar="AID=PATH:LINE",
+        help="the test line proving one acceptance criterion; repeat for each (required for DONE)",
+    )
     p.add_argument("--force", action="store_true", help="skip the DONE checks (use only with a reason)")
     p.set_defaults(func=cmd_report)
 
@@ -1252,6 +1329,9 @@ def build_parser():
     p = add(sub, "ledger", help="read or append the durable progress ledger")
     p.add_argument("text", nargs="?", help="entry to append; omit to read")
     p.set_defaults(func=cmd_ledger)
+
+    p = add(sub, "stats", help="per-phase durations, cycles, remedial slices, gate outcomes")
+    p.set_defaults(func=cmd_stats)
 
     p = add(sub, "cycle", help="advance to the next replan cycle")
     p.set_defaults(func=cmd_cycle)

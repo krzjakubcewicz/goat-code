@@ -249,3 +249,31 @@ def test_render_table_reports_a_cycle_instead_of_crashing(plan_file):
     doc = tasks.load(plan_file)
     doc["slices"][0]["depends_on"] = ["S3"]
     assert "cycle" in tasks.render_table(doc)
+
+
+# -- what a later cycle still has to judge ---------------------------------
+#
+# A remedial cycle changes a handful of lines and the verifier is then told to
+# re-judge every criterion against the whole diff again. It only needs to
+# re-judge what actually moved; the rest was judged against identical code.
+
+
+def test_a_slice_owning_none_of_the_changed_files_is_unchanged():
+    doc = copy.deepcopy(PLAN)
+    assert tasks.unchanged_slices(doc, ["src/mail/send.ts"]) == ["S1", "S3"]
+
+
+def test_a_slice_owning_a_changed_file_is_not_unchanged():
+    doc = copy.deepcopy(PLAN)
+    assert "S1" not in tasks.unchanged_slices(doc, ["src/auth/tokens.ts"])
+
+
+def test_a_shared_path_a_slice_touches_also_makes_it_changed():
+    doc = copy.deepcopy(PLAN)
+    tasks.get(doc, "S1")["touches_shared"] = ["src/db/migrations/"]
+    assert "S1" not in tasks.unchanged_slices(doc, ["src/db/migrations/003_tokens.sql"])
+
+
+def test_no_changed_files_leaves_every_slice_unchanged():
+    doc = copy.deepcopy(PLAN)
+    assert tasks.unchanged_slices(doc, []) == ["S1", "S2", "S3"]

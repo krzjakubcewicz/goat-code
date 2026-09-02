@@ -412,3 +412,58 @@ def test_a_missing_kind_warns_and_defaults_to_feature():
     report = schema.validate(doc)
     assert report.ok
     assert any("assuming feature" in w for w in report.warnings)
+
+
+# -- contracts two slices disagree about -----------------------------------
+#
+# Phase 8 cycle 1 was written off entirely by this: S5 extended
+# GET /api/health/'s response body per its own criterion, while S1 owned an
+# untouched Phase-1-era test asserting that body exactly. Neither slice's
+# `owns` nor `touches_shared` named the other, because no file was shared -
+# the collision was in the contract, not on disk.
+
+
+def test_two_slices_changing_the_same_contract_in_one_wave_is_an_error():
+    doc = plan()
+    doc["slices"][0]["changes_contract"] = ["GET /api/health/"]
+    doc["slices"][1]["depends_on"] = []
+    doc["slices"][1].pop("uses_interfaces", None)
+    doc["slices"][1]["changes_contract"] = ["GET /api/health/"]
+
+    problems = errors_of(doc)
+    assert any("GET /api/health/" in e and "S1" in e and "S2" in e for e in problems), problems
+
+
+def test_the_same_contract_across_waves_is_allowed():
+    doc = plan()
+    doc["slices"][0]["changes_contract"] = ["GET /api/health/"]
+    doc["slices"][1]["changes_contract"] = ["GET /api/health/"]
+    assert schema.validate(doc).ok
+
+
+def test_one_slice_owning_a_contract_alone_is_fine():
+    doc = plan()
+    doc["slices"][0]["changes_contract"] = ["GET /api/health/"]
+    assert schema.validate(doc).ok
+
+
+def test_changes_contract_must_be_a_list_of_strings():
+    doc = plan()
+    doc["slices"][0]["changes_contract"] = "GET /api/health/"
+    assert any("changes_contract" in e for e in errors_of(doc))
+
+
+def test_an_empty_contract_entry_is_rejected():
+    doc = plan()
+    doc["slices"][0]["changes_contract"] = ["  "]
+    assert any("changes_contract" in e for e in errors_of(doc))
+
+
+def test_a_contract_changed_by_a_slice_another_one_depends_on_is_a_warning():
+    """S2 depends on S1, so it can be written against the new shape - but the
+    planner should have said so, because nothing else records the coupling."""
+    doc = plan()
+    doc["slices"][0]["changes_contract"] = ["GET /api/health/"]
+    doc["slices"][1]["changes_contract"] = ["GET /api/health/"]
+    report = schema.validate(doc)
+    assert any("GET /api/health/" in w for w in report.warnings), report.warnings

@@ -51,7 +51,8 @@ def test_report_accepts_a_real_done_from_inside_the_worktree(capsys, node_repo):
     path = working_slice(capsys, node_repo)
 
     code, payload, _err = invoke_json(
-        capsys, "--repo", str(path), "report", "--slice", "S1", "--status", "DONE", "--tests", "3 passed"
+        capsys, "--repo", str(path), "report", "--slice", "S1", "--status", "DONE",
+        "--tests", "3 passed", "--evidence", "A1=tests/S1.test.js:1",
     )
     assert code == 0
     assert payload["slice_status"] == "done"
@@ -265,3 +266,112 @@ def test_verdict_without_a_file_says_so(capsys, node_repo):
     code, _out, err = invoke(capsys, "--repo", str(node_repo), "verdict")
     assert code == cli.EXIT_USAGE
     assert "no verdict at" in err
+
+
+# -- incremental verification ----------------------------------------------
+
+
+def test_verify_package_on_the_first_cycle_has_no_previous_verdict(capsys, node_repo):
+    run = start(capsys, node_repo, [slice_with_tests("S1", "src/a/**")])
+    _prepare_integration(capsys, node_repo, run)
+
+    _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "verify-package")
+    assert payload["previous_verdict"] is None
+    assert payload["unchanged_slices"] == []
+
+
+def test_verify_package_names_the_previous_verdict_and_what_moved(capsys, node_repo):
+    run = start(capsys, node_repo, [slice_with_tests("S1", "src/a/**"), slice_with_tests("S2", "src/b/**")])
+    _prepare_integration(capsys, node_repo, run)
+    invoke(capsys, "--repo", str(node_repo), "verify-package")
+    osenv.write_text(run.cycle_dir() / "verdict.md", "VERDICT: FAIL\n")
+
+    invoke(capsys, "--repo", str(node_repo), "cycle")
+    run = Run.load(node_repo)
+    integration = pathlib.Path(run.state["merge"]["worktree"])
+    _commit(integration, "src/b/extra.js", "// remedial\n")
+
+    _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "verify-package")
+    assert payload["previous_verdict"].endswith("verdict.md")
+    assert payload["changed_files"] == ["src/b/extra.js"]
+    assert payload["unchanged_slices"] == ["S1"]
+
+
+def _commit(where, relpath, text):
+    target = pathlib.Path(where) / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    osenv.git(["add", "-A"], cwd=where, check=True)
+    osenv.git(["commit", "-qm", "remedial"], cwd=where, check=True)
+
+
+def _prepare_integration(capsys, repo, run):
+    """Take the run as far as a merged integration worktree."""
+    for slice_id in [s["id"] for s in run_plan(run)]:
+        path = working_slice(capsys, repo, slice_id)
+        _commit(path, "src/{}/index.js".format(slice_id.lower()), "module.exports = 1;\n")
+        invoke(capsys, "--repo", str(repo), "task", "status", slice_id, "done")
+    invoke(capsys, "--repo", str(repo), "merge")
+
+
+def run_plan(run):
+    from codag import tasks as tasksmod
+
+    return tasksmod.slices(tasksmod.load(run.tasks_path))
+
+
+# -- a stack the run created for itself ------------------------------------
+
+
+def test_verify_package_detects_a_stack_that_init_could_not_see(capsys, git_repo):
+    """Phases 1 and 2 both reached a verdict with every gate reporting
+    `missing`, because at init the project they were building did not exist."""
+    run = make_run(git_repo)
+    assert osenv.read_json(run.stack_path)["commands"]["test"] is None
+
+    plan_for(run, [slice_with_tests("S1", "src/a/**")])
+    path = working_slice(capsys, git_repo, "S1")
+    _commit(path, "package.json", '{"name":"x","scripts":{"test":"node -e 0"}}\n')
+    invoke(capsys, "--repo", str(git_repo), "task", "status", "S1", "done")
+    invoke(capsys, "--repo", str(git_repo), "merge")
+
+    invoke(capsys, "--repo", str(git_repo), "verify-package")
+    assert osenv.read_json(run.stack_path)["commands"]["test"] == ["npm", "run", "test"]
+
+
+def test_verify_package_leaves_a_stack_that_already_works(capsys, node_repo):
+    run = make_run(node_repo)
+    before = osenv.read_json(run.stack_path)
+    assert before["commands"]["test"]
+
+    plan_for(run, [slice_with_tests("S1", "src/a/**")])
+    working_slice(capsys, node_repo, "S1")
+    invoke(capsys, "--repo", str(node_repo), "task", "status", "S1", "done")
+    invoke(capsys, "--repo", str(node_repo), "merge")
+
+    invoke(capsys, "--repo", str(node_repo), "verify-package")
+    assert osenv.read_json(run.stack_path)["commands"] == before["commands"]
+
+
+def test_a_brief_picks_up_a_stack_an_earlier_wave_created(capsys, git_repo):
+    """Wave 2 is written against code wave 1 produced, so by then the build
+    system exists - in the slice's own worktree, off the integration tip."""
+    run = make_run(git_repo)
+    assert osenv.read_json(run.stack_path)["commands"]["test"] is None
+    plan_for(run, [slice_with_tests("S1", "src/a/**")])
+
+    path = working_slice(capsys, git_repo, "S1")
+    _commit(path, "package.json", '{"name":"x","scripts":{"test":"node -e 0"}}\n')
+
+    _code, payload, _err = invoke_json(capsys, "--repo", str(git_repo), "brief", "S1")
+    text = pathlib.Path(payload["briefs"][0]).read_text(encoding="utf-8")
+    assert "npm run test" in text
+    assert osenv.read_json(run.stack_path)["commands"]["test"] == ["npm", "run", "test"]
+
+
+def test_a_brief_for_a_slice_with_no_worktree_yet_still_renders(capsys, git_repo):
+    run = make_run(git_repo)
+    plan_for(run, [slice_with_tests("S1", "src/a/**")])
+    code, payload, _err = invoke_json(capsys, "--repo", str(git_repo), "brief", "S1")
+    assert code == 0
+    assert pathlib.Path(payload["briefs"][0]).exists()

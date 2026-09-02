@@ -250,7 +250,9 @@ def test_report_accepts_a_done_that_was_test_first(run, plan, slice_worktree):
     commit(slice_worktree, {"tests/auth.test.js": "// red\n"}, "add failing test")
     commit(slice_worktree, {"src/auth/token.js": "x\n"}, "make it pass")
 
-    result = report.record_slice(run, "S1", "DONE", tests="1 passed")
+    result = report.record_slice(
+        run, "S1", "DONE", tests="1 passed", evidence={"A1": "tests/auth.test.js:1"}
+    )
     assert result["slice_status"] == "done"
 
 
@@ -310,7 +312,9 @@ def test_enforcement_can_be_switched_off(git_repo):
     commit(path, {"src/auth/token.js": "x\n"}, "impl first")
     commit(path, {"tests/auth.test.js": "// t\n"}, "test second")
 
-    assert report.record_slice(run, "S1", "DONE")["slice_status"] == "done"
+    assert report.record_slice(
+        run, "S1", "DONE", evidence={"A1": "tests/auth.test.js:1"}
+    )["slice_status"] == "done"
 
 
 def test_the_other_done_checks_still_apply_with_enforcement_off(git_repo):
