@@ -347,7 +347,10 @@ def write_text(path, text):
     path = pathlib.Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp{}".format(os.getpid()))
-    tmp.write_text(text, encoding="utf-8", newline="\n")
+    # Path.open takes newline on every version; Path.write_text only from
+    # 3.10, and the floor is 3.9.
+    with tmp.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
     os.replace(str(tmp), str(path))
     debuglog.log("write", path=path, bytes=len(text))
 
