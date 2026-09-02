@@ -174,6 +174,36 @@ def test_only_osenv_calls_subprocess_directly():
         assert "import subprocess" not in text, "{} imports subprocess".format(module.name)
 
 
+#: The floor the README promises and the CI matrix runs.
+MINIMUM_PYTHON = (3, 9)
+
+#: `Path.write_text`/`read_text` only accept `newline` from 3.10. Passing it
+#: on 3.9 raises TypeError, and since every file the tool writes goes through
+#: `osenv.write_text`, that breaks the whole tool at its first write.
+_TOO_NEW = re.compile(r"\b(write_text|read_text)\s*\([^)]*\bnewline\s*=")
+
+
+def test_no_module_uses_a_pathlib_argument_newer_than_the_floor():
+    """A guarantee no interpreter running this suite can check for itself.
+
+    On 3.10+ the argument simply works, so the suite goes green while 3.9 -
+    which the README promises and CI runs - fails on every single test. It
+    shipped in the opening commits and stayed red for months precisely
+    because passing tests were never evidence about the floor.
+
+    Use `path.open("w", encoding="utf-8", newline="\\n")`, which takes it on
+    every version.
+    """
+    assert sys.version_info[:2] >= MINIMUM_PYTHON
+    package = pathlib.Path(osenv.__file__).parent
+    modules = list(package.glob("*.py")) + [package.parent / "goatcode.py"]
+    for module in modules:
+        found = _TOO_NEW.search(module.read_text(encoding="utf-8"))
+        assert not found, "{} passes newline= to {}, which needs Python 3.10".format(
+            module.name, found.group(1)
+        )
+
+
 def test_resolve_exe_finds_git():
     resolved = osenv.resolve_exe("git")
     assert resolved and pathlib.Path(resolved).exists()
