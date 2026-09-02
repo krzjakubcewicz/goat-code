@@ -10,8 +10,8 @@ import copy
 
 import pytest
 
-from codag import ledger, machine, merge, miniyaml, osenv, report, tasks, worktree
-from codag.run import Run
+from goatcode import ledger, machine, merge, miniyaml, osenv, report, tasks, worktree
+from goatcode.run import Run
 from tests import conftest
 
 PLAN = {
@@ -278,7 +278,7 @@ def test_a_stale_phase_self_corrects(run):
 def test_grill_dispatches_the_planner_on_opus(run):
     action = machine.next_action(run)
     assert action["action"] == "dispatch"
-    assert action["dispatches"][0]["agent"] == "codag-planner"
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"
     assert action["dispatches"][0]["model"] == "opus"
     assert "round 1 of 3" in action["reason"]
 
@@ -305,7 +305,7 @@ def test_revise_carries_the_feedback_and_clears_the_flag(run):
     run.save()
 
     action = machine.next_action(run)
-    assert action["dispatches"][0]["agent"] == "codag-planner"
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"
     assert "Split the CLI slice." in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
     assert Run.load(run.repo, run.run_id).approval is None
 
@@ -348,7 +348,7 @@ def test_an_invalid_plan_goes_back_with_the_errors(run):
     write_plan(run, doc)
 
     action = machine.next_action(run)
-    assert action["dispatches"][0]["agent"] == "codag-planner"
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"
     text = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
     assert "same wave and both own" in text
     assert "change nothing else" in text
@@ -417,7 +417,7 @@ def test_execute_dispatches_the_whole_wave_in_one_action(run):
     action = machine.next_action(run)
     assert action["action"] == "dispatch"
     assert [d["slice"] for d in action["dispatches"]] == ["S1", "S2"]
-    assert all(d["agent"] == "codag-executor" for d in action["dispatches"])
+    assert all(d["agent"] == "goat-code-executor" for d in action["dispatches"])
     assert all(d["model"] == "haiku" for d in action["dispatches"])
     assert "ONE message" in action["message"]
 
@@ -483,7 +483,7 @@ def test_a_slice_blocked_twice_is_failed_not_retried_forever(run):
     tasks.set_status(run.tasks_path, "S1", "blocked")
     action = machine.next_action(run)
 
-    assert action["action"] != "dispatch" or action["dispatches"][0]["agent"] != "codag-executor"
+    assert action["action"] != "dispatch" or action["dispatches"][0]["agent"] != "goat-code-executor"
     assert tasks.get(tasks.load(run.tasks_path), "S1")["status"] == "failed"
 
 
@@ -517,7 +517,7 @@ def test_a_conflict_dispatches_the_synthesizer_on_sonnet(run):
     run.save()
 
     action = machine.next_action(run)
-    assert action["dispatches"][0]["agent"] == "codag-synthesizer"
+    assert action["dispatches"][0]["agent"] == "goat-code-synthesizer"
     assert action["dispatches"][0]["model"] == "sonnet"
     assert "src/shared/registry.ts" in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
 
@@ -546,7 +546,7 @@ def test_verify_dispatches_the_verifier_once_the_package_exists(run):
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
 
     action = machine.next_action(run)
-    assert action["dispatches"][0]["agent"] == "codag-verifier"
+    assert action["dispatches"][0]["agent"] == "goat-code-verifier"
     assert action["dispatches"][0]["model"] == "opus"
     text = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
     assert "3 across 3 slices" in text
@@ -598,7 +598,7 @@ def test_after_cycle_the_replanner_is_dispatched(run):
     run.save()
 
     action = machine.next_action(run)
-    assert action["dispatches"][0]["agent"] == "codag-replanner"
+    assert action["dispatches"][0]["agent"] == "goat-code-replanner"
     assert action["dispatches"][0]["model"] == "opus"
 
 
@@ -626,7 +626,7 @@ def test_the_replanned_plan_resumes_executing(run):
     run.save()
 
     action = machine.next_action(run)
-    assert action["dispatches"][0]["agent"] == "codag-replanner"
+    assert action["dispatches"][0]["agent"] == "goat-code-replanner"
 
     # The replanner adds a remedial slice; the run goes straight back to work.
     doc = tasks.load(run.tasks_path)
@@ -682,7 +682,7 @@ def test_stop_is_idempotent(run):
 def test_render_shows_a_dispatch_readably(run):
     text = machine.render(machine.next_action(run))
     assert "phase grill" in text
-    assert "dispatch: codag-planner on opus" in text
+    assert "dispatch: goat-code-planner on opus" in text
     assert "prompt:" in text
 
 
@@ -761,7 +761,7 @@ def test_a_finished_run_is_written_up_before_it_is_done(run):
 
     assert machine.derive_phase(run) == "record"
     action = machine.next_action(run)
-    assert action["dispatches"][0]["agent"] == "codag-scribe"
+    assert action["dispatches"][0]["agent"] == "goat-code-scribe"
     assert action["dispatches"][0]["model"] == "sonnet"
 
 
@@ -805,7 +805,7 @@ def test_a_dispatch_records_which_model_the_machine_chose(run):
     assert action["action"] == "dispatch"
 
     entries = ledger.entries(run)
-    assert any("dispatch codag-planner on opus" in entry for entry in entries), entries
+    assert any("dispatch goat-code-planner on opus" in entry for entry in entries), entries
 
 
 def test_an_executor_dispatch_records_its_slice_and_model(run):
@@ -817,4 +817,4 @@ def test_an_executor_dispatch_records_its_slice_and_model(run):
     machine.next_action(run)
 
     entries = ledger.entries(run)
-    assert any("dispatch codag-executor S1 on haiku" in entry for entry in entries), entries
+    assert any("dispatch goat-code-executor S1 on haiku" in entry for entry in entries), entries

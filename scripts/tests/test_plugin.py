@@ -28,7 +28,7 @@ SKILLS = sorted((ROOT / "skills").glob("*/SKILL.md"))
 #: agent and command names.
 EXCLUDED_DIRS = {
     ".git",
-    ".codag",
+    ".goatcode",
     ".pytest_cache",
     ".venv",
     ".worktrees",
@@ -57,7 +57,7 @@ def frontmatter(path):
 
 
 def cli_module():
-    spec = importlib.util.spec_from_file_location("codag_cli_struct", SCRIPTS / "codag.py")
+    spec = importlib.util.spec_from_file_location("goatcode_cli_struct", SCRIPTS / "goatcode.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -68,15 +68,15 @@ def cli_module():
 
 def test_plugin_manifest_is_valid():
     data = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    assert data["name"] == "cod-ag"
+    assert data["name"] == "goat-code"
     assert data["description"]
     assert re.match(r"^\d+\.\d+\.\d+$", data["version"])
 
 
 def test_marketplace_manifest_points_at_this_plugin():
     data = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
-    assert data["name"] == "cod-ag"
-    assert [p["name"] for p in data["plugins"]] == ["cod-ag"]
+    assert data["name"] == "goat-code"
+    assert [p["name"] for p in data["plugins"]] == ["goat-code"]
     assert data["plugins"][0]["source"] == "./"
 
 
@@ -85,13 +85,13 @@ def test_marketplace_manifest_points_at_this_plugin():
 
 def test_every_agent_exists():
     assert {p.stem for p in AGENTS} == {
-        "codag-planner",
-        "codag-executor",
-        "codag-synthesizer",
-        "codag-verifier",
-        "codag-e2e",
-        "codag-scribe",
-        "codag-replanner",
+        "goat-code-planner",
+        "goat-code-executor",
+        "goat-code-synthesizer",
+        "goat-code-verifier",
+        "goat-code-e2e",
+        "goat-code-scribe",
+        "goat-code-replanner",
     }
 
 
@@ -108,12 +108,12 @@ def test_agent_frontmatter(path):
 @pytest.mark.parametrize("path", AGENTS, ids=lambda p: p.stem)
 def test_agent_points_at_the_conventions_skill(path):
     """Contracts live in one place; each agent must send the reader there."""
-    assert "cod-ag-conventions" in path.read_text(encoding="utf-8")
+    assert "goat-code-conventions" in path.read_text(encoding="utf-8")
 
 
 def test_read_only_agents_cannot_write():
     """The verifier judges; if it could edit, nothing would be left to judge."""
-    fields, _body = frontmatter(ROOT / "agents" / "codag-verifier.md")
+    fields, _body = frontmatter(ROOT / "agents" / "goat-code-verifier.md")
     tools = fields["tools"]
     for forbidden in ("Edit", "Write", "NotebookEdit"):
         assert forbidden not in tools, "verifier must stay read-only"
@@ -121,7 +121,7 @@ def test_read_only_agents_cannot_write():
 
 def test_planner_and_replanner_cannot_edit_code():
     """They write tasks.yaml with Write; Edit would let them touch source."""
-    for name in ("codag-planner", "codag-replanner"):
+    for name in ("goat-code-planner", "goat-code-replanner"):
         fields, _body = frontmatter(ROOT / "agents" / (name + ".md"))
         assert "Edit" not in fields["tools"], "{} must not edit existing files".format(name)
 
@@ -131,11 +131,11 @@ def test_planner_and_replanner_cannot_edit_code():
 
 def test_every_command_exists():
     assert {p.stem for p in COMMANDS} == {
-        "cod-ag",
-        "cod-ag-spec",
-        "cod-ag-status",
-        "cod-ag-resume",
-        "cod-ag-abort",
+        "goat-code",
+        "goat-code-spec",
+        "goat-code-status",
+        "goat-code-resume",
+        "goat-code-abort",
     }
 
 
@@ -147,13 +147,13 @@ def test_command_frontmatter(path):
 
 
 def test_entry_commands_invoke_the_orchestrator_skill():
-    for name in ("cod-ag", "cod-ag-resume"):
+    for name in ("goat-code", "goat-code-resume"):
         text = (ROOT / "commands" / (name + ".md")).read_text(encoding="utf-8")
-        assert "cod-ag:cod-ag-orchestrator" in text
+        assert "goat-code:goat-code-orchestrator" in text
 
 
 def test_abort_command_protects_committed_work():
-    text = (ROOT / "commands" / "cod-ag-abort.md").read_text(encoding="utf-8")
+    text = (ROOT / "commands" / "goat-code-abort.md").read_text(encoding="utf-8")
     assert "confirm" in text.lower()
     assert "--delete-branches" in text
 
@@ -162,7 +162,7 @@ def test_abort_command_protects_committed_work():
 
 
 def test_every_skill_exists():
-    assert {p.parent.name for p in SKILLS} == {"cod-ag-orchestrator", "cod-ag-conventions"}
+    assert {p.parent.name for p in SKILLS} == {"goat-code-orchestrator", "goat-code-conventions"}
 
 
 @pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
@@ -175,21 +175,21 @@ def test_skill_frontmatter(path):
 
 def test_the_state_machine_dispatches_every_agent():
     """Who runs when lives in machine.py, not in the skill's prose."""
-    text = (SCRIPTS / "codag" / "machine.py").read_text(encoding="utf-8")
+    text = (SCRIPTS / "goatcode" / "machine.py").read_text(encoding="utf-8")
     for path in AGENTS:
         assert path.stem in text, "the machine never dispatches {}".format(path.stem)
 
 
 def test_orchestrator_states_the_parallel_dispatch_rule():
     """One message per wave is the whole point; it must be unmissable."""
-    text = (ROOT / "skills" / "cod-ag-orchestrator" / "SKILL.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "goat-code-orchestrator" / "SKILL.md").read_text(encoding="utf-8")
     assert "single message" in text
     assert "parallel" in text
 
 
 def test_orchestrator_defers_to_the_state_machine():
     """The skill must not re-describe the pipeline it no longer owns."""
-    text = (ROOT / "skills" / "cod-ag-orchestrator" / "SKILL.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "goat-code-orchestrator" / "SKILL.md").read_text(encoding="utf-8")
     assert "next" in text
     assert "do **not** decide what happens next" in text
     assert "## Step 1" not in text, "the eight-step prose is now machine.py"
@@ -202,10 +202,10 @@ def test_the_evidence_standard_is_defined_once_and_cited_by_both_sides():
     against and never built to - which is what a whole cycle used to be spent
     discovering.
     """
-    conventions = (ROOT / "skills" / "cod-ag-conventions" / "SKILL.md").read_text(encoding="utf-8")
+    conventions = (ROOT / "skills" / "goat-code-conventions" / "SKILL.md").read_text(encoding="utf-8")
     assert "## Evidence standard" in conventions
 
-    for name in ("codag-executor", "codag-verifier"):
+    for name in ("goat-code-executor", "goat-code-verifier"):
         text = (ROOT / "agents" / "{}.md".format(name)).read_text(encoding="utf-8")
         assert "Evidence standard" in text, "{} does not cite the shared standard".format(name)
 
@@ -213,18 +213,29 @@ def test_the_evidence_standard_is_defined_once_and_cited_by_both_sides():
 # -- cross-references ------------------------------------------------------
 
 
-def test_every_referenced_agent_exists():
-    """No dispatch target may be a typo."""
-    known = {p.stem for p in AGENTS}
+def test_every_referenced_name_exists():
+    """No dispatch target, skill or command reference may be a typo.
+
+    One prefix now covers agents, skills and commands, so a reference is
+    checked against the union of the three: a typo resolves to none of them.
+    Matching on the prefix alone - which worked while agents were `codag-` and
+    skills were `cod-ag-` - would now silently match nothing at all.
+    """
+    known = (
+        {p.stem for p in AGENTS}
+        | {p.parent.name for p in SKILLS}
+        | {p.stem for p in COMMANDS}
+    )
+    pattern = re.compile(r"\bgoat-code-[a-z0-9]+(?:-[a-z0-9]+)*")
     for path in MARKDOWN:
-        for name in re.findall(r"\bcodag-[a-z]+\b", path.read_text(encoding="utf-8")):
-            assert name in known, "{} references unknown agent {}".format(path.name, name)
+        for name in pattern.findall(path.read_text(encoding="utf-8")):
+            assert name in known, "{} references unknown name {}".format(path.name, name)
 
 
 def test_every_referenced_skill_exists():
     known = {p.parent.name for p in SKILLS}
     for path in MARKDOWN:
-        for name in re.findall(r"cod-ag:([a-z-]+)", path.read_text(encoding="utf-8")):
+        for name in re.findall(r"goat-code:([a-z-]+)", path.read_text(encoding="utf-8")):
             assert name in known, "{} references unknown skill {}".format(path.name, name)
 
 
@@ -239,10 +250,10 @@ def test_every_referenced_cli_command_exists():
         known.update(action.choices or {})
     known.update(("--json", "--repo", "--run", "--help"))
 
-    pattern = re.compile(r"codag\.py\"?\s+([a-z-]+)")
+    pattern = re.compile(r"goatcode\.py\"?\s+([a-z-]+)")
     for path in MARKDOWN:
         for name in pattern.findall(path.read_text(encoding="utf-8")):
-            assert name in known, "{} calls unknown command 'codag {}'".format(path.name, name)
+            assert name in known, "{} calls unknown command 'goatcode {}'".format(path.name, name)
 
 
 def test_documented_cli_examples_are_real_commands():
@@ -251,7 +262,7 @@ def test_documented_cli_examples_are_real_commands():
     top = next(a for a in parser._actions if a.dest == "command")
     documented = re.findall(
         r"^\| `([a-z-]+)[^`]*` \|",
-        (ROOT / "skills" / "cod-ag-conventions" / "SKILL.md").read_text(encoding="utf-8"),
+        (ROOT / "skills" / "goat-code-conventions" / "SKILL.md").read_text(encoding="utf-8"),
         re.MULTILINE,
     )
     assert documented, "the conventions skill should list the CLI"
@@ -272,8 +283,8 @@ def test_config_template_parses_and_matches_the_defaults():
     import sys
 
     sys.path.insert(0, str(SCRIPTS))
-    from codag import miniyaml
-    from codag.run import DEFAULT_CONFIG
+    from goatcode import miniyaml
+    from goatcode.run import DEFAULT_CONFIG
 
     config = miniyaml.load(ROOT / "templates" / "config.yaml")
     assert set(config) == set(DEFAULT_CONFIG), "template drifted from the real defaults"
@@ -295,13 +306,13 @@ def test_ci_covers_all_three_platforms():
 # -- model assignment ------------------------------------------------------
 
 EXPECTED_MODELS = {
-    "codag-planner": "opus",
-    "codag-executor": "haiku",
-    "codag-synthesizer": "sonnet",
-    "codag-e2e": "sonnet",
-    "codag-scribe": "sonnet",
-    "codag-verifier": "opus",
-    "codag-replanner": "opus",
+    "goat-code-planner": "opus",
+    "goat-code-executor": "haiku",
+    "goat-code-synthesizer": "sonnet",
+    "goat-code-e2e": "sonnet",
+    "goat-code-scribe": "sonnet",
+    "goat-code-verifier": "opus",
+    "goat-code-replanner": "opus",
 }
 
 
@@ -316,11 +327,11 @@ def test_config_defaults_agree_with_the_agent_files():
     import sys
 
     sys.path.insert(0, str(SCRIPTS))
-    from codag.run import DEFAULT_CONFIG
+    from goatcode.run import DEFAULT_CONFIG
 
     models = DEFAULT_CONFIG["models"]
     for name, model in EXPECTED_MODELS.items():
-        role = name.replace("codag-", "")
+        role = name.replace("goat-code-", "")
         assert models[role] == model, "{} frontmatter says {}, config says {}".format(
             name, model, models[role]
         )
@@ -330,7 +341,7 @@ def test_blocked_executors_escalate_to_a_stronger_model():
     import sys
 
     sys.path.insert(0, str(SCRIPTS))
-    from codag.run import DEFAULT_CONFIG
+    from goatcode.run import DEFAULT_CONFIG
 
     ladder = ["haiku", "sonnet", "opus"]
     models = DEFAULT_CONFIG["models"]
@@ -339,7 +350,7 @@ def test_blocked_executors_escalate_to_a_stronger_model():
 
 def test_orchestrator_commands_pin_their_model():
     """The orchestrator is the main thread, so its model lives here."""
-    for name in ("cod-ag", "cod-ag-resume"):
+    for name in ("goat-code", "goat-code-resume"):
         fields, _body = frontmatter(ROOT / "commands" / (name + ".md"))
         assert fields.get("model") == "haiku", "{} does not pin a model".format(name)
 
@@ -348,7 +359,7 @@ def test_readme_model_table_matches_reality():
     import sys
 
     sys.path.insert(0, str(SCRIPTS))
-    from codag.run import DEFAULT_CONFIG
+    from goatcode.run import DEFAULT_CONFIG
 
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     rows = dict(re.findall(r"^\| ([a-zA-Z0-9 ()]+) \| (opus|sonnet|haiku) \|", text, re.MULTILINE))
@@ -364,10 +375,10 @@ def test_readme_model_table_matches_reality():
 # -- the skills each agent is told to load --------------------------------
 
 EXPECTED_SKILLS = {
-    "codag-executor": ["superpowers:test-driven-development", "ponytail:ponytail"],
-    "codag-planner": ["superpowers:writing-plans", "superpowers:brainstorming"],
-    "codag-verifier": ["superpowers:verification-before-completion", "ponytail:ponytail-review"],
-    "codag-replanner": ["superpowers:systematic-debugging"],
+    "goat-code-executor": ["superpowers:test-driven-development", "ponytail:ponytail"],
+    "goat-code-planner": ["superpowers:writing-plans", "superpowers:brainstorming"],
+    "goat-code-verifier": ["superpowers:verification-before-completion", "ponytail:ponytail-review"],
+    "goat-code-replanner": ["superpowers:systematic-debugging"],
 }
 
 
@@ -380,14 +391,14 @@ def test_agents_are_pointed_at_their_skills(name, skills):
 
 
 def test_the_conventions_skill_lists_them_all():
-    text = (ROOT / "skills" / "cod-ag-conventions" / "SKILL.md").read_text(encoding="utf-8")
+    text = (ROOT / "skills" / "goat-code-conventions" / "SKILL.md").read_text(encoding="utf-8")
     for skills in EXPECTED_SKILLS.values():
         for skill in skills:
             assert skill in text, "conventions does not list {}".format(skill)
 
 
-#: Every skill cod-ag's agents load from another plugin. Kept explicit so
-#: adding a dependency is a deliberate act - cod-ag is installed on machines
+#: Every skill goat-code's agents load from another plugin. Kept explicit so
+#: adding a dependency is a deliberate act - goat-code is installed on machines
 #: that do not have whatever happens to be in one developer's ~/.claude.
 EXTERNAL_SKILLS = {
     "superpowers:brainstorming",

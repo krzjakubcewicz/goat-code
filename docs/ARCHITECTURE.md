@@ -1,7 +1,7 @@
 # Architecture
 
-Why cod-ag is shaped the way it is. For how to *use* it, see the README;
-for the artifact contracts, see `skills/cod-ag-conventions/SKILL.md`.
+Why goat-code is shaped the way it is. For how to *use* it, see the README;
+for the artifact contracts, see `skills/goat-code-conventions/SKILL.md`.
 
 ## The constraint that determines everything
 
@@ -68,7 +68,7 @@ of a whole cycle.
 
 ## Two halves: script and judgement
 
-Every mechanical operation lives in `scripts/codag.py`. Agents call it
+Every mechanical operation lives in `scripts/goatcode.py`. Agents call it
 rather than running git themselves.
 
 | Deterministic (scripts) | Judgement (agents) |
@@ -103,7 +103,7 @@ executors start is the point.
 The branch is named at the start of `execute`, not at `init`, because
 `branch_template` can reference `{kind}` and `{slug}` - and `kind` is the
 planner's call, which does not exist until the plan does. Until then the run
-uses a provisional `codag/<run-id>/integration`, which `codag branch`
+uses a provisional `goatcode/<run-id>/integration`, which `goatcode branch`
 renames. `git branch -m` updates the integration worktree's HEAD for us, so
 nothing has to be recreated.
 
@@ -207,7 +207,7 @@ Python 3.9 and 3.13):
 - **Executable resolution.** On Windows `npm`, `pnpm` and `yarn` are `.CMD`
   shims, and `CreateProcess` cannot launch a bare `npm`. `osenv.run`
   resolves `argv[0]` through `shutil.which`, which honours `PATHEXT`.
-- **Short worktree paths.** `<tempdir>/codag/<8 hex>/<slice>` adds under 30
+- **Short worktree paths.** `<tempdir>/goatcode/<8 hex>/<slice>` adds under 30
   characters, so a deep `node_modules` stays clear of the 260-character
   limit. `core.longpaths=true` is set on Windows as a second line of
   defence.
@@ -244,8 +244,8 @@ that eventually gets ignored.
 
 ## Debug mode
 
-`debug: true` in the config, or `CODAG_DEBUG=1` in the environment, makes
-every CLI invocation append to `.codag/runs/<run-id>/log.txt`. The
+`debug: true` in the config, or `GOATCODE_DEBUG=1` in the environment, makes
+every CLI invocation append to `.goatcode/runs/<run-id>/log.txt`. The
 environment wins over the config in both directions, so a single run can be
 traced without editing a file and a noisy config can be silenced the same
 way.
@@ -298,6 +298,6 @@ one set of paths instead of the orchestrator assembling and quoting them.
 
 `state.json` and `ledger.md` are the recovery map. The expensive failure
 this prevents is an orchestrator that loses its place after a compaction and
-re-dispatches an entire completed wave. `codag resume` prints what is
+re-dispatches an entire completed wave. `goatcode resume` prints what is
 actually done; the orchestrator is instructed to trust it and `git log` over
 its own recollection.

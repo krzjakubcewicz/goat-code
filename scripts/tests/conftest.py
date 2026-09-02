@@ -1,5 +1,5 @@
 """Shared pytest fixtures. Adds ``scripts/`` to sys.path so tests import
-``codag`` the same way ``codag.py`` does, with no packaging step.
+``goatcode`` the same way ``goatcode.py`` does, with no packaging step.
 
 Repository fixtures are built **once per session** and copied per test.
 Building one with real git costs about half a second; copying it costs about
@@ -21,18 +21,18 @@ SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from codag import debuglog, osenv  # noqa: E402
-from codag.run import Run  # noqa: E402
+from goatcode import debuglog, osenv  # noqa: E402
+from goatcode.run import Run  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
 def no_stray_tracing(monkeypatch):
     """Debug tracing off unless a test asks for it.
 
-    Without this, a CODAG_DEBUG exported in someone's shell would make every
+    Without this, a GOATCODE_DEBUG exported in someone's shell would make every
     test in the suite write a log file.
     """
-    monkeypatch.delenv("CODAG_DEBUG", raising=False)
+    monkeypatch.delenv("GOATCODE_DEBUG", raising=False)
     debuglog.detach()
     yield
     debuglog.detach()
@@ -41,9 +41,9 @@ def no_stray_tracing(monkeypatch):
 @pytest.fixture(autouse=True)
 def temp_root(tmp_path, monkeypatch):
     """Keep every test's worktrees inside tmp_path, never the real temp dir."""
-    root = tmp_path / "codag-temp"
+    root = tmp_path / "goatcode-temp"
     root.mkdir()
-    monkeypatch.setenv("CODAG_TEMP_ROOT", str(root))
+    monkeypatch.setenv("GOATCODE_TEMP_ROOT", str(root))
     return root
 
 
@@ -122,9 +122,9 @@ def make_run(repo, title="fixture feature", mode="chat"):
     baseline gates - about 1.8 seconds a test. Tests whose subject *is*
     ``init`` still call the real thing.
     """
-    from codag import run as runmod, stack as stackmod
+    from goatcode import run as runmod, stack as stackmod
 
-    # Hiding .codag/ is part of "a run exists"; writing .gitignore is not -
+    # Hiding .goatcode/ is part of "a run exists"; writing .gitignore is not -
     # that belongs to init, and init's own tests still cover it.
     runmod.ensure_ignored(repo)
     run = Run.create(repo, title, mode)

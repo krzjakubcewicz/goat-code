@@ -11,9 +11,9 @@ import copy
 
 import pytest
 
-from codag import miniyaml, osenv, report, tasks, tdd, worktree
-from codag.report import ReportError
-from codag.run import Run
+from goatcode import miniyaml, osenv, report, tasks, tdd, worktree
+from goatcode.report import ReportError
+from goatcode.run import Run
 
 PLAN = {
     "version": 1,
@@ -297,7 +297,7 @@ def test_force_bypasses_the_check(run, plan, slice_worktree):
 
 
 def test_enforcement_can_be_switched_off(git_repo):
-    config = git_repo / ".codag" / "config.yaml"
+    config = git_repo / ".goatcode" / "config.yaml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text("enforce_tdd: false\n", encoding="utf-8")
 
@@ -318,7 +318,7 @@ def test_enforcement_can_be_switched_off(git_repo):
 
 
 def test_the_other_done_checks_still_apply_with_enforcement_off(git_repo):
-    config = git_repo / ".codag" / "config.yaml"
+    config = git_repo / ".goatcode" / "config.yaml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text("enforce_tdd: false\n", encoding="utf-8")
 

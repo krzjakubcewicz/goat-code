@@ -11,8 +11,8 @@ import datetime
 
 import pytest
 
-from codag import progress
-from codag.run import Run
+from goatcode import progress
+from goatcode.run import Run
 from tests.conftest import make_run
 from tests.test_cli import cli, invoke, invoke_json  # noqa: F401
 
@@ -39,7 +39,7 @@ def run(git_repo):
 def test_the_first_entry_creates_the_file_with_a_header(git_repo, run):
     progress.append(git_repo, run, BODY)
     text = progress.read(git_repo)
-    assert text.startswith("# cod-ag progress log")
+    assert text.startswith("# goat-code progress log")
     assert "magic-link sign in" in text
     assert progress.path_for(git_repo).name == "progress.txt"
 
@@ -59,7 +59,7 @@ def test_a_second_entry_is_appended_not_written_over(git_repo, run):
     text = progress.read(git_repo)
     assert "magic-link sign in" in text, "the first entry must survive"
     assert "the second thing" in text
-    assert text.count("# cod-ag progress log") == 1, "only one file header"
+    assert text.count("# goat-code progress log") == 1, "only one file header"
 
 
 def test_many_entries_all_survive(git_repo):
@@ -200,11 +200,11 @@ def test_show_respects_the_limit(capsys, node_repo):
 
 
 def test_the_log_is_hidden_from_git(capsys, node_repo):
-    """It lives under .codag/, which cod-ag already excludes."""
+    """It lives under .goatcode/, which goat-code already excludes."""
     start(capsys, node_repo)
     invoke(capsys, "--repo", str(node_repo), "progress", "append", "--text", "- a thing")
 
-    from codag import osenv
+    from goatcode import osenv
 
     assert progress.path_for(node_repo).exists()
     assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == ""

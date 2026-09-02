@@ -10,9 +10,9 @@ import copy
 
 import pytest
 
-from codag import ledger, miniyaml, osenv, report, tasks, worktree
-from codag.report import ReportError
-from codag.run import Run
+from goatcode import ledger, miniyaml, osenv, report, tasks, worktree
+from goatcode.report import ReportError
+from goatcode.run import Run
 
 PLAN = {
     "version": 1,

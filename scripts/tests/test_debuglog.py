@@ -1,7 +1,7 @@
 """The debug trace.
 
 Off by default and off in the rest of the suite: an autouse fixture resets
-it between tests so a stray CODAG_DEBUG in the environment cannot make the
+it between tests so a stray GOATCODE_DEBUG in the environment cannot make the
 other 700 tests write log files.
 """
 
@@ -11,15 +11,15 @@ import pathlib
 
 import pytest
 
-from codag import debuglog, osenv
-from codag.run import Run
+from goatcode import debuglog, osenv
+from goatcode.run import Run
 from tests.conftest import make_run
 from tests.test_cli import cli, invoke, invoke_json  # noqa: F401
 
 
 @pytest.fixture
 def tracing(tmp_path, monkeypatch):
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     target = tmp_path / "trace"
     target.mkdir()
     debuglog.attach(target)
@@ -35,14 +35,14 @@ def test_off_by_default():
 
 @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
 def test_the_env_var_turns_it_on(monkeypatch, value):
-    monkeypatch.setenv("CODAG_DEBUG", value)
+    monkeypatch.setenv("GOATCODE_DEBUG", value)
     assert debuglog.enabled() is True
 
 
 @pytest.mark.parametrize("value", ["0", "false", "no", "off", ""])
 def test_other_env_values_leave_it_off(monkeypatch, value):
-    """An empty CODAG_DEBUG in a shell profile must not enable it."""
-    monkeypatch.setenv("CODAG_DEBUG", value)
+    """An empty GOATCODE_DEBUG in a shell profile must not enable it."""
+    monkeypatch.setenv("GOATCODE_DEBUG", value)
     assert debuglog.enabled() is False
 
 
@@ -53,7 +53,7 @@ def test_config_turns_it_on():
 
 def test_the_env_var_overrides_config(monkeypatch):
     debuglog.configure(True)
-    monkeypatch.setenv("CODAG_DEBUG", "0")
+    monkeypatch.setenv("GOATCODE_DEBUG", "0")
     assert debuglog.enabled() is False, "the environment is the override"
 
 
@@ -114,7 +114,7 @@ def test_entries_append_never_replace(tracing):
 def test_events_before_attach_are_buffered_and_flushed(tmp_path, monkeypatch):
     """A failing init is exactly the trace you want, and it happens before
     the run directory exists."""
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     debuglog.log("cli", command="init")
     debuglog.log("exec", argv=["git", "status"])
 
@@ -126,7 +126,7 @@ def test_events_before_attach_are_buffered_and_flushed(tmp_path, monkeypatch):
 
 
 def test_the_buffer_does_not_grow_without_bound(monkeypatch):
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     for index in range(700):
         debuglog.log("exec", n=index)
     assert len(debuglog._PENDING) <= 500
@@ -134,7 +134,7 @@ def test_the_buffer_does_not_grow_without_bound(monkeypatch):
 
 def test_an_unwritable_target_does_not_raise(tmp_path, monkeypatch):
     """A broken log must never take the pipeline down with it."""
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     debuglog.attach(tmp_path)
     monkeypatch.setattr(debuglog, "_TARGET", tmp_path / "nope" / "deep" / "log.txt")
     debuglog.log("exec", rc=0)
@@ -192,7 +192,7 @@ def test_an_unchanged_phase_is_not_traced(git_repo, tracing):
 
 
 def test_the_cli_writes_into_the_run_directory(capsys, node_repo, monkeypatch):
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     code, payload, _err = invoke_json(
         capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline"
     )
@@ -206,12 +206,12 @@ def test_the_cli_writes_into_the_run_directory(capsys, node_repo, monkeypatch):
 
 
 def test_the_command_and_its_exit_code_are_both_traced(capsys, node_repo, monkeypatch):
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
     run = Run.load(node_repo)
     debuglog.detach()
 
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     invoke(capsys, "--repo", str(node_repo), "status")
     lines = debuglog.read(run.root)
     assert any("cli-done" in line and "rc=0" in line for line in lines)
@@ -225,7 +225,7 @@ def test_nothing_is_written_without_the_switch(capsys, node_repo):
 
 
 def test_config_alone_enables_it(capsys, node_repo):
-    config = node_repo / ".codag" / "config.yaml"
+    config = node_repo / ".goatcode" / "config.yaml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text("debug: true\n", encoding="utf-8")
 
@@ -235,8 +235,8 @@ def test_config_alone_enables_it(capsys, node_repo):
 
 
 def test_the_trace_lives_with_the_run_it_describes(capsys, node_repo, monkeypatch):
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
     run = Run.load(node_repo)
     assert (run.root / "log.txt").parent == run.root
-    assert not (node_repo / ".codag" / "log.txt").exists()
+    assert not (node_repo / ".goatcode" / "log.txt").exists()

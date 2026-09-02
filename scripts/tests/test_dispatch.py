@@ -12,8 +12,8 @@ import sys
 
 import pytest
 
-from codag import dispatch, miniyaml
-from codag.run import Run
+from goatcode import dispatch, miniyaml
+from goatcode.run import Run
 
 PLAN = {
     "version": 1,
@@ -32,7 +32,7 @@ PLAN = {
             "acceptance": [{"id": "A1", "text": "consumable once"}],
             "tests": ["tests/auth.test.ts"],
             "status": "pending",
-            "worktree": "/tmp/codag/ab/S1",
+            "worktree": "/tmp/goatcode/ab/S1",
         },
         {
             "id": "S2",
@@ -69,7 +69,7 @@ def plan(run):
 def test_command_pins_interpreter_repo_and_run(run):
     text = dispatch.command(run, "report", "--slice", "S1")
     assert sys.executable in text
-    assert "codag.py" in text
+    assert "goatcode.py" in text
     assert str(run.repo) in text
     assert run.run_id in text
     assert "report --slice S1" in text
@@ -116,7 +116,7 @@ def test_executor_prompt_warns_that_done_is_checked(run, plan):
 
 
 def test_executor_prompt_names_the_worktree(run, plan):
-    assert "/tmp/codag/ab/S1" in dispatch.executor(run, plan, "S1")
+    assert "/tmp/goatcode/ab/S1" in dispatch.executor(run, plan, "S1")
 
 
 def test_executor_prompt_lists_inherited_interfaces(run, plan):
@@ -188,7 +188,7 @@ def test_questions_path_is_per_round(run):
 
 def test_synthesizer_prompt_names_the_conflict_and_the_continue_command(run, plan):
     state = {
-        "worktree": "/tmp/codag/ab/_integration",
+        "worktree": "/tmp/goatcode/ab/_integration",
         "merged": ["S1"],
         "pending": ["S2"],
         "conflicted": "S2",
@@ -196,7 +196,7 @@ def test_synthesizer_prompt_names_the_conflict_and_the_continue_command(run, pla
     }
     text = dispatch.synthesizer(run, plan, state)
     assert "src/shared/registry.ts" in text
-    assert "/tmp/codag/ab/_integration" in text
+    assert "/tmp/goatcode/ab/_integration" in text
     assert "merge --continue" in text
     assert "--role synthesizer --status CLEAN" in text
     assert "ESCALATE" in text
@@ -219,7 +219,7 @@ def package_for(run):
         "tasks": str(run.tasks_path),
         "spec": str(run.spec_path),
         "merge_report": str(run.cycle_dir() / "merge-report.md"),
-        "worktree": "/tmp/codag/ab/_integration",
+        "worktree": "/tmp/goatcode/ab/_integration",
         "criteria": [{"slice": "S1", "id": "A1", "text": "x"}, {"slice": "S2", "id": "A1", "text": "y"}],
         "assumptions": ["Token TTL assumed 15 min."],
     }
@@ -379,7 +379,7 @@ def test_the_scribe_is_told_to_promote_a_learning_that_recurred(run, plan):
 
 
 def test_the_planner_is_shown_the_capped_view_not_the_whole_log(run):
-    from codag import progress as progressmod
+    from goatcode import progress as progressmod
 
     progressmod.append(run.repo, run, "- What was implemented\n  - a thing")
     text = dispatch.planner(run, 1)

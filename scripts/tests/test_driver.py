@@ -13,7 +13,7 @@ import io
 
 import pytest
 
-from codag import agentcli, driver as drivermod
+from goatcode import agentcli, driver as drivermod
 
 
 class Tty(io.StringIO):
@@ -231,7 +231,7 @@ def test_a_broken_command_stops_the_run(monkeypatch):
     driver = driver_with(Backend())
     monkeypatch.setattr(driver, "cli", lambda command: 2)
     with pytest.raises(drivermod.DriverError):
-        driver.do_run({"commands": [["py", "codag.py", "--repo", "x", "gates", "run"]]})
+        driver.do_run({"commands": [["py", "goatcode.py", "--repo", "x", "gates", "run"]]})
 
 
 @pytest.mark.parametrize("code", [0, 1])
@@ -239,7 +239,7 @@ def test_an_expected_failure_is_not_a_broken_command(monkeypatch, code):
     """A failing gate exits 1. That is an answer, not a crash."""
     driver = driver_with(Backend())
     monkeypatch.setattr(driver, "cli", lambda command: code)
-    driver.do_run({"commands": [["py", "codag.py", "--repo", "x", "gates", "run"]]})
+    driver.do_run({"commands": [["py", "goatcode.py", "--repo", "x", "gates", "run"]]})
 
 
 def test_an_unknown_action_is_refused():
@@ -249,7 +249,7 @@ def test_an_unknown_action_is_refused():
 
 def wave(*slices):
     return {"dispatches": [
-        {"agent": "codag-executor", "model": "haiku", "slice": s, "prompt": "p"} for s in slices
+        {"agent": "goat-code-executor", "model": "haiku", "slice": s, "prompt": "p"} for s in slices
     ]}
 
 
@@ -272,7 +272,7 @@ def failing(reason="You've hit your session limit"):
 def no_repo(monkeypatch):
     """These tests exercise the driver, not the CLI: stub both out."""
     monkeypatch.setattr(
-        drivermod.machine, "cli_argv", lambda _run, *args: ["py", "codag.py"] + list(args)
+        drivermod.machine, "cli_argv", lambda _run, *args: ["py", "goatcode.py"] + list(args)
     )
     recorded = []
     monkeypatch.setattr(drivermod.Driver, "cli", lambda _self, command: recorded.append(list(command)) or 0)
@@ -289,14 +289,14 @@ def test_a_failed_dispatch_is_reported_so_the_machine_can_react(no_repo):
     driver = driver_with(failing())
     driver.do_dispatch(None, wave("S1"))
     assert no_repo == [[
-        "py", "codag.py", "report", "--slice", "S1", "--status", "BLOCKED",
+        "py", "goatcode.py", "report", "--slice", "S1", "--status", "BLOCKED",
         "--reason", "You've hit your session limit",
     ]]
 
 
 def test_a_role_agent_failure_records_nothing(no_repo):
     """There is no slice to block. The dead-round guard catches it instead."""
-    entry = {"agent": "codag-verifier", "model": "opus", "slice": None, "prompt": "p"}
+    entry = {"agent": "goat-code-verifier", "model": "opus", "slice": None, "prompt": "p"}
     backend = Backend(receipt(ok=False, text="boom", entry=entry))
     driver_with(backend).do_dispatch(None, {"dispatches": [entry]})
     assert no_repo == []
@@ -334,7 +334,7 @@ def test_a_partly_failed_wave_keeps_going(no_repo):
 def test_needs_context_is_answered_and_the_agent_runs_again():
     backend = Backend(receipt(ok=False, text="NEEDS_CONTEXT which port?"), receipt())
     driver = driver_with(backend, prompter=prompter("port 5000\n"))
-    result = driver.agent({"agent": "codag-executor", "model": "haiku", "slice": "S1", "prompt": "p"})
+    result = driver.agent({"agent": "goat-code-executor", "model": "haiku", "slice": "S1", "prompt": "p"})
     assert result.ok is True
     assert len(backend.calls) == 2
     assert backend.calls[1]["context"] == "port 5000"
@@ -345,7 +345,7 @@ def test_needs_context_with_nobody_to_ask_lets_the_dispatch_fail():
     """The machine already retries a BLOCKED slice on a stronger model."""
     backend = Backend(receipt(ok=False, text="NEEDS_CONTEXT which port?"))
     driver = driver_with(backend, prompter=prompter(yes=True))
-    result = driver.agent({"agent": "codag-executor", "model": "haiku", "slice": "S1", "prompt": "p"})
+    result = driver.agent({"agent": "goat-code-executor", "model": "haiku", "slice": "S1", "prompt": "p"})
     assert result.ok is False
     assert len(backend.calls) == 1
 

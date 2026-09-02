@@ -1,17 +1,17 @@
 """Managing the project's .gitignore on the first run.
 
-cod-ag writes its entries there and deliberately leaves the change
+goat-code writes its entries there and deliberately leaves the change
 uncommitted - it does not commit to your branch. The interesting part is
 that preflight must then tolerate its own edit, or the next run would fail
-the clean-tree check on a file cod-ag dirtied itself.
+the clean-tree check on a file goat-code dirtied itself.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from codag import osenv, run as runmod
-from codag.run import Run
+from goatcode import osenv, run as runmod
+from goatcode.run import Run
 from tests.test_cli import cli, invoke, invoke_json  # noqa: F401
 
 
@@ -19,7 +19,7 @@ def gitignore(repo):
     return repo / ".gitignore"
 
 
-def commit_all(repo, message="chore: ignore cod-ag"):
+def commit_all(repo, message="chore: ignore goat-code"):
     osenv.git(["add", "-A"], cwd=repo, check=True)
     osenv.git(["commit", "-qm", message], cwd=repo, check=True)
 
@@ -33,7 +33,7 @@ def test_creates_gitignore_when_absent(git_repo):
 
     body = gitignore(git_repo).read_text(encoding="utf-8")
     assert body == runmod.gitignore_block()
-    assert ".codag/" in body
+    assert ".goatcode/" in body
     assert ".worktrees/" in body
 
 
@@ -53,18 +53,18 @@ def test_appends_when_the_file_has_no_trailing_newline(git_repo):
     runmod.ensure_gitignore(git_repo)
     lines = gitignore(git_repo).read_text(encoding="utf-8").splitlines()
     assert lines[0] == "node_modules"
-    assert ".codag/" in lines
+    assert ".goatcode/" in lines
 
 
 def test_is_idempotent(git_repo):
     runmod.ensure_gitignore(git_repo)
     assert runmod.ensure_gitignore(git_repo) is False
     body = gitignore(git_repo).read_text(encoding="utf-8")
-    assert body.count(".codag/") == 1
+    assert body.count(".goatcode/") == 1
     assert body.count(runmod.GITIGNORE_HEADER) == 1
 
 
-@pytest.mark.parametrize("existing", [".codag/\n.worktrees/\n", ".codag\n.worktrees\n"])
+@pytest.mark.parametrize("existing", [".goatcode/\n.worktrees/\n", ".goatcode\n.worktrees\n"])
 def test_respects_entries_the_user_already_added(git_repo, existing):
     gitignore(git_repo).write_text(existing, encoding="utf-8")
     assert runmod.ensure_gitignore(git_repo) is False
@@ -72,7 +72,7 @@ def test_respects_entries_the_user_already_added(git_repo, existing):
 
 
 def test_adds_the_block_when_only_some_entries_are_present(git_repo):
-    gitignore(git_repo).write_text(".codag/\n", encoding="utf-8")
+    gitignore(git_repo).write_text(".goatcode/\n", encoding="utf-8")
     assert runmod.ensure_gitignore(git_repo) is True
     assert ".worktrees/" in gitignore(git_repo).read_text(encoding="utf-8")
 
@@ -112,7 +112,7 @@ def test_stripping_leaves_entries_the_user_added_after_our_block(git_repo):
 
 
 def test_preflight_tolerates_our_own_edit(git_repo):
-    """Without this the second run would fail on cod-ag's own change."""
+    """Without this the second run would fail on goat-code's own change."""
     gitignore(git_repo).write_text("node_modules\n", encoding="utf-8")
     commit_all(git_repo)
     runmod.ensure_gitignore(git_repo)
@@ -166,7 +166,7 @@ def test_init_writes_the_gitignore_and_says_so(capsys, node_repo):
     assert code == 0
     assert payload["gitignore_updated"] is True
     body = (node_repo / ".gitignore").read_text(encoding="utf-8")
-    assert ".codag/" in body
+    assert ".goatcode/" in body
 
 
 def test_init_mentions_the_uncommitted_change_in_its_output(capsys, node_repo):
@@ -178,7 +178,7 @@ def test_init_also_writes_info_exclude(capsys, node_repo):
     """Belt and braces: the state stays hidden even if .gitignore is reverted."""
     invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
     exclude = node_repo / ".git" / "info" / "exclude"
-    assert ".codag/" in exclude.read_text(encoding="utf-8")
+    assert ".goatcode/" in exclude.read_text(encoding="utf-8")
 
     (node_repo / ".gitignore").unlink()
     assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == ""
@@ -189,7 +189,7 @@ def test_a_second_run_is_not_blocked_by_the_first_runs_edit(capsys, node_repo):
     code, payload, _err = invoke_json(
         capsys, "--repo", str(node_repo), "init", "--prompt", "two", "--no-baseline"
     )
-    assert code == 0, "the second run must not trip over cod-ag's own .gitignore edit"
+    assert code == 0, "the second run must not trip over goat-code's own .gitignore edit"
     assert payload["gitignore_updated"] is False
 
 
@@ -210,7 +210,7 @@ def test_the_run_base_commit_is_unaffected(capsys, node_repo):
 
 
 def test_manage_gitignore_false_leaves_the_file_alone(capsys, node_repo):
-    config = node_repo / ".codag" / "config.yaml"
+    config = node_repo / ".goatcode" / "config.yaml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text("manage_gitignore: false\n", encoding="utf-8")
 
@@ -223,12 +223,12 @@ def test_manage_gitignore_false_leaves_the_file_alone(capsys, node_repo):
 
 
 def test_the_opt_out_still_hides_the_state(capsys, node_repo):
-    config = node_repo / ".codag" / "config.yaml"
+    config = node_repo / ".goatcode" / "config.yaml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text("manage_gitignore: false\n", encoding="utf-8")
     invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
 
-    assert ".codag/" in (node_repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert ".goatcode/" in (node_repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
     assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == ""
 
 

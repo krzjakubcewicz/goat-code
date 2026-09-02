@@ -6,9 +6,9 @@ import copy
 
 import pytest
 
-from codag import brief, miniyaml, osenv, worktree
-from codag.run import Run
-from codag.worktree import WorktreeError
+from goatcode import brief, miniyaml, osenv, worktree
+from goatcode.run import Run
+from goatcode.worktree import WorktreeError
 
 PLAN = {
     "version": 1,
@@ -68,7 +68,7 @@ def test_create_makes_an_isolated_checkout(run):
     path, branch, _setup = worktree.create(run, "S1", setup=False)
     assert path.exists()
     assert (path / "README.md").exists()
-    assert branch == "codag/{}/S1".format(run.run_id)
+    assert branch == "goatcode/{}/S1".format(run.run_id)
     assert osenv.git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd=path) == branch
 
 
@@ -78,14 +78,14 @@ def test_worktree_lives_outside_the_repository(run, git_repo):
 
 
 def test_worktree_paths_stay_short(run):
-    """cod-ag's own contribution to the path must be tiny.
+    """goat-code's own contribution to the path must be tiny.
 
     Measured against the temp root, because the test harness's tmp_path is
-    itself long. In production this is ``%TEMP%\\codag\\<8 hex>\\S1``.
+    itself long. In production this is ``%TEMP%\\goatcode\\<8 hex>\\S1``.
     """
     path, _branch, _setup = worktree.create(run, "S1", setup=False)
     added = str(path)[len(str(osenv.temp_root().parent)) :]
-    assert len(added) < 30, "cod-ag adds {} chars: {}".format(len(added), added)
+    assert len(added) < 30, "goat-code adds {} chars: {}".format(len(added), added)
 
 
 def test_branch_starts_at_the_recorded_base_not_head(run, git_repo):
@@ -246,7 +246,7 @@ def test_existing_lists_the_main_worktree_and_ours(run, git_repo):
     listed = worktree.existing(git_repo)
     branches = set(listed.values())
     assert "main" in branches
-    assert "codag/{}/S1".format(run.run_id) in branches
+    assert "goatcode/{}/S1".format(run.run_id) in branches
 
 
 def test_commits_between_reports_the_range(run, git_repo):

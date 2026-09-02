@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from codag import osenv, stack
+from goatcode import osenv, stack
 
 
 def write(root, relpath, text):

@@ -10,9 +10,9 @@ import copy
 
 import pytest
 
-from codag import diffpkg, merge, miniyaml, osenv, tasks, worktree
-from codag.merge import MergeError
-from codag.run import Run
+from goatcode import diffpkg, merge, miniyaml, osenv, tasks, worktree
+from goatcode.merge import MergeError
+from goatcode.run import Run
 
 PLAN = {
     "version": 1,
@@ -102,7 +102,7 @@ def test_merge_order_follows_dependencies(run, plan):
 
     integration = run.temp_root / worktree.INTEGRATION_DIR
     subjects = osenv.git(["log", "--format=%s"], cwd=integration).stdout
-    assert subjects.index("codag: merge slice S3") < subjects.index("codag: merge slice S1")
+    assert subjects.index("goatcode: merge slice S3") < subjects.index("goatcode: merge slice S1")
 
 
 def test_merge_starts_from_the_base_commit(run, plan, git_repo):
@@ -171,7 +171,7 @@ def test_conflict_is_recorded_in_the_report(run, plan):
     text = (run.cycle_dir() / "merge-report.md").read_text(encoding="utf-8")
     assert "Status: **conflict**" in text
     assert "src/shared/registry.ts" in text
-    assert "codag merge --continue" in text
+    assert "goatcode merge --continue" in text
     assert "Synthesizer edits" in text
 
 

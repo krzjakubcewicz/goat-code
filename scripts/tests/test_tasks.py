@@ -8,8 +8,8 @@ import sys
 
 import pytest
 
-from codag import miniyaml, tasks
-from codag.tasks import TaskError
+from goatcode import miniyaml, tasks
+from goatcode.tasks import TaskError
 
 PLAN = {
     "version": 1,
@@ -139,7 +139,7 @@ def test_set_status_rejects_an_unknown_status(plan_file):
 
 
 def test_set_field_writes_arbitrary_values(plan_file):
-    tasks.set_field(plan_file, "S2", "worktree", "/tmp/codag/ab/S2")
+    tasks.set_field(plan_file, "S2", "worktree", "/tmp/goatcode/ab/S2")
     assert tasks.get(tasks.load(plan_file), "S2")["worktree"].endswith("S2")
 
 
@@ -200,7 +200,7 @@ def test_carry_forward_marks_finished_slices(plan_file):
 
 def _worker(path, slice_id):
     sys.path.insert(0, str(path.parents[2] / "scripts"))
-    from codag import tasks as worker_tasks
+    from goatcode import tasks as worker_tasks
 
     worker_tasks.set_status(path, slice_id, "done")
 
@@ -223,9 +223,9 @@ def test_parallel_writers_do_not_lose_updates(plan_file):
 
 def test_sequential_writes_are_all_visible(plan_file):
     for index, slice_id in enumerate(("S1", "S2", "S3")):
-        tasks.set_field(plan_file, slice_id, "branch", "codag/run/{}".format(index))
+        tasks.set_field(plan_file, slice_id, "branch", "goatcode/run/{}".format(index))
     doc = tasks.load(plan_file)
-    assert [s["branch"] for s in doc["slices"]] == ["codag/run/0", "codag/run/1", "codag/run/2"]
+    assert [s["branch"] for s in doc["slices"]] == ["goatcode/run/0", "goatcode/run/1", "goatcode/run/2"]
 
 
 # -- rendering -------------------------------------------------------------

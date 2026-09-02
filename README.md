@@ -1,4 +1,4 @@
-# cod-ag
+# goat-code
 
 A multi-agent feature pipeline. You describe a feature; it
 interrogates you until the requirements are unambiguous, splits the work
@@ -11,15 +11,15 @@ It never commits to the branch you are on.
 Run it two ways. In Claude Code:
 
 ```
-/cod-ag "add magic-link login"
-/cod-ag --spec docs/specs/auth.md
+/goat-code "add magic-link login"
+/goat-code --spec docs/specs/auth.md
 ```
 
 Or in a terminal, with no session at all:
 
 ```bash
-python scripts/codag.py run --prompt "add magic-link login"
-python scripts/codag.py run --spec docs/specs/auth.md --yes
+python scripts/goatcode.py run --prompt "add magic-link login"
+python scripts/goatcode.py run --spec docs/specs/auth.md --yes
 ```
 
 Both drive the same state machine and the same agents. See
@@ -33,7 +33,7 @@ Both drive the same state machine and the same agents. See
          ▼
    ┌─────────────────────────────────────────────┐
    │ orchestrator                                │
-   │ the main Claude Code thread, or `codag run` │
+   │ the main Claude Code thread, or `goatcode run` │
    └─────────────────────────────────────────────┘
          │
          ├─ grill ────── planner ⇄ you        up to 3 question rounds
@@ -57,10 +57,10 @@ Both drive the same state machine and the same agents. See
 In the plugin the orchestrator is the main thread rather than an agent,
 because only the main thread can spawn subagents and ask you questions.
 Planner, executor, synthesizer, verifier and replanner are real subagents
-with isolated context. Standalone, `codag run` is the orchestrator and each
+with isolated context. Standalone, `goatcode run` is the orchestrator and each
 agent is its own headless `claude` process.
 
-**The orchestrator does not decide any of this.** `codag next` reads the run
+**The orchestrator does not decide any of this.** `goatcode next` reads the run
 state off disk and returns one action - run this command, dispatch these
 agents on these models, ask this, or stop - and the orchestrator performs it
 and calls `next` again. Phases, caps, retry policy and the exact text each
@@ -90,7 +90,7 @@ no model at all. That is what the end-to-end test does.
 - **Checked reports.** Agents record results by running the CLI, and a slice
   claiming `DONE` is rejected unless its worktree is clean, its HEAD has
   moved, and the tests its brief declares exist.
-- **No commits to your branch.** The first run adds `.codag/` and
+- **No commits to your branch.** The first run adds `.goatcode/` and
   `.worktrees/` to your `.gitignore` (creating it if absent) and leaves that
   change uncommitted for you to review. Set `manage_gitignore: false` to
   keep the entry local to `.git/info/exclude` instead.
@@ -98,11 +98,11 @@ no model at all. That is what the end-to-end test does.
 ## Install
 
 ```
-/plugin marketplace add krzjakubcewicz/cod-ag
-/plugin install cod-ag@cod-ag
+/plugin marketplace add krzjakubcewicz/goat-code
+/plugin install goat-code@goat-code
 ```
 
-`/plugin marketplace add /path/to/cod-ag` instead, for a local checkout.
+`/plugin marketplace add /path/to/goat-code` instead, for a local checkout.
 
 To install it for a repository rather than for yourself, commit this to that
 repo's `.claude/settings.json` - anyone who opens it gets the plugin after
@@ -111,15 +111,15 @@ one trust prompt:
 ```json
 {
   "extraKnownMarketplaces": {
-    "cod-ag": {
-      "source": { "source": "github", "repo": "krzjakubcewicz/cod-ag" }
+    "goat-code": {
+      "source": { "source": "github", "repo": "krzjakubcewicz/goat-code" }
     }
   },
-  "enabledPlugins": { "cod-ag@cod-ag": true }
+  "enabledPlugins": { "goat-code@goat-code": true }
 }
 ```
 
-A local checkout works there too - `{ "source": "local", "path": "/path/to/cod-ag" }` -
+A local checkout works there too - `{ "source": "local", "path": "/path/to/goat-code" }` -
 but the path is machine-specific, so put that one in the gitignored
 `.claude/settings.local.json`.
 
@@ -131,23 +131,23 @@ CI runs the test suite on all three.
 
 | Command | What it does |
 | --- | --- |
-| `/cod-ag "<request>"` | run the pipeline from a chat request |
-| `/cod-ag --spec <file>` | run it from a markdown spec |
-| `/cod-ag-spec [name]` | scaffold a spec file to fill in |
-| `/cod-ag-status [--all]` | phase, cycle, slice states, recent ledger |
-| `/cod-ag-resume` | pick up an interrupted run from its ledger |
-| `/cod-ag-abort` | stop a run and clean up its worktrees |
+| `/goat-code "<request>"` | run the pipeline from a chat request |
+| `/goat-code --spec <file>` | run it from a markdown spec |
+| `/goat-code-spec [name]` | scaffold a spec file to fill in |
+| `/goat-code-status [--all]` | phase, cycle, slice states, recent ledger |
+| `/goat-code-resume` | pick up an interrupted run from its ledger |
+| `/goat-code-abort` | stop a run and clean up its worktrees |
 
 ## Standalone
 
-The pipeline does not need a Claude Code session. `codag run` is the
+The pipeline does not need a Claude Code session. `goatcode run` is the
 orchestrator itself: it reads the same actions from the same state machine
 and spawns each agent as a headless `claude` process.
 
 ```bash
-python scripts/codag.py run --prompt "add magic-link login"
-python scripts/codag.py run --spec docs/specs/auth.md --yes
-python scripts/codag.py run --resume        # after an interruption
+python scripts/goatcode.py run --prompt "add magic-link login"
+python scripts/goatcode.py run --spec docs/specs/auth.md --yes
+python scripts/goatcode.py run --resume        # after an interruption
 ```
 
 Needs the [Claude Code CLI](https://claude.com/claude-code) on `PATH` and a
@@ -178,7 +178,7 @@ read that will never return.
 **Permissions.** Agents run headless, so nobody can answer a permission
 prompt; a Bash call that needs one is denied and reported back. If you want
 agents running commands unattended, set `permission_mode: bypassPermissions`
-in `.codag/config.yaml`. That is not the default on purpose.
+in `.goatcode/config.yaml`. That is not the default on purpose.
 
 **Your settings come along.** A dispatched `claude` inherits your `~/.claude`
 configuration, which is how the `superpowers` and `ponytail` skills the
@@ -200,7 +200,7 @@ merge:  git merge feature/magic-link-login
 nothing was committed to your branch main
 ```
 
-Each completed run also appends to `.codag/progress.txt` - what was built,
+Each completed run also appends to `.goatcode/progress.txt` - what was built,
 what changed, and the learnings a later run would otherwise rediscover. The
 planner reads those entries before planning the next piece of work.
 
@@ -226,7 +226,7 @@ gets the expensive models; mechanical work does not.
 | replanner | opus | diagnosing root cause is the hardest judgement in the loop |
 
 The orchestrator is the main thread rather than an agent, so its model comes
-from the `model:` frontmatter on `/cod-ag` and `/cod-ag-resume`, not from
+from the `model:` frontmatter on `/goat-code` and `/goat-code-resume`, not from
 `config.yaml`.
 
 The planner also picks a model per slice, so a slice that genuinely needs
@@ -251,29 +251,29 @@ already in use gets a `-2` suffix.
 
 ## Configuration
 
-Optional. Copy `templates/config.yaml` to `.codag/config.yaml` in your
+Optional. Copy `templates/config.yaml` to `.goatcode/config.yaml` in your
 project to change the parallelism, the cycle cap, the grill rounds, timeouts,
 the branch naming or the model per role.
 
 ## Run state
 
-Everything lives in `.codag/` in the target repo, hidden from git via
+Everything lives in `.goatcode/` in the target repo, hidden from git via
 `.git/info/exclude`, and listed in your `.gitignore` on the first run:
 
 ```
-.codag/runs/<run-id>/
+.goatcode/runs/<run-id>/
   spec.md  stack.json  state.json  ledger.md  baseline-gates.json
   tasks.yaml
   cycle-1/
     briefs/  reports/  merge-report.md  gates.json  review.diff  verdict.md
 ```
 
-Set `debug: true` in the config, or `CODAG_DEBUG=1` in the environment, and
+Set `debug: true` in the config, or `GOATCODE_DEBUG=1` in the environment, and
 each run also gets a `log.txt` next to its state: every command, subprocess,
 phase change, dispatch and file write, timestamped and appended. Off by
 default; the environment variable wins over the config either way.
 
-Worktrees live outside the repo, at `<tempdir>/codag/<hash>/<slice>` — short
+Worktrees live outside the repo, at `<tempdir>/goatcode/<hash>/<slice>` — short
 paths, so a deep `node_modules` cannot hit the Windows path limit, and a
 failed cleanup cannot litter your project.
 
@@ -283,29 +283,29 @@ Everything mechanical is a script, so the agents spend their tokens on
 judgement instead of git plumbing. You can drive the whole pipeline by hand:
 
 ```bash
-python scripts/codag.py init --prompt "add magic-link login"
-python scripts/codag.py next          # what to do, and what to do after that
+python scripts/goatcode.py init --prompt "add magic-link login"
+python scripts/goatcode.py next          # what to do, and what to do after that
 ```
 
 `next` is the whole pipeline. The individual steps it orchestrates are all
 callable directly too:
 
 ```bash
-python scripts/codag.py plan validate
-python scripts/codag.py worktree create S1 S2
-python scripts/codag.py brief S1 S2
-python scripts/codag.py report --slice S1 --status DONE --tests "7 passed"
-python scripts/codag.py merge
-python scripts/codag.py verify-package
-python scripts/codag.py finish
+python scripts/goatcode.py plan validate
+python scripts/goatcode.py worktree create S1 S2
+python scripts/goatcode.py brief S1 S2
+python scripts/goatcode.py report --slice S1 --status DONE --tests "7 passed"
+python scripts/goatcode.py merge
+python scripts/goatcode.py verify-package
+python scripts/goatcode.py finish
 ```
 
-`python scripts/codag.py --help` lists everything. Add `--json` for
+`python scripts/goatcode.py --help` lists everything. Add `--json` for
 machine-readable output.
 
 ## Skill dependencies
 
-cod-ag's agents load these from other plugins. Install them alongside it:
+goat-code's agents load these from other plugins. Install them alongside it:
 
 | plugin | skills used |
 | --- | --- |
@@ -314,7 +314,7 @@ cod-ag's agents load these from other plugins. Install them alongside it:
 | `engineering-skills` | the `senior-*` specialist chosen at runtime from `stack.json` |
 
 The list is pinned by a test, so adding a dependency is a deliberate act.
-Anything else an agent needs is written into the agent itself - cod-ag runs
+Anything else an agent needs is written into the agent itself - goat-code runs
 on machines that do not have whatever happens to be in your `~/.claude`.
 
 ## Built on

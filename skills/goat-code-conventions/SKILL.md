@@ -1,0 +1,299 @@
+---
+name: goat-code-conventions
+description: Shared contracts for the goat-code pipeline - run directory layout, the tasks.yaml dialect, agent status codes, report formats and the goatcode CLI. Read this when working as any goat-code agent (planner, executor, synthesizer, verifier, replanner) or when the orchestrator needs the exact shape of an artifact.
+---
+
+# goat-code Conventions
+
+One place for the contracts every goat-code agent depends on, so they are
+defined once instead of drifting across five agent files.
+
+## The pipeline
+
+```
+init -> grill -> plan -> validate -> approve -> branch -> execute (waves)
+     -> synthesize -> verify -> e2e -> record -> DONE | replan -> execute ...
+```
+
+The `e2e` phase runs only for a `kind: feature` run: an agent writes and
+runs one end-to-end test proving the finished feature. A `kind: bugfix`
+goes straight to DONE, because its slices already had to be written
+test-first.
+
+The **orchestrator is the main Claude Code thread**, not an agent: only the
+main thread can spawn subagents and ask the user questions. Planner,
+executor, synthesizer, verifier and replanner are subagents.
+
+The orchestrator does not decide the order. `goatcode next` reads the run state
+off disk and returns the one action to take; the orchestrator performs it and
+calls `next` again. Phases, caps, model choice and retry policy live in
+`machine.py`, not in prose.
+
+## The `goatcode` CLI
+
+Everything mechanical is a script. Never do by hand what the CLI does.
+
+```bash
+python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" <command> [--json]
+```
+
+| Command | Purpose |
+| --- | --- |
+| `next` | **the state machine** - the single next action to take |
+| `run --prompt "..."` | perform every action itself, without Claude Code (see README) |
+| `branch` | name the branch the work lands on, before any code is written |
+| `progress show` / `progress append --body F` | the cross-run log; append never rewrites. `show` gives the planner's view - every standing constraint plus the last few entries - and `--all` the whole file |
+| `progress promote "<rule>"` | promote a learning that has now recurred into a standing constraint every future plan carries |
+| `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |
+| `plan validate` / `plan show` / `plan waves` | gate and inspect tasks.yaml |
+| `wave next` | slice ids dispatchable right now, capped at the parallel limit |
+| `worktree create S1 S2` / `worktree reap` | isolated checkouts |
+| `brief S1` | write a slice's self-contained brief |
+| `task status S1 done` / `task set S1 field value` / `task commits S1 --head SHA` | mutate the plan atomically |
+| `merge` / `merge --continue` | integrate slice branches |
+| `gates run` | build/typecheck/lint/test, classified against the baseline |
+| `verify-package` | everything the verifier needs, in one call |
+| `diffpkg` | one-file review package |
+| `report --slice S1 --status DONE` | an executor records its result; a DONE is verified |
+| `report --role synthesizer --status CLEAN\|ESCALATE` | the synthesizer records its result |
+| `report --role e2e --status PASS\|SKIPPED\|FAILED` | the end-to-end agent records its result |
+| `report --role scribe --status WRITTEN\|SKIPPED` | the scribe records its result |
+| `answer QID=answer ...` | record a grill round and count it |
+| `approve --yes\|--revise TEXT\|--abort` | record the plan approval gate |
+| `verdict` | read the verifier PASS/FAIL back and move the run on |
+| `ledger "..."` | append to the durable progress ledger |
+| `stats` | where this run's time went: per-phase durations, cycles, remedial slices, gate outcomes |
+| `cycle` | advance to the next replan cycle |
+| `status` / `resume` / `finish` / `abort` | lifecycle |
+
+Exit codes: `0` success, `1` the pipeline is not in a good state (act on
+it), `2` you called it wrong.
+
+Add `--json` for machine-readable output; it works before or after the
+subcommand.
+
+## Run directory
+
+Everything lives in the target repo under `.goatcode/`, hidden from git via
+`.git/info/exclude`, and also listed in the project's `.gitignore` on the
+first run (`manage_gitignore`, default on). goat-code writes that entry but
+never commits it.
+
+```
+.goatcode/runs/<run-id>/
+  progress.txt         cross-run log: what each run did and what it learnt
+  constraints.md       rules promoted out of that log, shown to every planner
+  spec.md              the spec, plus appended "## Clarifications (round N)"
+  stack.json           detected languages, frameworks, commands, specialists
+  state.json           phase, cycle, base commit, branches, worktrees
+  ledger.md            append-only progress; the recovery map
+  log.txt              debug trace, only when debug mode is on
+  baseline-gates.json  gate results at the base commit
+  tasks.yaml           THE plan - every agent reads this
+  cycle-N/
+    questions-round-N.yaml   dispatch/S1.md
+    briefs/S1.md   reports/S1.md
+    merge-report.md   gates.json   review.diff   verdict.md
+```
+
+Worktrees are **outside** the repo, at `<tempdir>/goatcode/<8 hex>/<slice-id>`.
+
+## tasks.yaml dialect
+
+Parsed by a stdlib-only reader, so the supported subset is deliberately
+small. Supported: block mappings and sequences, plain and quoted scalars,
+`null`/`true`/`false`/numbers, block literals (`|`, `>`), single-line flow
+collections (`[a, b]`, `{a: 1}`), `#` comments.
+
+**Not supported, and rejected with a `line:col` error:** anchors (`&`),
+aliases (`*`), tags (`!`), merge keys (`<<:`), multiple documents, tabs for
+indentation. If a value starts with `*`, `&`, `!`, `-`, `[`, `{`, `#`, or
+contains `: `, quote it.
+
+```yaml
+version: 1
+run_id: 20260822-114900-magic-link
+cycle: 1
+goal: Users sign in with a magic link emailed to them.
+kind: feature                # feature | bugfix - a bugfix skips the e2e phase
+kind_reason: "Adds a sign-in route; nothing in the spec describes broken behaviour."
+global_constraints:          # bind every slice; copied verbatim from the spec
+  - "Node >= 20, no new runtime deps"
+assumptions:                 # unresolved after grilling; the verifier surfaces these
+  - "Token TTL assumed 15 min (not specified)."
+slices:
+  - id: S1                   # letters, digits, . _ - ; unique
+    title: Magic-link token store
+    intent: Persist single-use, expiring login tokens.
+    depends_on: []           # [] means wave 1
+    owns:                    # EXCLUSIVE globs - no two slices in a wave may overlap
+      - "src/auth/tokens/**"
+      - "tests/auth/tokens/**"
+    touches_shared:          # append-only; the synthesizer reconciles these
+      - "src/db/migrations/"
+    interfaces:              # signatures this slice publishes; other slices code to them
+      - "createToken(email: string): Promise<Token>"
+    uses_interfaces:         # must be published by a slice in depends_on
+      - "sendMail(to: string, body: string): Promise<void>"
+    changes_contract:        # shapes this slice REDEFINES for everyone
+      - "GET /api/health/"
+    acceptance:              # checkable assertions, at least one
+      - id: A1
+        text: "consumeToken returns the email on first call and null on second."
+    tests:                   # at least one
+      - path: "tests/auth/tokens/store.test.ts"
+        must_cover: ["single use", "expiry boundary"]
+    out_of_scope: ["email delivery", "UI"]
+    model: haiku             # opus | sonnet | haiku | fable | inherit
+    status: pending          # pending | claimed | done | blocked | failed | carried
+    branch: null             # filled in by `worktree create`
+    worktree: null
+    commits: {base: null, head: null}
+```
+
+### What `plan validate` rejects
+
+- missing top-level keys, unsupported `version`, empty `goal`
+- duplicate, missing or malformed slice ids
+- `depends_on` naming an unknown slice, itself, or forming a cycle
+- **two slices in the same wave whose `owns` globs can match the same path**
+- a slice with zero acceptance criteria or zero test paths
+- an acceptance criterion missing `id` or `text`
+- `uses_interfaces` naming something no slice publishes, or published by a
+  slice this one does not depend on
+- a `touches_shared` path that another slice claims in `owns`
+- **two slices in the same wave declaring the same `changes_contract`**
+
+Warnings (non-blocking): more than 8 acceptance criteria in a slice, more
+than 6 slices in a wave, cross-wave ownership overlap, a missing `intent`.
+
+## Slice discipline
+
+These four rules are what make the parallel executor wave safe.
+
+1. **Vertical, not horizontal.** A slice cuts through data, logic and
+   surface to deliver one user-visible capability, and it builds and tests
+   green on its own. "Add the database layer" is not a slice.
+2. **Exclusive ownership.** Each slice owns a disjoint set of paths.
+   Anything genuinely shared goes in `touches_shared` and is append-only.
+3. **Fixed interfaces.** A slice publishes signatures before its dependents
+   are written; those names and shapes cannot drift afterwards.
+   A slice that **redefines** an existing shape everyone else already codes
+   against - an endpoint's response body, a stored enum, an error code -
+   declares it in `changes_contract`. Ownership is by path and cannot see
+   this: a run was written off when one slice extended an endpoint's response
+   while another owned an untouched test asserting the old one exactly. Before
+   declaring one, grep the whole tree for existing assertions on that shape,
+   including tests no diff will touch.
+4. **Checkable acceptance.** Each criterion is an assertion someone can
+   confirm from the diff and the tests. "Handles errors well" is not one.
+
+## Evidence standard
+
+The bar a criterion must clear. The executor builds to it and the verifier
+judges by it — one standard, so the work is not graded against a rule it was
+never given.
+
+**A criterion is met when a named test would fail if the behaviour were
+wrong.** Not when the code looks right. Not when a test near it passes.
+
+- **No test, not met.** Code that reads correctly is not evidence; a failing
+  assertion that turns green is.
+- **A test that asserts nothing is not a test.** Ask whether it could fail.
+  `assert ids() == ids()` cannot.
+- **Exact values, literally.** If the criterion names an error string, a
+  status code, a weight or a boundary, assert that value. Not a paraphrase,
+  not a type check, not "contains".
+- **Exact counts.** `== 1` when the criterion says exactly one. `>= 1` and
+  `len(...) >= 2` pass while the behaviour is wrong, which is why they keep
+  being written.
+- **Read back through the real surface.** If the criterion is about what an
+  endpoint returns, assert the response of a second `GET`, not a serialized
+  in-memory object that never reached the database.
+- **Drive the thing the criterion names.** If it describes a user
+  interaction, a UI branch or an event listener, render the component and
+  drive it. A thorough test of the helper underneath does not cover the
+  branch that calls the helper.
+- **Placement, not just counts.** "Grouped under its exercise" needs an
+  assertion that the row is inside *that* group, not that two rows exist.
+- **Every clause.** "Returns null on the second call" needs a test for the
+  second call. A criterion with four clauses needs four assertions.
+
+When you cannot satisfy this for a criterion, say so — a truthful
+`DONE_WITH_CONCERNS` naming the gap is worth more than a `DONE` the verifier
+has to catch a cycle later.
+
+### Evidence is recorded, not asserted
+
+`report --status DONE` requires one `--evidence <criterion-id>=<path>:<line>`
+per acceptance criterion, pointing at the test that proves it. The path is
+resolved inside the slice's worktree and the line must exist. A `DONE`
+missing an evidence pair, or naming a file or line that does not exist, is
+refused.
+
+The pairs land in `tasks.yaml` under the slice's `report.evidence`, so the
+verifier and the replanner read them as data.
+
+## Agent status codes
+
+Executors return exactly one:
+
+| Status | Meaning | Orchestrator's move |
+| --- | --- | --- |
+| `DONE` | criteria met, tests green, work committed | verify and mark done |
+| `DONE_WITH_CONCERNS` | finished, but something needs a human's eye | read the concerns, then proceed |
+| `NEEDS_CONTEXT` | missing information, named precisely | supply it, re-dispatch |
+| `BLOCKED` | cannot finish, reason named precisely | escalate the model once, then re-plan |
+
+Never re-dispatch an unchanged `BLOCKED` task to the same model. Something
+has to change: more context, a stronger model, or a smaller task.
+
+## Report contract
+
+Agents write detail to **files** and record their outcome by **running the
+CLI**, not by returning prose for the orchestrator to interpret. The exact
+command is written into every dispatch prompt.
+
+```bash
+... report --slice S1 --status DONE --tests "7 passed, 0 failed"
+... report --role synthesizer --status CLEAN
+... verdict
+```
+
+A claimed `DONE` is checked before it is accepted: the worktree must be
+clean, HEAD must have moved from the slice's base commit, every test file
+the brief declares must exist, every acceptance criterion must carry an
+`--evidence` pair naming a real test line (see **Evidence standard**), and
+the commit history must show the slice
+touching a test before it added implementation (`enforce_tdd`, default on). A rejection names every problem at once
+and changes nothing, so the agent can fix and retry.
+
+Then return one status line and nothing more. Anything printed stays in the
+orchestrator's context for the rest of the session; anything written to a
+file does not.
+
+## Writing style
+
+Agent-to-agent **reports, receipts and status lines are caveman-terse**:
+drop articles and filler, fragments are fine, lead with the answer. That is
+where the token savings are.
+
+**Write normally** — full, precise prose — for: code, commit messages'
+meaning, acceptance criteria, interface signatures, questions to the user,
+and anything in `tasks.yaml`. Compression there costs correctness.
+
+Commit messages use caveman style: `add token expiry check`, not
+`This commit adds a check for token expiry.`
+
+## Skills to use
+
+- `superpowers:test-driven-development` — executors, always
+- `superpowers:writing-plans` — planner, for task right-sizing
+- `superpowers:brainstorming` — planner, for generating the questions
+  (how to *ask* them is inlined in the planner: goat-code must not depend on
+  a skill that only exists on one machine)
+- `superpowers:systematic-debugging` — replanner, failure to root cause
+- `superpowers:verification-before-completion` — verifier
+- `ponytail:ponytail` (lite) — executors and the synthesizer, against gold-plating
+- `ponytail:ponytail-review` — verifier, for the scope-violation pass
+- the `engineering-skills:senior-*` skill named in `stack.json` — executors

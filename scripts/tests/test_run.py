@@ -6,8 +6,8 @@ import datetime
 
 import pytest
 
-from codag import ledger, osenv, run as runmod
-from codag.run import Run, RunError
+from goatcode import ledger, osenv, run as runmod
+from goatcode.run import Run, RunError
 
 
 def make_run(repo, title="Add magic link login", mode="chat"):
@@ -68,8 +68,8 @@ def test_preflight_rejects_a_dirty_tree(git_repo):
     assert any("scratch.txt" in p for p in problems)
 
 
-def test_preflight_ignores_the_codag_directory(git_repo):
-    target = git_repo / ".codag" / "runs" / "x"
+def test_preflight_ignores_the_goatcode_directory(git_repo):
+    target = git_repo / ".goatcode" / "runs" / "x"
     target.mkdir(parents=True)
     (target / "state.json").write_text("{}", encoding="utf-8")
     _root, problems = runmod.preflight(git_repo)
@@ -100,7 +100,7 @@ def exclude_file(repo):
 
 def test_ensure_ignored_writes_to_info_exclude(git_repo):
     assert runmod.ensure_ignored(git_repo) is True
-    assert ".codag/" in exclude_file(git_repo).read_text(encoding="utf-8")
+    assert ".goatcode/" in exclude_file(git_repo).read_text(encoding="utf-8")
 
 
 def test_ensure_ignored_does_not_touch_the_working_tree(git_repo):
@@ -113,18 +113,18 @@ def test_ensure_ignored_does_not_touch_the_working_tree(git_repo):
 def test_ensure_ignored_is_idempotent(git_repo):
     runmod.ensure_ignored(git_repo)
     assert runmod.ensure_ignored(git_repo) is False
-    assert exclude_file(git_repo).read_text(encoding="utf-8").count(".codag/") == 1
+    assert exclude_file(git_repo).read_text(encoding="utf-8").count(".goatcode/") == 1
 
 
 def test_ensure_ignored_appends_without_eating_the_last_line(git_repo):
     osenv.write_text(exclude_file(git_repo), "*.tmp")
     runmod.ensure_ignored(git_repo)
     lines = exclude_file(git_repo).read_text(encoding="utf-8").splitlines()
-    assert lines == ["*.tmp", ".codag/"]
+    assert lines == ["*.tmp", ".goatcode/"]
 
 
 def test_ensure_ignored_respects_an_existing_gitignore_entry(git_repo):
-    (git_repo / ".gitignore").write_text(".codag/\n", encoding="utf-8")
+    (git_repo / ".gitignore").write_text(".goatcode/\n", encoding="utf-8")
     assert runmod.ensure_ignored(git_repo) is False
 
 
@@ -146,7 +146,7 @@ def test_config_defaults(git_repo):
 
 
 def test_config_overrides_merge_deeply(git_repo):
-    target = git_repo / ".codag" / "config.yaml"
+    target = git_repo / ".goatcode" / "config.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("parallel: 5\nmodels:\n  executor: opus\n", encoding="utf-8")
     config = runmod.load_config(git_repo)
@@ -157,7 +157,7 @@ def test_config_overrides_merge_deeply(git_repo):
 
 
 def test_config_rejects_a_non_mapping(git_repo):
-    target = git_repo / ".codag" / "config.yaml"
+    target = git_repo / ".goatcode" / "config.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("- a\n- b\n", encoding="utf-8")
     with pytest.raises(RunError):
@@ -182,7 +182,7 @@ def test_create_records_the_base_commit_and_branch(git_repo):
     run = make_run(git_repo)
     assert run.base_commit == osenv.git_out(["rev-parse", "HEAD"], cwd=git_repo)
     assert run.state["base_branch"] == "main"
-    assert run.integration_branch == "codag/{}/integration".format(run.run_id)
+    assert run.integration_branch == "goatcode/{}/integration".format(run.run_id)
 
 
 def test_create_uses_a_short_temp_root(git_repo, temp_root):
@@ -267,7 +267,7 @@ def test_cycles_exhausted_respects_the_cap(git_repo):
 
 def test_worktree_bookkeeping(git_repo):
     run = make_run(git_repo)
-    run.record_worktree("S1", "/tmp/codag/abc/S1")
+    run.record_worktree("S1", "/tmp/goatcode/abc/S1")
     assert Run.load(git_repo, run.run_id).state["worktrees"]["S1"].endswith("S1")
     run.forget_worktree("S1")
     assert Run.load(git_repo, run.run_id).state["worktrees"] == {}
@@ -349,7 +349,7 @@ def test_grill_cap_fires_at_the_configured_round(git_repo):
 
 
 def test_grill_cap_respects_config(git_repo):
-    target = git_repo / ".codag" / "config.yaml"
+    target = git_repo / ".goatcode" / "config.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("max_grill_rounds: 1\n", encoding="utf-8")
     run = make_run(git_repo)
@@ -400,7 +400,7 @@ def test_replan_cycles_do_not_gate(git_repo):
 
 
 def test_approval_gate_always(git_repo):
-    target = git_repo / ".codag" / "config.yaml"
+    target = git_repo / ".goatcode" / "config.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("approval_gate: always\n", encoding="utf-8")
     run = Run.create(git_repo, "x", "spec")
@@ -412,7 +412,7 @@ def test_approval_gate_always(git_repo):
 
 
 def test_approval_gate_never(git_repo):
-    target = git_repo / ".codag" / "config.yaml"
+    target = git_repo / ".goatcode" / "config.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("approval_gate: never\n", encoding="utf-8")
     run = Run.create(git_repo, "x", "chat")

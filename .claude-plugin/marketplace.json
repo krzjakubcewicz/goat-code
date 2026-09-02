@@ -1,13 +1,13 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "cod-ag",
-  "description": "Local marketplace hosting the cod-ag multi-agent implementation pipeline.",
+  "name": "goat-code",
+  "description": "Local marketplace hosting the goat-code multi-agent implementation pipeline.",
   "owner": {
     "name": "kjakubcewicz"
   },
   "plugins": [
     {
-      "name": "cod-ag",
+      "name": "goat-code",
       "description": "Grill -> plan -> parallel worktree executors -> synthesize -> verify -> replan. Implements features end to end in any repo.",
       "source": "./",
       "category": "workflow"

@@ -2,7 +2,7 @@
 
 The recorded runs could not answer this: debug was off in all eleven, so no
 log.txt was ever written, and the ledger's timestamps were the only evidence.
-`codag stats` reads the ledger - which is always written - and turns it into
+`goatcode stats` reads the ledger - which is always written - and turns it into
 the per-phase picture every other improvement has to be measured against.
 """
 
@@ -12,8 +12,8 @@ import datetime
 
 import pytest
 
-from codag import ledger, osenv, stats
-from codag.run import Run
+from goatcode import ledger, osenv, stats
+from goatcode.run import Run
 from tests.test_cli import invoke_json  # noqa: F401
 
 

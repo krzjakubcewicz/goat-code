@@ -12,8 +12,8 @@ import datetime
 
 import pytest
 
-from codag import miniyaml, osenv, run as runmod, worktree
-from codag.run import Run, RunError
+from goatcode import miniyaml, osenv, run as runmod, worktree
+from goatcode.run import Run, RunError
 from tests.conftest import make_run
 from tests.test_cli import cli, invoke, invoke_json  # noqa: F401
 
@@ -55,7 +55,7 @@ def commit(repo, name, message="work"):
 
 
 def configure(repo, text):
-    target = repo / ".codag" / "config.yaml"
+    target = repo / ".goatcode" / "config.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(text, encoding="utf-8")
 
@@ -154,7 +154,7 @@ def test_no_divergence_when_the_branch_is_level(git_repo):
     "template,expected",
     [
         ("{kind}/{slug}", "feature/users-sign-in-with-a-magic-link"),
-        ("codag/{slug}", "codag/users-sign-in-with-a-magic-link"),
+        ("goatcode/{slug}", "goatcode/users-sign-in-with-a-magic-link"),
         ("{kind}/{date}-{slug}", "feature/20260823-users-sign-in-with-a-magic-link"),
         ("{slug}", "users-sign-in-with-a-magic-link"),
     ],
@@ -199,7 +199,7 @@ def test_an_unknown_placeholder_is_a_clear_error(git_repo):
         ("/leading/", "leading"),
         ("feature/x.lock", "feature/x"),
         ("feature/we?rd*chars", "feature/we-rd-chars"),
-        ("", "codag-run"),
+        ("", "goatcode-run"),
     ],
 )
 def test_names_are_made_git_safe(raw, expected):
