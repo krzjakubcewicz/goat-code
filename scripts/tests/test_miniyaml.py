@@ -6,8 +6,8 @@ from __future__ import annotations
 
 import pytest
 
-from codag import miniyaml
-from codag.miniyaml import YamlError, dumps, loads
+from goatcode import miniyaml
+from goatcode.miniyaml import YamlError, dumps, loads
 
 TASKS_SAMPLE = """
 version: 1

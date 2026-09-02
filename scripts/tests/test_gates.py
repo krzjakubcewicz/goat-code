@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from codag import gates, osenv
-from codag.run import Run
+from goatcode import gates, osenv
+from goatcode.run import Run
 
 
 def python_cmd(body):

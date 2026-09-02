@@ -10,8 +10,8 @@ import pathlib
 
 import pytest
 
-from codag import osenv, worktree
-from codag.run import Run
+from goatcode import osenv, worktree
+from goatcode.run import Run
 from tests.conftest import make_run
 from tests.test_cli import cli, invoke, invoke_json, plan_for, slice_spec  # noqa: F401
 
@@ -315,7 +315,7 @@ def _prepare_integration(capsys, repo, run):
 
 
 def run_plan(run):
-    from codag import tasks as tasksmod
+    from goatcode import tasks as tasksmod
 
     return tasksmod.slices(tasksmod.load(run.tasks_path))
 

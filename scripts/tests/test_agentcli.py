@@ -13,10 +13,10 @@ import json
 
 import pytest
 
-from codag import agentcli, debuglog, osenv
+from goatcode import agentcli, debuglog, osenv
 
 
-def entry(agent="codag-executor", **fields):
+def entry(agent="goat-code-executor", **fields):
     base = {"agent": agent, "model": "haiku", "slice": "S1", "prompt": "C:/p/S1.md", "cwd": None}
     base.update(fields)
     return base
@@ -32,13 +32,13 @@ def argv_value(argv, flag):
 
 def test_every_agent_has_a_definition():
     for name in (
-        "codag-planner",
-        "codag-executor",
-        "codag-synthesizer",
-        "codag-verifier",
-        "codag-e2e",
-        "codag-scribe",
-        "codag-replanner",
+        "goat-code-planner",
+        "goat-code-executor",
+        "goat-code-synthesizer",
+        "goat-code-verifier",
+        "goat-code-e2e",
+        "goat-code-scribe",
+        "goat-code-replanner",
     ):
         fields, body = agentcli.definition(name)
         assert fields["name"] == name
@@ -47,11 +47,11 @@ def test_every_agent_has_a_definition():
 
 def test_an_unknown_agent_is_an_error():
     with pytest.raises(agentcli.AgentError):
-        agentcli.definition("codag-nonesuch")
+        agentcli.definition("goatcode-nonesuch")
 
 
 def test_the_body_is_the_system_prompt_without_the_frontmatter():
-    _fields, body = agentcli.definition("codag-verifier")
+    _fields, body = agentcli.definition("goat-code-verifier")
     assert not body.startswith("---")
     assert "description:" not in body.splitlines()[0]
 
@@ -75,18 +75,18 @@ def test_the_prompt_is_one_line_pointing_at_the_file():
 
 
 def test_tools_come_from_the_agents_own_frontmatter():
-    argv = agentcli.build_argv(entry("codag-verifier"), "C:/repo")
+    argv = agentcli.build_argv(entry("goat-code-verifier"), "C:/repo")
     assert argv_value(argv, "--allowedTools") == "Read,Grep,Glob,Bash"
 
 
 def test_a_wildcard_tool_list_means_no_restriction():
-    argv = agentcli.build_argv(entry("codag-executor"), "C:/repo")
+    argv = agentcli.build_argv(entry("goat-code-executor"), "C:/repo")
     assert "--allowedTools" not in argv, "executors declare tools: [*]"
 
 
 def test_the_repo_is_always_reachable():
     """Worktrees live outside the repo, so the run state needs adding back."""
-    argv = agentcli.build_argv(entry(cwd="C:/tmp/codag/ab12/S1"), "C:/repo")
+    argv = agentcli.build_argv(entry(cwd="C:/tmp/goatcode/ab12/S1"), "C:/repo")
     assert argv_value(argv, "--add-dir") == "C:/repo"
 
 
@@ -124,7 +124,7 @@ def test_a_context_answer_rides_along_with_the_same_prompt_file():
 
 @pytest.mark.parametrize(
     "fields,expected",
-    [({"slice": "S3"}, "S3"), ({"slice": None, "agent": "codag-verifier"}, "verifier")],
+    [({"slice": "S3"}, "S3"), ({"slice": None, "agent": "goat-code-verifier"}, "verifier")],
 )
 def test_a_dispatch_is_named_by_its_slice_or_its_role(fields, expected):
     assert agentcli.label(dict(entry(), **fields)) == expected
@@ -187,13 +187,13 @@ def test_a_finished_dispatch_reports_what_it_cost(spawn):
 
 def test_an_agent_runs_in_its_own_worktree(spawn):
     seen = spawn([result_line()])
-    agentcli.dispatch(entry(cwd="C:/tmp/codag/ab12/S1"), "C:/repo")
-    assert seen["cwd"] == "C:/tmp/codag/ab12/S1"
+    agentcli.dispatch(entry(cwd="C:/tmp/goatcode/ab12/S1"), "C:/repo")
+    assert seen["cwd"] == "C:/tmp/goatcode/ab12/S1"
 
 
 def test_an_agent_without_a_worktree_runs_in_the_repo(spawn):
     seen = spawn([result_line()])
-    agentcli.dispatch(entry("codag-planner", cwd=None), "C:/repo")
+    agentcli.dispatch(entry("goat-code-planner", cwd=None), "C:/repo")
     assert seen["cwd"] == "C:/repo"
 
 
@@ -262,11 +262,11 @@ def test_a_missing_binary_says_what_to_do(monkeypatch):
 
 
 def test_a_dispatch_is_traced(spawn, tmp_path, monkeypatch):
-    monkeypatch.setenv("CODAG_DEBUG", "1")
+    monkeypatch.setenv("GOATCODE_DEBUG", "1")
     debuglog.attach(tmp_path)
     spawn([result_line(total_cost_usd=0.5)])
     agentcli.dispatch(entry(), "C:/repo")
-    assert any("agent" in ln and "codag-executor" in ln for ln in debuglog.read(tmp_path))
+    assert any("agent" in ln and "goat-code-executor" in ln for ln in debuglog.read(tmp_path))
 
 
 # -- the target shown for each tool ----------------------------------------

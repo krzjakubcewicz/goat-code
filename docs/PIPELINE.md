@@ -6,10 +6,10 @@ hand.
 The orchestrator does exactly two things: it starts the run, then it loops.
 
 ```bash
-python scripts/codag.py init --prompt "add magic-link login"
+python scripts/goatcode.py init --prompt "add magic-link login"
 
 # then, until it says stop:
-python scripts/codag.py next --json
+python scripts/goatcode.py next --json
 ```
 
 Each `next` returns one action — `run`, `dispatch`, `ask`, `escalate` or
@@ -17,11 +17,11 @@ Each `next` returns one action — `run`, `dispatch`, `ask`, `escalate` or
 Everything below describes what the machine decides at each phase, and the
 artifacts that come out.
 
-`codag run` is that same loop, performed by Python instead of by a Claude
+`goatcode run` is that same loop, performed by Python instead of by a Claude
 Code session:
 
 ```bash
-python scripts/codag.py run --prompt "add magic-link login"
+python scripts/goatcode.py run --prompt "add magic-link login"
 ```
 
 It does the `init` above, then reads each action and performs it — spawning
@@ -39,13 +39,13 @@ Everything below applies unchanged to both.
   final diff is exactly `base..feature`. If you are standing on another
   branch with commits the base lacks, it says so and names them; it does not
   block.
-- Hides `.codag/` from git: always in `.git/info/exclude`, and — unless
+- Hides `.goatcode/` from git: always in `.git/info/exclude`, and — unless
   `manage_gitignore: false` — in the project's `.gitignore`, creating that
   file if absent. The `.gitignore` change is left uncommitted for you to
-  review; cod-ag does not commit to your branch. Preflight recognises its
+  review; goat-code does not commit to your branch. Preflight recognises its
   own block, so a later run is not blocked by it.
 - Prunes orphan worktrees left by an earlier crashed run.
-- Creates `.codag/runs/<run-id>/` and records the base commit and branch.
+- Creates `.goatcode/runs/<run-id>/` and records the base commit and branch.
 - Detects the stack into `stack.json`.
 - Creates the integration worktree, installs dependencies, and runs the gates
   to produce `baseline-gates.json`.
@@ -55,7 +55,7 @@ Phase becomes `grill`.
 ## `grill` → dispatch the planner
 
 The machine renders `cycle-N/dispatch/planner-round-R.md` and dispatches
-`codag-planner` on `opus`. The planner either writes
+`goat-code-planner` on `opus`. The planner either writes
 `cycle-N/questions-round-R.yaml` and returns `QUESTIONS`, or writes
 `tasks.yaml` and returns `PLAN`.
 
@@ -69,7 +69,7 @@ planner's YAML, with its recommendation already marked. The orchestrator asks
 and records:
 
 ```bash
-python scripts/codag.py answer Q1="15-minute timer" Q2=Both --note Q1="match the cookie"
+python scripts/goatcode.py answer Q1="15-minute timer" Q2=Both --note Q1="match the cookie"
 ```
 
 That appends the Q&A verbatim to `spec.md` under `## Clarifications (round
@@ -93,9 +93,9 @@ run's first cycle. The action carries the plan table command, the validator
 warnings and any recorded assumptions.
 
 ```bash
-python scripts/codag.py approve --yes
-python scripts/codag.py approve --revise "Split the CLI slice in two."
-python scripts/codag.py approve --abort
+python scripts/goatcode.py approve --yes
+python scripts/goatcode.py approve --revise "Split the CLI slice in two."
+python scripts/goatcode.py approve --abort
 ```
 
 `--revise` sends the plan back to the planner with the feedback. `--abort`
@@ -106,7 +106,7 @@ reaps the worktrees and ends the run.
 Before a single line is written, the run's branch gets its real name:
 
 ```bash
-python scripts/codag.py branch
+python scripts/goatcode.py branch
 ```
 
 The name comes from `branch_template` (default `{kind}/{slug}`), so a
@@ -114,13 +114,13 @@ feature run lands on `feature/magic-link-login` and a bugfix on
 `bugfix/token-expiry`. This happens here rather than at `init` because the
 name depends on `kind` and the goal, which only exist once the plan does. A
 name already in use gets a `-2` suffix. Your working tree is not switched to
-it - cod-ag has never moved your HEAD.
+it - goat-code has never moved your HEAD.
 
 Then a `run` action prepares the wave:
 
 ```bash
-python scripts/codag.py worktree create S1 S2
-python scripts/codag.py brief S1 S2
+python scripts/goatcode.py worktree create S1 S2
+python scripts/goatcode.py brief S1 S2
 ```
 
 Then a single `dispatch` action carrying the whole wave — every executor goes
@@ -132,7 +132,7 @@ Each executor works test-first in its own worktree, commits per green test,
 and records its own result:
 
 ```bash
-python scripts/codag.py report --slice S1 --status DONE --tests "7 passed, 0 failed"
+python scripts/goatcode.py report --slice S1 --status DONE --tests "7 passed, 0 failed"
 ```
 
 A `DONE` is checked before it is accepted: clean worktree, HEAD moved from
@@ -146,14 +146,14 @@ never become ready, and the replanner picks it up.
 ## `synthesize` → merge
 
 ```bash
-python scripts/codag.py merge
+python scripts/goatcode.py merge
 ```
 
-Creates `codag/<run-id>/integration` from the base commit and merges each
+Creates `goatcode/<run-id>/integration` from the base commit and merges each
 finished slice branch in dependency order.
 
 - **clean** — no agent is dispatched at all.
-- **conflict** — `codag-synthesizer` is dispatched on `sonnet` with the
+- **conflict** — `goat-code-synthesizer` is dispatched on `sonnet` with the
   conflicted files. It resolves, runs `merge --continue`, repeats, then
   reports `CLEAN`. If the slices genuinely contradict each other it reports
   `ESCALATE`, which writes a failing verdict and sends the run to replan.
@@ -161,26 +161,26 @@ finished slice branch in dependency order.
 ## `verify`
 
 ```bash
-python scripts/codag.py verify-package
+python scripts/goatcode.py verify-package
 ```
 
 Runs the gates in the integration worktree, classifies failures against the
 baseline, writes `review.diff`, and assembles every path the verifier needs.
-`codag-verifier` reads them and writes `verdict.md`: a per-criterion table
+`goat-code-verifier` reads them and writes `verdict.md`: a per-criterion table
 with evidence, gate results with pre-existing failures called out, scope
 violations, carried assumptions, and a final `VERDICT: PASS` or
-`VERDICT: FAIL`. Then it runs `codag verdict`, which reads that line back.
+`VERDICT: FAIL`. Then it runs `goatcode verdict`, which reads that line back.
 
 ## `e2e`
 
 Only for a `kind: feature` run, and only after the verdict passed.
-`codag-e2e` is dispatched into the integration worktree with the spec and
+`goat-code-e2e` is dispatched into the integration worktree with the spec and
 every acceptance criterion, and is told **not** to read the diff: a test
 written from the implementation only restates it. It writes one test through
 the real user-visible path, runs it, commits it with a `test:` prefix, then:
 
 ```bash
-python scripts/codag.py report --role e2e --status PASS --tests "3 passed"
+python scripts/goatcode.py report --role e2e --status PASS --tests "3 passed"
 ```
 
 `SKIPPED` (with `--detail`) when nothing available can reach the feature -
@@ -196,12 +196,12 @@ written test-first, and that is the right level for a fix.
 ## `record`
 
 The last thing before `done`, on every completed run - feature or bugfix.
-`codag-scribe` reads the run's artifacts and appends one entry to
-`.codag/progress.txt`:
+`goat-code-scribe` reads the run's artifacts and appends one entry to
+`.goatcode/progress.txt`:
 
 ```
 ## 2026-08-23 14:05 - 20260823-140012-magic-link
-Run: .codag/runs/20260823-140012-magic-link
+Run: .goatcode/runs/20260823-140012-magic-link
 - What was implemented
 - Files changed
 - **Learnings for future iterations:**
@@ -218,8 +218,8 @@ that went straight through.
 The planner is shown these entries at the start of the next run, which is
 what closes the loop.
 
-Appending is done by `codag progress append`, not by the agent, so "append,
-never replace" is a property of the code. The log lives under `.codag/`, so
+Appending is done by `goatcode progress append`, not by the agent, so "append,
+never replace" is a property of the code. The log lives under `.goatcode/`, so
 it is git-ignored along with the rest of the run state.
 
 ## `done`
@@ -230,9 +230,9 @@ the slice worktrees and keeps the integration branch.
 ```
 DONE
 
-branch: codag/20260822-114900-magic-link/integration
-review: git diff a1b2c3d..codag/20260822-114900-magic-link/integration
-merge:  git merge codag/20260822-114900-magic-link/integration
+branch: goatcode/20260822-114900-magic-link/integration
+review: git diff a1b2c3d..goatcode/20260822-114900-magic-link/integration
+merge:  git merge goatcode/20260822-114900-magic-link/integration
 
 nothing was committed to your branch main
 ```
@@ -241,8 +241,8 @@ Merging is your decision, always.
 
 ## `replan`
 
-A failing verdict runs `codag cycle`: satisfied slices become `carried`, the
-old plan is snapshotted, `cycle-N+1/` is created. Then `codag-replanner` is
+A failing verdict runs `goatcode cycle`: satisfied slices become `carried`, the
+old plan is snapshotted, `cycle-N+1/` is created. Then `goat-code-replanner` is
 dispatched to diagnose root cause and write a plan containing only remedial
 slices. Back to `execute`, skipping the grill and the gate.
 
@@ -255,16 +255,16 @@ Just run `next`. The phase is derived from what is on disk, so it is correct
 regardless of what the orchestrator remembers.
 
 ```bash
-python scripts/codag.py resume --json   # the same picture, for a human
+python scripts/goatcode.py resume --json   # the same picture, for a human
 ```
 
 ## Tracing a run
 
 ```bash
-CODAG_DEBUG=1 python scripts/codag.py next     # or debug: true in the config
+GOATCODE_DEBUG=1 python scripts/goatcode.py next     # or debug: true in the config
 ```
 
-Appends to `.codag/runs/<run-id>/log.txt`: one timestamped line per CLI
+Appends to `.goatcode/runs/<run-id>/log.txt`: one timestamped line per CLI
 command and exit code, per subprocess with its duration, per phase change,
 per dispatch and per file written. Command output is not captured - gate
 output is already in `gates.json` and agent output in the reports.
@@ -277,13 +277,13 @@ output is already in `gates.json` and agent output in the reports.
 ```
 
 The environment variable overrides the config in both directions, so one run
-can be traced without editing anything, and `CODAG_DEBUG=0` silences a config
+can be traced without editing anything, and `GOATCODE_DEBUG=0` silences a config
 that has it on.
 
 ## Aborting
 
 ```bash
-python scripts/codag.py abort
+python scripts/goatcode.py abort
 ```
 
 Removes every worktree including the integration one. Branches survive unless

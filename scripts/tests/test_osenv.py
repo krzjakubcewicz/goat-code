@@ -13,7 +13,7 @@ import threading
 
 import pytest
 
-from codag import osenv
+from goatcode import osenv
 
 
 def test_run_captures_output_without_a_shell():

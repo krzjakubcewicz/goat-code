@@ -8,7 +8,7 @@ import copy
 
 import pytest
 
-from codag import schema
+from goatcode import schema
 
 
 def plan(**overrides):

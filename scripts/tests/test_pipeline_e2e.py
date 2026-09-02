@@ -1,4 +1,4 @@
-"""Drive a whole cod-ag run through the state machine, with no LLM.
+"""Drive a whole goat-code run through the state machine, with no LLM.
 
 A fake agent does what a real one would - writes the files, commits the
 work, runs the reporting command - and the loop is the shipped one,
@@ -6,7 +6,7 @@ work, runs the reporting command - and the loop is the shipped one,
 
 So this proves two things at once: the pipeline's control flow is correct
 independently of any model's behaviour, and the loop that runs a standalone
-`codag run` is the loop these tests exercise.
+`goatcode run` is the loop these tests exercise.
 """
 
 from __future__ import annotations
@@ -16,9 +16,9 @@ import json
 
 import pytest
 
-from codag import agentcli, driver as drivermod, machine, miniyaml, osenv, tasks
+from goatcode import agentcli, driver as drivermod, machine, miniyaml, osenv, tasks
 from tests.test_cli import cli as cli_module  # noqa: F401
-from codag.run import Run
+from goatcode.run import Run
 
 MAX_STEPS = 60
 
@@ -187,13 +187,13 @@ class FakeAgent:
         run = Run.load(self.repo)
         self.dispatched.append((entry["agent"], entry["slice"], entry["model"]))
         handler = {
-            "codag-planner": self.planner,
-            "codag-executor": self.executor,
-            "codag-synthesizer": self.synthesizer,
-            "codag-verifier": self.verifier,
-            "codag-e2e": self.e2e,
-            "codag-scribe": self.scribe,
-            "codag-replanner": self.replanner,
+            "goat-code-planner": self.planner,
+            "goat-code-executor": self.executor,
+            "goat-code-synthesizer": self.synthesizer,
+            "goat-code-verifier": self.verifier,
+            "goat-code-e2e": self.e2e,
+            "goat-code-scribe": self.scribe,
+            "goat-code-replanner": self.replanner,
         }[entry["agent"]]
         assert open(entry["prompt"], encoding="utf-8").read().strip(), "dispatch prompt is empty"
         handler(run, entry)
@@ -214,7 +214,7 @@ def make_driver(repo, agent, cls=None):
 
 
 class SubprocessDriver(drivermod.Driver):
-    """Runs every codag command as a real subprocess, exactly as rendered."""
+    """Runs every goatcode command as a real subprocess, exactly as rendered."""
 
     def cli(self, command):
         result = osenv.run(command)
@@ -223,16 +223,16 @@ class SubprocessDriver(drivermod.Driver):
 
 
 def cli(run, *args, check=True):
-    """Run a codag command the way the driver does.
+    """Run a goatcode command the way the driver does.
 
     In-process by default: spawning the CLI costs about 1.3 s a call and the
     driver makes hundreds. ``subprocess=True`` runs the argv exactly as
     rendered - a couple of tests keep that path, so the command strings
-    cod-ag writes into dispatch prompts are still proven to execute.
+    goat-code writes into dispatch prompts are still proven to execute.
     """
     code = cli_module.main(machine.cli_argv(run, *args)[2:])
     if check:
-        assert code in (0, 1), "codag {} exited {}".format(" ".join(str(a) for a in args), code)
+        assert code in (0, 1), "goatcode {} exited {}".format(" ".join(str(a) for a in args), code)
     return code
 
 
@@ -321,7 +321,7 @@ def test_executors_run_on_the_model_the_plan_names(started):
         [slice_doc("S1", "src/s1/**", model="opus"), slice_doc("S2", "src/s2/**")]
     )
     make_driver(started, agent).loop()
-    models = {s: m for a, s, m in agent.dispatched if a == "codag-executor"}
+    models = {s: m for a, s, m in agent.dispatched if a == "goat-code-executor"}
     assert models == {"S1": "opus", "S2": "haiku"}
 
 
@@ -329,9 +329,9 @@ def test_each_role_runs_on_its_own_model(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
     make_driver(started, agent).loop()
     by_agent = {a: m for a, _s, m in agent.dispatched}
-    assert by_agent["codag-planner"] == "opus"
-    assert by_agent["codag-executor"] == "haiku"
-    assert by_agent["codag-verifier"] == "opus"
+    assert by_agent["goat-code-planner"] == "opus"
+    assert by_agent["goat-code-executor"] == "haiku"
+    assert by_agent["goat-code-verifier"] == "opus"
 
 
 def test_the_work_lands_on_the_integration_branch(started):
@@ -346,7 +346,7 @@ def test_the_work_lands_on_the_integration_branch(started):
 
 def test_the_users_branch_is_untouched(started):
     """Same branch, same commit, and nothing in the tree but the .gitignore
-    cod-ag wrote on the first run - which it never commits."""
+    goat-code wrote on the first run - which it never commits."""
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
     base = osenv.git_out(["rev-parse", "HEAD"], cwd=started)
     make_driver(started, agent).loop()
@@ -391,7 +391,7 @@ def test_carried_slices_are_never_re_executed(started):
     driver = make_driver(started, agent)
     driver.loop()
 
-    executed = [s for a, s, _m in agent.dispatched if a == "codag-executor"]
+    executed = [s for a, s, _m in agent.dispatched if a == "goat-code-executor"]
     assert executed.count("S1") == 1, "S1 passed in cycle 1 and must not run again"
     assert "R2" in executed, "the remedial slice must run"
 
@@ -412,8 +412,8 @@ def test_a_blocked_slice_is_retried_once_then_the_run_moves_on(started):
     driver = make_driver(started, agent)
     final = driver.loop()
 
-    executed = [s for a, s, m in agent.dispatched if a == "codag-executor"]
-    models = [m for a, _s, m in agent.dispatched if a == "codag-executor"]
+    executed = [s for a, s, m in agent.dispatched if a == "goat-code-executor"]
+    models = [m for a, _s, m in agent.dispatched if a == "goat-code-executor"]
     assert executed == ["S1", "S1"], "one retry, not an infinite loop"
     assert models == ["haiku", "sonnet"], "the retry escalates the model"
     assert final["action"] == "stop"
@@ -437,13 +437,13 @@ def test_a_merge_conflict_wakes_the_synthesizer_and_the_run_finishes(started):
     final = driver.loop()
 
     assert final["outcome"] == "done"
-    assert any(a == "codag-synthesizer" for a, _s, _m in agent.dispatched)
+    assert any(a == "goat-code-synthesizer" for a, _s, _m in agent.dispatched)
 
 
 def test_a_clean_merge_never_dispatches_the_synthesizer(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**"), slice_doc("S2", "src/s2/**")])
     make_driver(started, agent).loop()
-    assert not any(a == "codag-synthesizer" for a, _s, _m in agent.dispatched)
+    assert not any(a == "goat-code-synthesizer" for a, _s, _m in agent.dispatched)
 
 
 # -- the artifacts a human reads afterwards --------------------------------
@@ -507,7 +507,7 @@ def test_a_feature_run_gets_an_e2e_test(started):
 
     assert final["outcome"] == "done"
     assert "e2e" in driver.phases
-    assert any(a == "codag-e2e" for a, _s, _m in agent.dispatched)
+    assert any(a == "goat-code-e2e" for a, _s, _m in agent.dispatched)
 
     run = Run.load(started)
     listed = osenv.git_out(["ls-tree", "-r", "--name-only", run.integration_branch], cwd=started)
@@ -518,7 +518,7 @@ def test_the_e2e_agent_runs_on_sonnet(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")])
     make_driver(started, agent).loop()
     models = {a: m for a, _s, m in agent.dispatched}
-    assert models["codag-e2e"] == "sonnet"
+    assert models["goat-code-e2e"] == "sonnet"
 
 
 def test_a_bugfix_run_skips_the_e2e_phase(started):
@@ -529,7 +529,7 @@ def test_a_bugfix_run_skips_the_e2e_phase(started):
 
     assert final["outcome"] == "done"
     assert "e2e" not in driver.phases
-    assert not any(a == "codag-e2e" for a, _s, _m in agent.dispatched)
+    assert not any(a == "goat-code-e2e" for a, _s, _m in agent.dispatched)
 
 
 def test_the_kind_override_beats_the_planners_classification(started):
@@ -563,7 +563,7 @@ def test_a_skipped_e2e_still_finishes(started):
 
 
 def test_e2e_can_be_switched_off(started):
-    config = started / ".codag" / "config.yaml"
+    config = started / ".goatcode" / "config.yaml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text("write_e2e_tests: false\n", encoding="utf-8")
     run = Run.load(started)
@@ -592,7 +592,7 @@ def test_the_e2e_prompt_names_the_criteria_and_forbids_reading_the_diff(started)
 #
 # The rest of this file drives the CLI in-process, which is roughly a
 # hundred times faster. These two keep the real subprocess path, so the
-# command strings cod-ag renders into dispatch prompts - the ones a real
+# command strings goat-code renders into dispatch prompts - the ones a real
 # agent copies and runs - are still proven to execute.
 
 

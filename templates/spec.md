@@ -1,13 +1,13 @@
 # <Feature name>
 
 <!--
-A cod-ag spec. You do not need to make this perfect - the planner will grill
+A goat-code spec. You do not need to make this perfect - the planner will grill
 you about whatever is still ambiguous before it writes a plan. Fill in what
 you know, delete the prompts you do not need, and leave a real blank rather
 than a plausible guess: a guess gets treated as settled, a blank gets a
 question.
 
-Then run:  /cod-ag --spec <this file>
+Then run:  /goat-code --spec <this file>
 -->
 
 ## Goal

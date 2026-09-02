@@ -16,18 +16,18 @@ import pytest
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from codag import miniyaml, osenv, worktree  # noqa: E402
-from codag.run import Run  # noqa: E402
+from goatcode import miniyaml, osenv, worktree  # noqa: E402
+from goatcode.run import Run  # noqa: E402
 from tests.conftest import make_run  # noqa: E402
 
 
 def _load_cli():
-    """Load scripts/codag.py by path.
+    """Load scripts/goatcode.py by path.
 
-    ``import codag`` finds the package next to it, which is what the entry
+    ``import goatcode`` finds the package next to it, which is what the entry
     point itself imports - so the script has to be loaded explicitly.
     """
-    spec = importlib.util.spec_from_file_location("codag_cli", SCRIPTS / "codag.py")
+    spec = importlib.util.spec_from_file_location("goatcode_cli", SCRIPTS / "goatcode.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -93,7 +93,7 @@ def test_init_creates_a_run_and_detects_the_stack(capsys, node_repo):
 
 def test_init_hides_state_from_git_without_dirtying_the_tree(capsys, node_repo):
     invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
-    assert ".codag/" in (node_repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
+    assert ".goatcode/" in (node_repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
 
 
 def test_init_refuses_a_dirty_tree(capsys, node_repo):
@@ -421,7 +421,7 @@ def test_end_to_end_pipeline(capsys, node_repo):
         assert not worktree.path_for(run, slice_id).exists()
 
     # The user's branch is untouched: same branch, same commit, and the only
-    # thing in the tree is the .gitignore cod-ag added on the first run.
+    # thing in the tree is the .gitignore goat-code added on the first run.
     assert osenv.git_out(["rev-parse", "--abbrev-ref", "HEAD"], cwd=node_repo) == "main"
     assert osenv.git_out(["rev-parse", "HEAD"], cwd=node_repo) == run.base_commit
     assert osenv.git(["status", "--porcelain"], cwd=node_repo).out == "?? .gitignore"
@@ -522,7 +522,7 @@ def test_wave_next_text_output_shows_the_model(capsys, node_repo):
 
 
 def test_cli_reaches_the_run_from_inside_a_slice_worktree(capsys, node_repo):
-    """Executors self-report from their worktree; .codag/ lives in the main repo."""
+    """Executors self-report from their worktree; .goatcode/ lives in the main repo."""
     run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**")])
     invoke(capsys, "--repo", str(node_repo), "worktree", "create", "S1", "--no-setup")

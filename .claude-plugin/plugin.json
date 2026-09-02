@@ -1,10 +1,16 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
-  "name": "cod-ag",
-  "version": "0.1.0",
+  "name": "goat-code",
+  "version": "0.2.0",
   "description": "Multi-agent feature pipeline: grill -> plan -> parallel executors in worktrees -> synthesize -> verify -> replan. Stack-aware, cross-OS, zero-dependency.",
   "author": {
     "name": "kjakubcewicz"
   },
-  "keywords": ["orchestration", "agents", "worktrees", "planning", "tdd"]
+  "keywords": [
+    "orchestration",
+    "agents",
+    "worktrees",
+    "planning",
+    "tdd"
+  ]
 }

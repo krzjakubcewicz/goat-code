@@ -1,4 +1,4 @@
-# cod-ag: telemetry-driven improvements
+# goat-code: telemetry-driven improvements
 
 Derived entirely from `telemetry/` — 11 real runs (8 completed, 2 aborted restarts, 1
 stillborn) that built an eight-phase Django/DRF + React application, 177 subagent
@@ -8,6 +8,11 @@ that tree; each finding names its source path.
 The pipeline works. Every completed run reached `done` with a passing verdict, no run
 looped forever, no run claimed a success it did not have. What follows is about the tax
 it pays to get there.
+
+> These runs were recorded before the project was renamed to **goat-code**, so every
+> path under `telemetry/` keeps its original `codag` spelling — those directories exist
+> on disk and the reproduce commands below have to keep working. Paths into the source
+> tree use the current names.
 
 ---
 
@@ -62,7 +67,7 @@ None of these are implementation defects. The code was right; the proof was not.
 
 ### The rubric exists, and the executor has never seen it
 
-`agents/codag-verifier.md` carries a section titled **"How to judge a criterion"**:
+`agents/goat-code-verifier.md` carries a section titled **"How to judge a criterion"**:
 
 - *"A criterion with no test is not met."*
 - *"A test that asserts nothing is not a test."*
@@ -72,10 +77,10 @@ None of these are implementation defects. The code was right; the proof was not.
 That text appears in exactly one file:
 
 ```
-$ grep -c "How to judge" agents/codag-executor.md skills/cod-ag-conventions/SKILL.md agents/codag-verifier.md
-agents/codag-executor.md:0
-skills/cod-ag-conventions/SKILL.md:0
-agents/codag-verifier.md:1
+$ grep -c "How to judge" agents/goat-code-executor.md skills/goat-code-conventions/SKILL.md agents/goat-code-verifier.md
+agents/goat-code-executor.md:0
+skills/goat-code-conventions/SKILL.md:0
+agents/goat-code-verifier.md:1
 ```
 
 The executor's own pre-report checklist says only *"every acceptance criterion is
@@ -191,11 +196,11 @@ Yet the orchestrator's actual `Agent` calls were:
 
 | subagent | model requested | n |
 |---|---|---|
-| codag-executor | sonnet | 62 |
-| codag-executor | haiku | 25 |
-| codag-executor | opus | 3 |
-| codag-verifier | opus | 26 |
-| codag-planner | opus | 23 |
+| goat-code-executor | sonnet | 62 |
+| goat-code-executor | haiku | 25 |
+| goat-code-executor | opus | 3 |
+| goat-code-verifier | opus | 26 |
+| goat-code-planner | opus | 23 |
 
 `ARCHITECTURE.md` states *"the model still has to exist … but it no longer decides
 anything."* Model choice is a live exception: 65 of 90 executors ran escalated without a
@@ -220,7 +225,7 @@ Every improvement below is unmeasurable until this is fixed.
 
 ## 9. Two small defects
 
-**`scripts/codag/dispatch.py:339`** renders assumptions with `"- {}".format(assumption)`.
+**`scripts/goatcode/dispatch.py:339`** renders assumptions with `"- {}".format(assumption)`.
 When an assumption is a mapping, the verifier dispatch receives a raw Python dict repr:
 
 ```
@@ -239,10 +244,10 @@ touched and the tests that hold it.
 
 ### 1. Give the executor the verifier's rubric — ✅ **landed**
 
-Extract "How to judge a criterion" from `agents/codag-verifier.md` into a named
-**Evidence standard** section in `skills/cod-ag-conventions/SKILL.md`. Have both
-`agents/codag-executor.md` and `agents/codag-verifier.md` cite that one section, and render
-it into every brief via `scripts/codag/brief.py`. Add one line to the executor's *Before you
+Extract "How to judge a criterion" from `agents/goat-code-verifier.md` into a named
+**Evidence standard** section in `skills/goat-code-conventions/SKILL.md`. Have both
+`agents/goat-code-executor.md` and `agents/goat-code-verifier.md` cite that one section, and render
+it into every brief via `scripts/goatcode/brief.py`. Add one line to the executor's *Before you
 report DONE* list:
 
 > For each acceptance criterion, name the test `path:line` that would fail if the
@@ -250,11 +255,11 @@ report DONE* list:
 
 Targets the cause of 13 of 13 failures.
 
-**Landed.** `skills/cod-ag-conventions/SKILL.md` now carries an **Evidence standard**
+**Landed.** `skills/goat-code-conventions/SKILL.md` now carries an **Evidence standard**
 section — the verifier's rules plus the specific defect shapes the telemetry showed (exact
 counts, read back through the real surface, drive the thing the criterion names, placement
-not counts, every clause). `agents/codag-executor.md` and `agents/codag-verifier.md` both
-cite it, and `scripts/codag/brief.py` renders it into every brief as **The evidence bar**
+not counts, every clause). `agents/goat-code-executor.md` and `agents/goat-code-verifier.md` both
+cite it, and `scripts/goatcode/brief.py` renders it into every brief as **The evidence bar**
 alongside the slice's own criterion ids.
 `test_plugin.py::test_the_evidence_standard_is_defined_once_and_cited_by_both_sides` fails
 if either side stops citing it.
@@ -275,8 +280,8 @@ also what item 4 needs. A `DONE_WITH_CONCERNS` still goes through, with the miss
 evidence folded into the concerns rather than hidden, mirroring how the TDD check already
 behaves.
 
-Files: `scripts/codag/report.py` (`evidence_findings`), `tasks.py` (`criterion_ids`),
-`codag.py` (`--evidence`), `dispatch.py` and `brief.py` (render the exact command with the
+Files: `scripts/goatcode/report.py` (`evidence_findings`), `tasks.py` (`criterion_ids`),
+`goatcode.py` (`--evidence`), `dispatch.py` and `brief.py` (render the exact command with the
 slice's real ids). Seven new tests in `test_report.py` cover the gate; the end-to-end fake
 executor now names evidence like a real one.
 
@@ -286,13 +291,13 @@ Nothing below could be shown to have worked without this.
 
 `Run.set_phase` now appends `phase X -> Y` to `ledger.md` on every transition,
 unconditionally — not behind `debug`, which was never switched on in any of the eleven
-recorded runs. `codag stats` reads that ledger back into per-phase durations, cycle count,
+recorded runs. `goatcode stats` reads that ledger back into per-phase durations, cycle count,
 first-cycle versus remedial slice counts, per-cycle verdicts and gate outcomes. It derives
 everything from artifacts the pipeline always writes, so it works on runs that finished
 long before it existed.
 
-Files: `scripts/codag/stats.py` (new), `run.py`, `ledger.py` (`now=` for testability),
-`codag.py`. Tests: `test_stats.py` (10), plus two in `test_run.py` for the transition
+Files: `scripts/goatcode/stats.py` (new), `run.py`, `ledger.py` (`now=` for testability),
+`goatcode.py`. Tests: `test_stats.py` (10), plus two in `test_run.py` for the transition
 lines and the no-op guard.
 
 ### 4. Incremental verification — ✅ **landed**
@@ -311,8 +316,8 @@ It never claims a criterion passed, only that its code did not change. Every bra
 back to judging everything: narrowing wrongly would hide a regression, not narrowing only
 costs what the pipeline already pays.
 
-Files: `scripts/codag/diffpkg.py`, `tasks.py`, `dispatch.py`, `machine.py`, `codag.py`,
-`agents/codag-verifier.md`. Tests across `test_tasks.py`, `test_dispatch.py`,
+Files: `scripts/goatcode/diffpkg.py`, `tasks.py`, `dispatch.py`, `machine.py`, `goatcode.py`,
+`agents/goat-code-verifier.md`. Tests across `test_tasks.py`, `test_dispatch.py`,
 `test_machine.py`, `test_cli_reporting.py`.
 
 ### 5. Aim the gates at the real failure — ✅ **landed**
@@ -330,7 +335,7 @@ being the same expression, and test bodies with no assertion at all. It lands in
 explicitly told a regex cannot judge whether an assertion proves its criterion, and to say
 nothing about the ones that are fine. Never blocking.
 
-Files: `scripts/codag/gates.py`, `stack.py`, `dispatch.py`, `codag.py`, `machine.py`.
+Files: `scripts/goatcode/gates.py`, `stack.py`, `dispatch.py`, `goatcode.py`, `machine.py`.
 Tests: 12 in `test_gates.py`, 3 in `test_stack.py`, 2 in `test_dispatch.py`.
 
 ### 6. Cross-slice contract check at plan validation — ✅ **landed**
@@ -345,7 +350,7 @@ The conventions skill tells the planner to grep the whole tree for existing asse
 a shape before declaring it — including tests no diff will touch, which is exactly what
 the phase-8 write-off turned on.
 
-Files: `scripts/codag/schema.py`, `skills/cod-ag-conventions/SKILL.md`. Tests: 6 in
+Files: `scripts/goatcode/schema.py`, `skills/goat-code-conventions/SKILL.md`. Tests: 6 in
 `test_schema.py`.
 
 ### 7. Stop the full-suite loop inside executors — ✅ **landed**
@@ -356,7 +361,7 @@ declares, so the red-green loop runs one file, and names the whole suite once be
 reporting, because a green slice that breaks something else is not done. Runners that take
 no path get the suite, as before.
 
-Files: `scripts/codag/stack.py`, `brief.py`. Tests: 3 in `test_stack.py`, 2 in
+Files: `scripts/goatcode/stack.py`, `brief.py`. Tests: 3 in `test_stack.py`, 2 in
 `test_cli.py`.
 
 ### 8. Enforce the dispatch's `model` — ✅ **landed**
@@ -366,16 +371,16 @@ Files: `scripts/codag/stack.py`, `brief.py`. Tests: 3 in `test_stack.py`, 2 in
 that was never on. The choice is on the durable record, so a substitution is visible
 instead of silent.
 
-`skills/cod-ag-orchestrator/SKILL.md` states that each entry's `model` is used verbatim:
+`skills/goat-code-orchestrator/SKILL.md` states that each entry's `model` is used verbatim:
 not a suggestion, not a default to improve on, and a slice that genuinely needs more is
 what `BLOCKED` is for.
 
-Files: `scripts/codag/machine.py`, `skills/cod-ag-orchestrator/SKILL.md`. Tests: 2 in
+Files: `scripts/goatcode/machine.py`, `skills/goat-code-orchestrator/SKILL.md`. Tests: 2 in
 `test_machine.py`.
 
 ### 9. Promote recurring learnings out of prose — ✅ **landed**
 
-`.codag/constraints.md` holds rules promoted out of the narrative. `progress show` now
+`.goatcode/constraints.md` holds rules promoted out of the narrative. `progress show` now
 gives the **planner's view** — every standing constraint plus the last five entries — and
 `--all` the whole file. `progress promote "<rule>"` appends one, never duplicating.
 
@@ -385,8 +390,8 @@ warned about, writing it again is pointless — that entry was read and it did n
 the outcome. Promote it instead, at most two per run, phrased as a rule that binds a plan
 rather than a story about this run.
 
-Files: `scripts/codag/progress.py`, `dispatch.py`, `codag.py`,
-`skills/cod-ag-conventions/SKILL.md`. Tests: 9 in `test_progress.py`, 1 in
+Files: `scripts/goatcode/progress.py`, `dispatch.py`, `goatcode.py`,
+`skills/goat-code-conventions/SKILL.md`. Tests: 9 in `test_progress.py`, 1 in
 `test_dispatch.py`.
 
 ### 10. Two small fixes — ✅ **landed**
@@ -416,15 +421,15 @@ can already gate is untouched, and any command the stored profile carried surviv
 hand-tuned command is never replaced by a guessed one. Two call sites, both where the new
 code first exists:
 
-- `codag brief` — a slice's worktree starts at the integration tip, so by wave 2 the build
+- `goatcode brief` — a slice's worktree starts at the integration tip, so by wave 2 the build
   system wave 1 created is there. Wave 2 stops guessing.
-- `codag verify-package` — the integration worktree, which is the tree the gates run in.
+- `goatcode verify-package` — the integration worktree, which is the tree the gates run in.
   Whatever the waves built, the gates now see.
 
 A repo where nothing is detected also stops claiming `agents must infer commands from the
 repo` and says the stack will be re-detected once the run has built it.
 
-Files: `scripts/codag/stack.py`, `codag.py`. Tests: 7 in `test_stack.py`, 4 in
+Files: `scripts/goatcode/stack.py`, `goatcode.py`. Tests: 7 in `test_stack.py`, 4 in
 `test_cli_reporting.py`.
 
 ## Already fixed on the current branch
@@ -450,7 +455,7 @@ grep -l "VERDICT: FAIL" telemetry/codag/runs/*/cycle-*/verdict.md | wc -l   # 13
 grep -l "VERDICT: PASS" telemetry/codag/runs/*/cycle-*/verdict.md | wc -l   # 8
 
 # the rubric gap
-grep -c "How to judge" agents/codag-executor.md skills/cod-ag-conventions/SKILL.md agents/codag-verifier.md
+grep -c "How to judge" agents/goat-code-executor.md skills/goat-code-conventions/SKILL.md agents/goat-code-verifier.md
 
 # gates detected
 python -c "import json,glob;[print(f, json.load(open(f)).get('commands')) for f in glob.glob('telemetry/codag/runs/*/stack.json')]"

@@ -1,9 +1,9 @@
-# cod-ag per-project configuration.
+# goat-code per-project configuration.
 #
-# Copy to .codag/config.yaml in the target repository and edit. Everything
+# Copy to .goatcode/config.yaml in the target repository and edit. Everything
 # is optional; anything you leave out keeps the default shown here.
 #
-# Note: .codag/ is excluded from git via .git/info/exclude, so this file is
+# Note: .goatcode/ is excluded from git via .git/info/exclude, so this file is
 # local to your machine. Commit it deliberately if your team should share
 # it, by adding an exception to .gitignore.
 
@@ -26,7 +26,7 @@ max_plan_fix_attempts: 2
 # The branch every run forks from. null auto-detects: origin/HEAD's target,
 # then main, then master. The baseline gates, each slice branch and the
 # feature branch all start here, so the final diff is exactly base..feature.
-# If you are sitting on another branch with unpushed commits, cod-ag says so
+# If you are sitting on another branch with unpushed commits, goat-code says so
 # and starts from the base anyway.
 base_branch: null
 
@@ -42,10 +42,10 @@ branch_template: "{kind}/{slug}"
 #   never  - fully autonomous once the plan validates
 approval_gate: chat
 
-# Add cod-ag's entries (.codag/, .worktrees/) to the project's .gitignore on
+# Add goat-code's entries (.goatcode/, .worktrees/) to the project's .gitignore on
 # the first run, creating the file if it does not exist. The change is left
 # uncommitted for you to review. Turn this off to rely on .git/info/exclude
-# alone, which cod-ag writes either way.
+# alone, which goat-code writes either way.
 manage_gitignore: true
 
 # Reject an executor's DONE when its commit history shows implementation
@@ -59,13 +59,13 @@ enforce_tdd: true
 # bugfix slice already had to be written test-first.
 write_e2e_tests: true
 
-# Append an entry to .codag/progress.txt when a run completes, and show
+# Append an entry to .goatcode/progress.txt when a run completes, and show
 # earlier entries to the planner. The learnings section is the point: it
 # stops the next run rediscovering what this one found out.
 write_progress: true
 
 # The subdirectory holding the build system, when detection cannot tell on
-# its own. A monorepo with a backend/ and a frontend/ has two, and cod-ag
+# its own. A monorepo with a backend/ and a frontend/ has two, and goat-code
 # will not guess which one the gates belong to - so it finds neither, and
 # the run has no automated safety net. Name the one to gate:
 #
@@ -83,11 +83,11 @@ worktree_setup: true
 # directory: every CLI command and its exit code, every subprocess with its
 # duration, every phase change, every agent dispatch, every file written.
 # Command output is not captured - the trace says what ran, not what it
-# printed. CODAG_DEBUG=1 in the environment turns it on regardless, and
-# CODAG_DEBUG=0 turns it off regardless.
+# printed. GOATCODE_DEBUG=1 in the environment turns it on regardless, and
+# GOATCODE_DEBUG=0 turns it off regardless.
 debug: false
 
-# Standalone (`codag run`) only - the plugin uses Claude Code's own
+# Standalone (`goatcode run`) only - the plugin uses Claude Code's own
 # permissions. How a headless agent's tool calls are permitted:
 #   acceptEdits       - it may write files, but a Bash call needs permission,
 #                       and nothing can grant one in a headless run, so it is
@@ -109,8 +109,8 @@ setup_timeout_seconds: 1800
 # executor_escalated after a BLOCKED result.
 #
 # The orchestrator is the main thread, not an agent, so its model is not
-# set here - it comes from the `model:` frontmatter on /cod-ag and
-# /cod-ag-resume, or from your session model.
+# set here - it comes from the `model:` frontmatter on /goat-code and
+# /goat-code-resume, or from your session model.
 models:
   planner: opus
   executor: haiku
