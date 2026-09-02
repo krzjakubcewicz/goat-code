@@ -101,7 +101,7 @@ def _factors(value, field, problems):
 RULES = (
     ("authentication", "HIGH", r"\b(auth|authentication|authoriz|login|session|oauth|jwt|password|credential)"),
     ("cryptography", "HIGH", r"\b(crypto|encrypt|decrypt|signing|signature|cipher|tls|certificate)"),
-    ("secrets", "HIGH", r"\b(secret|api[_ -]?key|private[_ -]?key|\.env)\b"),
+    ("secrets", "HIGH", r"\b(secret|token|api[_ -]?key|private[_ -]?key|\.env)\b"),
     ("permissions", "HIGH", r"\b(permission|role|rbac|access[_ -]control|privilege)"),
     ("ci-cd", "HIGH", r"(\.github/workflows|\bci\b|\bcd\b|pipeline|deploy|release)"),
     ("infrastructure", "HIGH", r"\b(terraform|kubernetes|k8s|dockerfile|docker-compose|infra)"),

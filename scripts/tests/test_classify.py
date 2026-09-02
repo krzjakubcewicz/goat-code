@@ -132,7 +132,7 @@ def test_rules_escalate_an_llm_that_said_low():
     said = classify.parse(payload(risk="LOW", complexity="SIMPLE"))
     final = classify.apply_rules(said, "Change the auth token expiry.", [])
     assert final["risk"] == "HIGH"
-    assert final["deterministic_overrides"] == ["authentication"]
+    assert final["deterministic_overrides"] == ["authentication", "secrets"]
     assert final["complexity"] == "SIMPLE", "rules speak to risk, not to size"
 
 
