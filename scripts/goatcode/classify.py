@@ -11,6 +11,8 @@ deterministic half authoritative.
 
 from __future__ import annotations
 
+import re
+
 COMPLEXITIES = ("SIMPLE", "NORMAL", "COMPLEX")
 RISKS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
 
@@ -88,3 +90,58 @@ def _factors(value, field, problems):
         problems.append("'{}' must be a list of strings".format(field))
         return []
     return [v.strip() for v in value if v.strip()]
+
+
+#: Deterministic risk rules: (factor, minimum risk, pattern).
+#:
+#: Matched against the spec's prose and, once a plan exists, against the
+#: paths its slices claim. Deliberately broad - a false "this is risky"
+#: costs one extra verification pass, a false "this is safe" ships an
+#: unreviewed change to authentication.
+RULES = (
+    ("authentication", "HIGH", r"\b(auth|authentication|authoriz|login|session|oauth|jwt|password|credential)"),
+    ("cryptography", "HIGH", r"\b(crypto|encrypt|decrypt|signing|signature|cipher|tls|certificate)"),
+    ("secrets", "HIGH", r"\b(secret|api[_ -]?key|private[_ -]?key|\.env)\b"),
+    ("permissions", "HIGH", r"\b(permission|role|rbac|access[_ -]control|privilege)"),
+    ("ci-cd", "HIGH", r"(\.github/workflows|\bci\b|\bcd\b|pipeline|deploy|release)"),
+    ("infrastructure", "HIGH", r"\b(terraform|kubernetes|k8s|dockerfile|docker-compose|infra)"),
+    ("database-migration", "HIGH", r"\b(migration|schema change|alter table|drop table|drop column)"),
+    ("data-deletion", "CRITICAL", r"\b(delete all|purge|truncate|hard[_ -]delete|wipe)"),
+    ("customer-data", "HIGH", r"\b(pii|personal data|customer data|gdpr)"),
+    ("dependencies", "MEDIUM", r"\b(dependency|dependencies|upgrade|bump|lockfile|package\.json|requirements\.txt)"),
+)
+
+_COMPILED = tuple((factor, minimum, re.compile(pattern, re.IGNORECASE)) for factor, minimum, pattern in RULES)
+
+
+def evaluate(text, paths=None):
+    """The risk the deterministic rules find, and why.
+
+    ``text`` is the spec's prose; ``paths`` are the globs a plan's slices
+    claim, which do not exist yet at classify time. Both are matched the
+    same way, so a plan that reaches into `src/auth/**` escalates a run whose
+    description never mentioned authentication.
+    """
+    haystack = "\n".join([text or ""] + [str(p) for p in (paths or [])])
+    risk = "LOW"
+    factors = []
+    for factor, minimum, pattern in _COMPILED:
+        if pattern.search(haystack):
+            risk = risk_at_least(risk, minimum)
+            if factor not in factors:
+                factors.append(factor)
+    return {"risk": risk, "factors": factors}
+
+
+def apply_rules(classification, text, paths=None):
+    """Merge the advisory classification with the authoritative rules.
+
+    Escalate-only. The LLM cannot talk risk down, which is the whole reason
+    this layer exists; it can only ever be more cautious than the rules.
+    """
+    found = evaluate(text, paths)
+    merged = dict(classification)
+    raised = RISKS.index(found["risk"]) > RISKS.index(classification.get("risk", "LOW"))
+    merged["risk"] = risk_at_least(classification.get("risk", "LOW"), found["risk"])
+    merged["deterministic_overrides"] = list(found["factors"]) if raised else []
+    return merged

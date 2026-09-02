@@ -92,3 +92,67 @@ def test_the_fallback_is_conservative_and_never_simple():
 )
 def test_risk_at_least_takes_the_higher(left, right, expected):
     assert classify.risk_at_least(left, right) == expected
+
+
+# -- the authoritative half ------------------------------------------------
+#
+# The spec's central rule: the LLM may say LOW about a task that touches
+# authentication, and it must not matter.
+
+
+def test_authentication_in_the_text_raises_risk_to_high():
+    found = classify.evaluate("Rework the login and session token handling.", [])
+    assert found["risk"] == "HIGH"
+    assert "authentication" in found["factors"]
+
+
+def test_a_migration_raises_risk():
+    found = classify.evaluate("Add a database migration dropping the old column.", [])
+    assert found["risk"] in ("HIGH", "CRITICAL")
+
+
+def test_ordinary_prose_raises_nothing():
+    found = classify.evaluate("Rename a button label on the settings screen.", [])
+    assert found["risk"] == "LOW"
+    assert found["factors"] == []
+
+
+def test_a_sensitive_path_raises_risk_even_when_the_text_is_innocent():
+    found = classify.evaluate("Tidy some helpers.", ["src/auth/**", "src/util/**"])
+    assert found["risk"] == "HIGH"
+    assert "authentication" in found["factors"]
+
+
+def test_a_ci_config_path_raises_risk():
+    found = classify.evaluate("Tidy some helpers.", [".github/workflows/**"])
+    assert found["risk"] == "HIGH"
+
+
+def test_rules_escalate_an_llm_that_said_low():
+    said = classify.parse(payload(risk="LOW", complexity="SIMPLE"))
+    final = classify.apply_rules(said, "Change the auth token expiry.", [])
+    assert final["risk"] == "HIGH"
+    assert final["deterministic_overrides"] == ["authentication"]
+    assert final["complexity"] == "SIMPLE", "rules speak to risk, not to size"
+
+
+def test_rules_never_lower_what_the_llm_raised():
+    said = classify.parse(payload(risk="CRITICAL"))
+    final = classify.apply_rules(said, "Rename a label.", [])
+    assert final["risk"] == "CRITICAL"
+    assert final["deterministic_overrides"] == []
+
+
+def test_the_fallback_is_still_escalated_by_the_rules():
+    """A classifier that never answered must not soften a sensitive task."""
+    final = classify.apply_rules(dict(classify.FALLBACK), "Rotate the signing secret.", [])
+    assert final["risk"] == "HIGH"
+
+
+def test_matching_is_case_insensitive():
+    assert classify.evaluate("REWORK THE LOGIN FLOW", [])["risk"] == "HIGH"
+
+
+def test_a_factor_is_reported_once_however_many_times_it_matches():
+    found = classify.evaluate("auth, authentication, login, oauth", [])
+    assert found["factors"].count("authentication") == 1
