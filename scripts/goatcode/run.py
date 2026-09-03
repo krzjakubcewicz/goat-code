@@ -95,7 +95,6 @@ DEFAULT_CONFIG = {
     # pipeline, exactly as it did before this existed.
     "classifier": {
         "enabled": True,
-        "model": "haiku",
     },
     # Subdirectory holding the build system, for a repo where detection
     # cannot tell on its own - a monorepo with a backend/ and a frontend/.

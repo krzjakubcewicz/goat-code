@@ -399,6 +399,21 @@ def test_a_valid_classification_selects_a_workflow(capsys, node_repo):
     assert Run.load(node_repo).workflow == "DIRECT_DEVELOPMENT"
 
 
+def test_the_recorded_model_matches_what_the_machine_dispatched_on(capsys, node_repo):
+    """Two keys used to name the classifier's model and could disagree.
+
+    `models.classifier` is the one dispatch actually reads - see
+    `machine._model`. The audit record must name that model, not the
+    unrelated `classifier.model` key.
+    """
+    from goatcode import machine
+
+    run = start(capsys, node_repo)
+    run.config["models"]["classifier"] = "opus"
+    result = report.record_classification(run, _classification())
+    assert result["classification"]["model"] == machine._model(run, "classifier") == "opus"
+
+
 def test_the_rules_escalate_what_the_model_said(capsys, node_repo):
     run = start(capsys, node_repo)
     osenv.write_text(run.spec_path, "Rework the login token expiry.\n")

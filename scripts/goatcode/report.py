@@ -342,7 +342,11 @@ def record_classification(run, payload=None, reason=None):
     # The spec's audit fields: which rules and which model produced this, so a
     # routing decision stays explicable after either has changed.
     final["classifier_version"] = classify.VERSION
-    final["model"] = (run.config.get("classifier") or {}).get("model")
+    # Match machine._model(run, "classifier") exactly: `models.classifier` is
+    # the key dispatch actually reads. `classifier.model` used to exist too
+    # and could disagree with it, which made the audit record lie about what
+    # ran.
+    final["model"] = run.config.get("models", {}).get("classifier", "sonnet")
     final["fallback_reason"] = fallback
     selected = workflowmod.select(final)
     run.set_classification(final, selected)

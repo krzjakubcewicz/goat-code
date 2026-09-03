@@ -118,10 +118,9 @@ setup_timeout_seconds: 1800
 # before this existed.
 classifier:
   enabled: true
-  model: haiku
 
-# Model per role. Executors run on haiku and escalate to
-# executor_escalated after a BLOCKED result.
+# Model per role, including the classifier itself. Executors run on haiku
+# and escalate to executor_escalated after a BLOCKED result.
 #
 # The orchestrator is the main thread, not an agent, so its model is not
 # set here - it comes from the `model:` frontmatter on /goat-code and
