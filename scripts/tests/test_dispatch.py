@@ -12,7 +12,7 @@ import sys
 
 import pytest
 
-from goatcode import dispatch, miniyaml
+from goatcode import classify, dispatch, miniyaml
 from goatcode.run import Run
 
 PLAN = {
@@ -401,7 +401,30 @@ def test_the_classifier_prompt_carries_the_exact_schema(run):
     text = dispatch.classifier(run)
     for field in ("complexity", "risk", "riskFactors", "complexityFactors", "reasoning"):
         assert field in text
-    assert "SIMPLE" in text and "CRITICAL" in text
+
+
+def test_the_schema_marks_its_slots_rather_than_inviting_a_copy(run):
+    """A cheap model pattern-completes examples, and `parse` rejects a copied
+    enum list - which falls back to NORMAL/MEDIUM and silently discards the
+    classification the whole feature exists to produce."""
+    text = dispatch.classifier(run)
+    assert '"<SIMPLE or NORMAL or COMPLEX>"' in text
+    assert '"<LOW or MEDIUM or HIGH or CRITICAL>"' in text
+    assert "SIMPLE | NORMAL | COMPLEX" not in text, "pipe-joined enums read as copyable"
+
+
+def test_the_prompt_shows_one_filled_example_that_would_parse(run):
+    """If it does pattern-complete, it must complete to something valid."""
+    import json
+    import re
+
+    text = dispatch.classifier(run)
+    blocks = re.findall(r"```json\n(.*?)```", text, re.DOTALL)
+    filled = [b for b in blocks if "<" not in b]
+    assert filled, "no example free of placeholders"
+    payload = json.loads(filled[-1])
+    assert classify.parse(payload)["complexity"] == "SIMPLE"
+    assert classify.parse(payload)["risk"] == "HIGH"
 
 
 def test_the_classifier_prompt_does_not_inline_the_repository(run):
