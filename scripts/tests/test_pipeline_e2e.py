@@ -397,6 +397,55 @@ def test_a_precise_spec_skips_the_question_round(started):
     assert agent.planner_rounds == 1
 
 
+# -- classification ---------------------------------------------------------
+
+
+def test_a_simple_run_reaches_done_without_planner_questions_or_a_verifier(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], complexity="SIMPLE", risk="LOW")
+    driver = make_driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    dispatched = [a for a, _s, _m in agent.dispatched]
+    assert "goat-code-classifier" in dispatched
+    assert "goat-code-verifier" not in dispatched
+
+
+def test_a_complex_run_still_gets_the_whole_pipeline(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], complexity="COMPLEX", risk="LOW")
+    driver = make_driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    dispatched = [a for a, _s, _m in agent.dispatched]
+    assert "goat-code-verifier" in dispatched
+
+
+def test_a_high_risk_run_is_routed_by_the_rules_not_the_model(started):
+    """The model says SIMPLE/LOW; the spec text says authentication."""
+    run = Run.load(started)
+    osenv.write_text(run.spec_path, "Change the login token expiry.\n")
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], complexity="SIMPLE", risk="LOW")
+    driver = make_driver(started, agent)
+    driver.loop()
+
+    reloaded = Run.load(started)
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+    assert "goat-code-verifier" in [a for a, _s, _m in agent.dispatched]
+
+
+def test_a_classifier_that_writes_nothing_falls_back_and_still_finishes(started):
+    class Silent(FakeAgent):
+        def classifier(self, run, _dispatch):
+            self.cli(run, "classify", "--fallback", "fixture: no answer")
+
+    agent = Silent([slice_doc("S1", "src/s1/**")])
+    final = make_driver(started, agent).loop()
+
+    assert final["outcome"] == "done"
+    assert Run.load(started).workflow == "PLANNED_DEVELOPMENT"
+
+
 # -- the failure loop ------------------------------------------------------
 
 
