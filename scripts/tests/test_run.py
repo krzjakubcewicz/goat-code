@@ -475,3 +475,39 @@ def test_a_repeated_line_is_appended_again_once_something_else_intervenes(git_re
     ledger.append(run, "slice S2 done")
     ledger.append(run, "slice S1 done")
     assert len([e for e in ledger.entries(run) if "slice S1 done" in e]) == 2
+
+
+# -- classification ---------------------------------------------------------
+
+
+def test_classify_is_a_phase(git_repo):
+    run = make_run(git_repo)
+    run.set_phase("classify")
+    assert run.phase == "classify"
+
+
+def test_classification_is_on_by_default(git_repo):
+    assert make_run(git_repo).wants_classification() is True
+
+
+def test_classification_can_be_switched_off(git_repo):
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "classifier:\n  enabled: false\n")
+    run = Run.create(git_repo, "x", "chat")
+    assert run.wants_classification() is False
+
+
+def test_an_unclassified_run_behaves_as_it_does_today(git_repo):
+    """The whole backward-compatibility guarantee, in one assertion."""
+    run = make_run(git_repo)
+    assert run.classification is None
+    assert run.workflow == "PLANNED_DEVELOPMENT"
+
+
+def test_a_recorded_classification_is_read_back(git_repo):
+    run = make_run(git_repo)
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    reloaded = Run.load(git_repo)
+    assert reloaded.classification["complexity"] == "SIMPLE"
+    assert reloaded.workflow == "DIRECT_DEVELOPMENT"

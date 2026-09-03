@@ -40,6 +40,7 @@ GITIGNORE_HEADER = "# goat-code run state (managed by goat-code)"
 #: Every phase the state machine can derive. Order is the happy path.
 PHASES = (
     "init",
+    "classify",
     "grill",
     "ask",
     "plan",
@@ -89,6 +90,13 @@ DEFAULT_CONFIG = {
     # Write a low-level trace of everything goat-code does to
     # .goatcode/runs/<id>/log.txt. GOATCODE_DEBUG=1 overrides this per invocation.
     "debug": False,
+    # Classify a run's complexity and risk before planning, and route it to a
+    # cheaper or heavier workflow. Off means every run takes the full
+    # pipeline, exactly as it did before this existed.
+    "classifier": {
+        "enabled": True,
+        "model": "haiku",
+    },
     # Subdirectory holding the build system, for a repo where detection
     # cannot tell on its own - a monorepo with a backend/ and a frontend/.
     # null lets stack detection decide.
@@ -658,6 +666,29 @@ class Run:
 
     def wants_e2e(self, doc=None):
         return self.config.get("write_e2e_tests", True) and self.kind(doc) == "feature"
+
+    def wants_classification(self):
+        return bool((self.config.get("classifier") or {}).get("enabled", True))
+
+    @property
+    def classification(self):
+        """The final classification, once one has been recorded."""
+        return self.state.get("classification")
+
+    @property
+    def workflow(self):
+        """Which pipeline this run gets.
+
+        Absent classification means the full pipeline: that is what every run
+        did before the classifier existed, and turning it off must not
+        quietly buy less verification.
+        """
+        return self.state.get("workflow") or "PLANNED_DEVELOPMENT"
+
+    def set_classification(self, final, selected):
+        self.state["classification"] = dict(final)
+        self.state["workflow"] = selected
+        self.save()
 
     # -- the feature branch ------------------------------------------------
 

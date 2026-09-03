@@ -105,6 +105,21 @@ claude_bin: claude
 gate_timeout_seconds: 1800
 setup_timeout_seconds: 1800
 
+# Classify each run's complexity and risk before planning, and route it:
+#   SIMPLE / NORMAL   - straight to the executors, judged by the gates
+#   COMPLEX           - grill, approval gate, and a verifier verdict
+#   HIGH_RISK         - all of that, plus your sign-off before it finishes
+#
+# The classifier is advisory. Deterministic rules may raise a run's risk -
+# anything touching auth, crypto, secrets, CI, infra or migrations - and can
+# never lower it, so a wrong answer from the model cannot buy less scrutiny.
+#
+# enabled: false makes every run take the full pipeline, exactly as it did
+# before this existed.
+classifier:
+  enabled: true
+  model: haiku
+
 # Model per role. Executors run on haiku and escalate to
 # executor_escalated after a BLOCKED result.
 #
