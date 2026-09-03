@@ -947,3 +947,47 @@ def test_a_planned_workflow_still_dispatches_the_verifier(run):
 
     action = machine.next_action(run)
     assert action["dispatches"][0]["agent"] == "goat-code-verifier"
+
+
+# -- reassessing risk once the plan exists ----------------------------------
+
+
+def test_a_plan_that_reaches_into_sensitive_paths_escalates_the_run(run):
+    """The second deterministic pass: the spec was innocent, the plan is not."""
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["slices"][0]["owns"] = ["src/auth/**"]
+    write_plan(run, doc)
+
+    machine.next_action(run)
+    reloaded = Run.load(run.repo)
+    assert reloaded.classification["risk"] == "HIGH"
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+
+
+def test_the_second_pass_never_lowers_a_run(run):
+    run.set_classification(
+        {"complexity": "COMPLEX", "risk": "CRITICAL", "deterministic_overrides": []},
+        "HIGH_RISK_DEVELOPMENT",
+    )
+    write_plan(run)
+
+    machine.next_action(run)
+    reloaded = Run.load(run.repo)
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+
+
+def test_the_escalation_is_recorded_in_the_ledger(run):
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["slices"][0]["owns"] = [".github/workflows/**"]
+    write_plan(run, doc)
+
+    machine.next_action(run)
+    assert any("re-classified" in e for e in ledger.entries(run))

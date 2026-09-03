@@ -269,6 +269,42 @@ def record_slice(
     }
 
 
+def reassess_classification(run, doc):
+    """Run the deterministic rules again, now that the plan names paths.
+
+    At classify time only the request existed. A plan that claims
+    `src/auth/**` is evidence the request never carried, so the same rules
+    see it now. Escalate-only: this can cost a run its cheap path and can
+    never buy one.
+    """
+    current = run.classification
+    if not current or not doc:
+        return None
+
+    paths = []
+    for item in tasks.slices(doc):
+        paths.extend(item.get("owns") or [])
+        paths.extend(item.get("touches_shared") or [])
+
+    spec = osenv.read_text(run.spec_path) if pathlib.Path(run.spec_path).exists() else ""
+    updated = classify.apply_rules(current, spec, paths)
+    if updated["risk"] == current.get("risk"):
+        return None
+
+    selected = workflowmod.select(updated)
+    run.set_classification(updated, selected)
+    ledger.append(
+        run,
+        "re-classified {}/{} -> {} after the plan claimed {}".format(
+            updated["complexity"],
+            updated["risk"],
+            selected,
+            ", ".join(updated.get("deterministic_overrides") or []),
+        ),
+    )
+    return updated
+
+
 def _fallback_advisory():
     """A copy of `classify.FALLBACK` with its own list objects.
 

@@ -187,6 +187,11 @@ def next_action(run, stack_profile=None):
     phase = derive_phase(run, evidence)
     if phase != run.phase:
         run.set_phase(phase)
+    if evidence.plan_valid:
+        if report.reassess_classification(run, evidence.doc):
+            # The workflow changed under us; re-derive with the new routing.
+            phase = derive_phase(run, evidence)
+            run.set_phase(phase)
 
     handler = {
         "classify": _classify,
