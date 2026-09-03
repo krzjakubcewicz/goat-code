@@ -22,9 +22,11 @@ _SWITCHES = {
     "HIGH_RISK_DEVELOPMENT": (True, True, True, True),
 }
 
-#: Anything unrecognised gets the heaviest pipeline. Falling back to a
-#: cheaper one would make an unreadable classification a way to buy less
-#: verification.
+#: An unknown workflow *name* reaching `_switch` means the router itself is
+#: misconfigured - `select` only ever emits one of the three above - so it
+#: fails to the heaviest pipeline. This is deliberately not the rule
+#: `select` uses for unreadable classification *data*, which lands on the
+#: safe middle instead.
 _DEFAULT = "HIGH_RISK_DEVELOPMENT"
 
 

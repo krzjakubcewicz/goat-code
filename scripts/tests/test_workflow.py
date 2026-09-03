@@ -67,11 +67,25 @@ def test_an_unknown_workflow_name_is_treated_as_the_heaviest():
         {"complexity": "", "risk": ""},
     ],
 )
-def test_an_unreadable_classification_never_buys_the_cheapest_pipeline(classification):
-    """Reading an unknown risk as "not HIGH" would invert the whole rule."""
-    assert workflow.select(classification) != "DIRECT_DEVELOPMENT"
+def test_an_unreadable_classification_lands_on_the_safe_middle(classification):
+    """Not merely "not the cheapest": the destination itself is the ruling.
+
+    Malformed data earns full verification and the approval gate, and stops
+    short of the human sign-off HIGH_RISK carries - scrutiny rather than a
+    person's attention. Asserting only `!= DIRECT` would let a regression
+    over-escalate every one of these and still pass.
+    """
+    assert workflow.select(classification) == "PLANNED_DEVELOPMENT"
 
 
 def test_a_well_formed_simple_task_still_gets_the_direct_pipeline():
     """The guard must not swallow the case the routing exists to make cheap."""
     assert workflow.select({"complexity": "SIMPLE", "risk": "LOW"}) == "DIRECT_DEVELOPMENT"
+
+
+def test_the_three_workflows_are_the_public_vocabulary():
+    assert workflow.WORKFLOWS == (
+        "DIRECT_DEVELOPMENT",
+        "PLANNED_DEVELOPMENT",
+        "HIGH_RISK_DEVELOPMENT",
+    )
