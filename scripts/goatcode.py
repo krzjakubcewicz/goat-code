@@ -899,8 +899,8 @@ def cmd_classify(args):
         else:
             try:
                 payload = json.loads(osenv.read_text(path))
-            except ValueError as exc:
-                reason = "classification file is not JSON: {}".format(exc)
+            except (OSError, ValueError) as exc:
+                reason = "classification file is unreadable: {}".format(exc)
     result = reportmod.record_classification(run, payload, reason=reason)
     text = "{}/{} -> {}".format(
         result["classification"]["complexity"],

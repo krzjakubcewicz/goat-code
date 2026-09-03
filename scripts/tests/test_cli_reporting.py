@@ -437,6 +437,17 @@ def test_the_ledger_records_a_deterministic_override(capsys, node_repo):
     assert any("override" in e and "authentication" in e for e in ledger.entries(run))
 
 
+def test_a_rejected_value_is_never_written_to_the_ledger(capsys, node_repo):
+    """The ledger is durable and the rejected value is whatever a model emitted."""
+    run = start(capsys, node_repo)
+    report.record_classification(
+        run, _classification(risk="sk-live-SECRET-should-not-persist")
+    )
+    written = "\n".join(ledger.entries(run))
+    assert "SECRET" not in written
+    assert "risk" in written, "it must still say which field was wrong"
+
+
 def test_the_cli_records_a_classification_from_a_file(capsys, node_repo):
     run = start(capsys, node_repo)
     target = run.root / "classification.json"
@@ -459,6 +470,20 @@ def test_the_cli_falls_back_when_the_file_is_not_json(capsys, node_repo):
     )
     assert code == 0, "a broken classifier must not stop the run"
     assert payload["fallback"]
+
+
+def test_the_cli_falls_back_when_the_file_cannot_be_read(capsys, node_repo):
+    """A directory, or a path we lack permission for, must not end the run."""
+    run = start(capsys, node_repo)
+    unreadable = run.root / "not-a-file"
+    unreadable.mkdir()
+
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "classify", "--file", str(unreadable)
+    )
+    assert code == 0
+    assert payload["fallback"]
+    assert payload["workflow"] == "PLANNED_DEVELOPMENT"
 
 
 def test_the_cli_takes_an_explicit_fallback(capsys, node_repo):

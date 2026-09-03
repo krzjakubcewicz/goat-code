@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import ledger, miniyaml, osenv, tasks, tdd
+from . import classify, ledger, miniyaml, osenv, tasks, tdd, workflow as workflowmod
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -269,6 +269,18 @@ def record_slice(
     }
 
 
+def _fallback_advisory():
+    """A copy of `classify.FALLBACK` with its own list objects.
+
+    `dict(classify.FALLBACK)` is a shallow copy - the `_factors` lists would
+    still be the module constant's own objects, shared across every fallback.
+    """
+    advisory = dict(classify.FALLBACK)
+    advisory["risk_factors"] = list(advisory["risk_factors"])
+    advisory["complexity_factors"] = list(advisory["complexity_factors"])
+    return advisory
+
+
 def record_classification(run, payload=None, reason=None):
     """Record how a run was sized, and which workflow that earns it.
 
@@ -276,18 +288,18 @@ def record_classification(run, payload=None, reason=None):
     enum must not stop the run - it costs the run its cheaper path, which is
     the safe direction to fail in.
     """
-    from . import classify, workflow as workflowmod
-
     fallback = reason
     if payload is None:
-        advisory = dict(classify.FALLBACK)
+        advisory = _fallback_advisory()
         fallback = fallback or "no classification produced"
     else:
         try:
             advisory = classify.parse(payload)
         except classify.ClassifyError as exc:
-            advisory = dict(classify.FALLBACK)
-            fallback = "invalid classification: {}".format(exc)
+            advisory = _fallback_advisory()
+            fallback = "invalid classification: {}".format(
+                ", ".join(exc.fields) if exc.fields else "not a JSON object"
+            )
 
     spec = osenv.read_text(run.spec_path) if pathlib.Path(run.spec_path).exists() else ""
     final = classify.apply_rules(advisory, spec, [])

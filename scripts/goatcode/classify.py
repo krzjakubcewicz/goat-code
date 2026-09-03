@@ -33,7 +33,15 @@ FALLBACK = {
 
 
 class ClassifyError(RuntimeError):
-    """A classification was rejected, with every reason it can act on."""
+    """A classification was rejected, with every reason it can act on.
+
+    ``fields`` names what failed without repeating what was in it. The values
+    are whatever a model emitted, so they must not reach a durable log.
+    """
+
+    def __init__(self, message, fields=None):
+        super().__init__(message)
+        self.fields = tuple(fields or ())
 
 
 def risk_at_least(left, right):
@@ -48,20 +56,24 @@ def parse(payload):
     a hallucinated category than a category we forgot.
     """
     if not isinstance(payload, dict):
-        raise ClassifyError("classification must be a JSON object, got {}".format(type(payload).__name__))
+        raise ClassifyError(
+            "classification must be a JSON object, got {}".format(type(payload).__name__), fields=()
+        )
 
     problems = []
-    complexity = _enum(payload.get("complexity"), COMPLEXITIES, "complexity", problems)
-    risk = _enum(payload.get("risk"), RISKS, "risk", problems)
+    bad_fields = []
+    complexity = _enum(payload.get("complexity"), COMPLEXITIES, "complexity", problems, bad_fields)
+    risk = _enum(payload.get("risk"), RISKS, "risk", problems, bad_fields)
     reasoning = payload.get("reasoning")
     if not isinstance(reasoning, str) or not reasoning.strip():
         problems.append("'reasoning' must be a non-empty string saying why")
+        bad_fields.append("reasoning")
 
-    risk_factors = _factors(payload.get("riskFactors"), "riskFactors", problems)
-    complexity_factors = _factors(payload.get("complexityFactors"), "complexityFactors", problems)
+    risk_factors = _factors(payload.get("riskFactors"), "riskFactors", problems, bad_fields)
+    complexity_factors = _factors(payload.get("complexityFactors"), "complexityFactors", problems, bad_fields)
 
     if problems:
-        raise ClassifyError("; ".join(problems))
+        raise ClassifyError("; ".join(problems), fields=bad_fields)
 
     return {
         "complexity": complexity,
@@ -72,22 +84,25 @@ def parse(payload):
     }
 
 
-def _enum(value, allowed, field, problems):
+def _enum(value, allowed, field, problems, bad_fields):
     if value is None:
         problems.append("'{}' is missing; expected one of {}".format(field, ", ".join(allowed)))
+        bad_fields.append(field)
         return None
     text = str(value).strip().upper()
     if text not in allowed:
         problems.append("'{}' is {!r}; expected one of {}".format(field, value, ", ".join(allowed)))
+        bad_fields.append(field)
         return None
     return text
 
 
-def _factors(value, field, problems):
+def _factors(value, field, problems, bad_fields):
     if value is None:
         return []
     if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
         problems.append("'{}' must be a list of strings".format(field))
+        bad_fields.append(field)
         return []
     return [v.strip() for v in value if v.strip()]
 

@@ -54,6 +54,12 @@ def test_a_missing_field_is_rejected():
     assert "risk" in str(excinfo.value)
 
 
+def test_the_error_names_the_fields_that_failed():
+    with pytest.raises(ClassifyError) as excinfo:
+        classify.parse(payload(risk="BANANA", complexity="TRIVIAL"))
+    assert set(excinfo.value.fields) == {"risk", "complexity"}
+
+
 def test_every_problem_is_named_at_once():
     with pytest.raises(ClassifyError) as excinfo:
         classify.parse({"complexity": "TRIVIAL", "risk": "SPICY"})
