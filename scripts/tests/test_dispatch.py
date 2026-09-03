@@ -436,3 +436,9 @@ def test_the_classifier_prompt_does_not_inline_the_repository(run):
 def test_the_classifier_prompt_says_it_is_advisory(run):
     text = dispatch.classifier(run)
     assert "advisory" in text.lower()
+
+
+def test_the_classifier_is_told_not_to_quote_file_contents(run):
+    """Its reasoning lands in state.json, so a quoted secret would persist."""
+    text = dispatch.classifier(run)
+    assert "Never quote a file's contents" in text

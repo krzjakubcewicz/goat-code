@@ -127,6 +127,7 @@ classifier:
 # set here - it comes from the `model:` frontmatter on /goat-code and
 # /goat-code-resume, or from your session model.
 models:
+  classifier: haiku
   planner: opus
   executor: haiku
   executor_escalated: sonnet

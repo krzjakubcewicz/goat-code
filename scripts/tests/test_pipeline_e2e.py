@@ -76,6 +76,7 @@ class FakeAgent:
     def __init__(
         self, slices, ask_first=True, fail_verdicts=0, block=None, conflict=False,
         kind="feature", e2e_status="PASS", subprocess=False,
+        complexity="COMPLEX", risk="LOW",
     ):
         self.subprocess = subprocess
         self.repo = None  # set by make_driver
@@ -86,6 +87,8 @@ class FakeAgent:
         self.fail_verdicts = fail_verdicts
         self.block = dict(block or {})
         self.conflict = conflict
+        self.complexity = complexity
+        self.risk = risk
         self.planner_rounds = 0
         self.verdicts = []
         self.dispatched = []
@@ -96,6 +99,21 @@ class FakeAgent:
         return runner(run, *args, **kwargs)
 
     # -- the agents --------------------------------------------------------
+
+    def classifier(self, run, _dispatch):
+        """What the real classifier does: write the JSON, run the command."""
+        target = run.root / "classification.json"
+        osenv.write_json(
+            target,
+            {
+                "complexity": self.complexity,
+                "risk": self.risk,
+                "reasoning": "fixture",
+                "riskFactors": [],
+                "complexityFactors": [],
+            },
+        )
+        self.cli(run, "classify", "--file", str(target))
 
     def planner(self, run, _dispatch):
         self.planner_rounds += 1
@@ -187,6 +205,7 @@ class FakeAgent:
         run = Run.load(self.repo)
         self.dispatched.append((entry["agent"], entry["slice"], entry["model"]))
         handler = {
+            "goat-code-classifier": self.classifier,
             "goat-code-planner": self.planner,
             "goat-code-executor": self.executor,
             "goat-code-synthesizer": self.synthesizer,
@@ -275,6 +294,11 @@ def started(node_repo):
 
 
 def test_a_whole_run_reaches_done_with_no_model(started):
+    """Drives one real run through the whole shipped loop, no model involved.
+
+    The sequence starts at `classify`: sizing the task is what decides how
+    much of the rest of this list a run actually gets.
+    """
     agent = FakeAgent(
         [
             slice_doc("S1", "src/s1/**"),
@@ -290,6 +314,7 @@ def test_a_whole_run_reaches_done_with_no_model(started):
 
     ordered = [p for i, p in enumerate(driver.phases) if i == 0 or p != driver.phases[i - 1]]
     assert ordered == [
+        "classify",
         "grill",
         "ask",
         "grill",

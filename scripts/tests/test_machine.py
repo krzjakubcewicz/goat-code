@@ -75,6 +75,25 @@ QUESTIONS = "\n".join(
 
 @pytest.fixture
 def run(git_repo):
+    """A run classified as needing the full pipeline.
+
+    Every test on this fixture asserts grill, approve or verify behaviour,
+    which is what PLANNED_DEVELOPMENT means. Saying so explicitly is more
+    honest than depending on "nothing has classified it yet", and it keeps
+    these tests describing the pipeline they were written for now that
+    classification exists.
+    """
+    created = Run.create(git_repo, "magic link", "chat")
+    created.set_classification(
+        {"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT"
+    )
+    created.set_phase("grill")
+    return created
+
+
+@pytest.fixture
+def unclassified_run(git_repo):
+    """A run before the classifier has spoken - what `init` leaves behind."""
     created = Run.create(git_repo, "magic link", "chat")
     created.set_phase("grill")
     return created
@@ -138,7 +157,7 @@ def finish_slice(run, slice_id):
 # -- phase derivation ------------------------------------------------------
 
 
-def test_a_fresh_run_is_grilling(run):
+def test_a_classified_run_starts_by_grilling(run):
     assert machine.derive_phase(run) == "grill"
 
 
@@ -172,7 +191,12 @@ def test_a_valid_plan_in_chat_mode_needs_approval(run):
 
 
 def test_spec_mode_skips_straight_to_execute(git_repo):
+    """Spec mode waives the approval gate, not the classification: the spec
+    file is exactly what the classifier reads."""
     run = Run.create(git_repo, "x", "spec")
+    run.set_classification(
+        {"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT"
+    )
     write_plan(run)
     assert machine.derive_phase(run) == "execute"
 
@@ -818,3 +842,108 @@ def test_an_executor_dispatch_records_its_slice_and_model(run):
 
     entries = ledger.entries(run)
     assert any("dispatch goat-code-executor S1 on haiku" in entry for entry in entries), entries
+
+
+# -- classification ---------------------------------------------------------
+
+
+def test_a_fresh_run_classifies_before_it_grills(unclassified_run):
+    assert machine.derive_phase(unclassified_run) == "classify"
+
+
+def test_classification_dispatches_the_classifier_on_the_cheap_model(unclassified_run):
+    action = machine.next_action(unclassified_run)
+    assert action["action"] == "dispatch"
+    assert action["dispatches"][0]["agent"] == "goat-code-classifier"
+    assert action["dispatches"][0]["model"] == "haiku"
+
+
+def test_a_classified_run_moves_on_to_grill(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
+    assert machine.derive_phase(run) == "grill"
+
+
+def test_a_direct_workflow_skips_the_questions_not_the_planner(run):
+    """CORRECTED by controller ruling F1 - see the note at the end of this brief.
+
+    A direct run still derives `grill`; what it skips is being invited to ask.
+    The planner is dispatched with the `forced` prompt, which already says
+    "you must return PLAN, record anything unresolved as an assumption".
+    """
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    assert machine.derive_phase(run) == "grill"
+
+    action = machine.next_action(run)
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "final round" in prompt, "a direct run must not be invited to ask questions"
+
+
+def test_a_planned_workflow_is_still_invited_to_ask(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
+    action = machine.next_action(run)
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "Grill first" in prompt
+
+
+def test_a_direct_workflow_needs_no_approval(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    assert machine.derive_phase(run) == "execute", "no approval gate on a direct run"
+
+
+def test_a_planned_workflow_still_gates(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
+    write_plan(run)
+    assert machine.derive_phase(run) == "approve"
+
+
+def test_classification_switched_off_behaves_exactly_as_before(git_repo):
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "classifier:\n  enabled: false\n")
+    created = Run.create(git_repo, "magic link", "chat")
+    created.set_phase("grill")
+    assert machine.derive_phase(created) == "grill"
+
+
+def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+    finished(run)
+
+    assert machine.derive_phase(run) == "done", "gates alone decide a direct run"
+
+
+def test_a_direct_workflow_fails_rather_than_replanning_on_a_red_gate(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+    assert machine.derive_phase(run) == "failed"
+
+
+def test_a_planned_workflow_still_dispatches_the_verifier(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+    action = machine.next_action(run)
+    assert action["dispatches"][0]["agent"] == "goat-code-verifier"

@@ -15,7 +15,7 @@ import pathlib
 
 import sys
 
-from . import debuglog, diffpkg, dispatch, ledger, merge, miniyaml, osenv, progress, report, schema, tasks
+from . import debuglog, diffpkg, dispatch, gates, ledger, merge, miniyaml, osenv, progress, report, schema, tasks, workflow as workflowmod
 
 #: Actions the orchestrator knows how to perform.
 ACTIONS = ("run", "dispatch", "ask", "escalate", "stop")
@@ -92,7 +92,13 @@ def derive_phase(run, evidence=None):
     if run.phase in ("done", "failed", "aborted"):
         return run.phase
 
+    # Sizing the task comes before deciding how much pipeline it gets.
+    if run.wants_classification() and run.classification is None:
+        return "classify"
+
     if not evidence.has_plan:
+        # A direct run derives `grill` like any other; `_grill` is what
+        # suppresses the questions.
         return "ask" if evidence.questions.exists() else "grill"
 
     if not evidence.plan_valid:
@@ -101,8 +107,24 @@ def derive_phase(run, evidence=None):
     if run.approval == "revise":
         return "grill"
 
-    if run.needs_approval():
+    if workflowmod.wants_gate(run.workflow) and run.needs_approval():
         return "approve"
+
+    if not workflowmod.wants_verifier(run.workflow):
+        if evidence.merge_state.get("status") in ("clean", "empty"):
+            report_path = run.cycle_dir() / "gates.json"
+            if report_path.exists():
+                blocking = gates.blocking(osenv.read_json(report_path) or {})
+                if blocking:
+                    # No replan on a direct run: it was routed here because it
+                    # was small, and grinding a cycle budget on it is the cost
+                    # the routing exists to avoid.
+                    return "failed"
+                if run.wants_e2e(evidence.doc) and not evidence.e2e.get("status"):
+                    return "e2e"
+                if run.wants_progress() and not evidence.progress.get("status"):
+                    return "record"
+                return "done"
 
     if evidence.verdict == "PASS":
         # A feature earns an end-to-end test before the run is called done.
@@ -167,6 +189,7 @@ def next_action(run, stack_profile=None):
         run.set_phase(phase)
 
     handler = {
+        "classify": _classify,
         "grill": _grill,
         "ask": _ask,
         "plan": _plan,
@@ -230,6 +253,21 @@ def _log_action(run, action):
     return action
 
 
+# -- classify ----------------------------------------------------------------
+
+
+def _classify(run, _evidence, _stack):
+    text = dispatch.classifier(run)
+    path = dispatch.write(run, "classifier", text)
+    return _action(
+        run,
+        "dispatch",
+        "size the task before deciding how much pipeline it gets",
+        "dispatch goat-code-classifier ({})".format(_model(run, "classifier")),
+        dispatches=[_entry("goat-code-classifier", _model(run, "classifier"), path)],
+    )
+
+
 # -- grill -----------------------------------------------------------------
 
 
@@ -239,12 +277,19 @@ def _grill(run, evidence, _stack):
         revision = run.state.get("approval_feedback")
         run.set_approval(None)
 
-    forced = run.grill_exhausted() and not revision
+    # A direct run is never invited to ask: `forced` already renders "This is
+    # the final round. You must return `PLAN`. Record anything still
+    # unresolved in the plan's `assumptions:` list."
+    forced = not revision and (
+        run.grill_exhausted() or not workflowmod.wants_grill(run.workflow)
+    )
     text = dispatch.planner(run, evidence.round, forced=forced, revision=revision)
     path = dispatch.write(run, "planner-round-{}".format(evidence.round), text)
 
     if revision:
         reason = "the user asked for plan changes"
+    elif not workflowmod.wants_grill(run.workflow):
+        reason = "direct workflow: plan without a round of questions"
     elif forced:
         reason = "grill round cap reached; the planner must produce a plan"
     else:

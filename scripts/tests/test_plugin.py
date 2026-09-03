@@ -100,6 +100,7 @@ def test_every_agent_exists():
         "goat-code-e2e",
         "goat-code-scribe",
         "goat-code-replanner",
+        "goat-code-classifier",
     }
 
 
@@ -314,6 +315,7 @@ def test_ci_covers_all_three_platforms():
 # -- model assignment ------------------------------------------------------
 
 EXPECTED_MODELS = {
+    "goat-code-classifier": "haiku",
     "goat-code-planner": "opus",
     "goat-code-executor": "haiku",
     "goat-code-synthesizer": "sonnet",

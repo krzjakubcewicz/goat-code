@@ -113,6 +113,7 @@ DEFAULT_CONFIG = {
     # The Claude Code executable, if it is not on PATH.
     "claude_bin": "claude",
     "models": {
+        "classifier": "haiku",
         "planner": "opus",
         "executor": "haiku",
         "executor_escalated": "sonnet",
