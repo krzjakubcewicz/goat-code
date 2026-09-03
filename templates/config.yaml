@@ -106,9 +106,9 @@ gate_timeout_seconds: 1800
 setup_timeout_seconds: 1800
 
 # Classify each run's complexity and risk before planning, and route it:
-#   SIMPLE / NORMAL   - straight to the executors, judged by the gates
-#   COMPLEX           - grill, approval gate, and a verifier verdict
-#   HIGH_RISK         - all of that, plus your sign-off before it finishes
+#   low risk, small     - straight to the executors, judged by the gates
+#   complex, or medium  - grill, approval gate, and a verifier verdict
+#   high or critical    - all of that, plus your sign-off before it finishes
 #
 # The classifier is advisory. Deterministic rules may raise a run's risk -
 # anything touching auth, crypto, secrets, CI, infra or migrations - and can

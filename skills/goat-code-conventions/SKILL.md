@@ -45,6 +45,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" <command> [--json]
 | `progress show` / `progress append --body F` | the cross-run log; append never rewrites. `show` gives the planner's view - every standing constraint plus the last few entries - and `--all` the whole file |
 | `progress promote "<rule>"` | promote a learning that has now recurred into a standing constraint every future plan carries |
 | `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |
+| `classify --file F` / `classify --fallback "why"` | record how a run was sized, and route it |
 | `plan validate` / `plan show` / `plan waves` | gate and inspect tasks.yaml |
 | `wave next` | slice ids dispatchable right now, capped at the parallel limit |
 | `worktree create S1 S2` / `worktree reap` | isolated checkouts |
@@ -85,6 +86,7 @@ never commits it.
   constraints.md       rules promoted out of that log, shown to every planner
   spec.md              the spec, plus appended "## Clarifications (round N)"
   stack.json           detected languages, frameworks, commands, specialists
+  classification.json  the classifier's advisory complexity/risk, merged with the rules
   state.json           phase, cycle, base commit, branches, worktrees
   ledger.md            append-only progress; the recovery map
   log.txt              debug trace, only when debug mode is on

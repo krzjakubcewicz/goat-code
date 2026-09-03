@@ -52,6 +52,46 @@ Everything below applies unchanged to both.
 
 Phase becomes `grill`.
 
+## `classify` → size the task
+
+Unless `classifier.enabled` is false, the machine dispatches
+`goat-code-classifier` on the cheapest configured model before anything else
+runs. It reads `spec.md` and `stack.json` - not the repository - and writes
+`classification.json`, then runs:
+
+```bash
+python scripts/goatcode.py classify --file .goatcode/runs/<id>/classification.json
+```
+
+That command validates the JSON, merges it with the deterministic risk
+rules, records the result in `state.json` and the ledger, and selects one of
+three workflows:
+
+| Workflow | Grill | Approval gate | Verifier | Human sign-off |
+| --- | --- | --- | --- | --- |
+| `DIRECT_DEVELOPMENT` | no | no | no - gates decide | no |
+| `PLANNED_DEVELOPMENT` | yes | yes | yes | no |
+| `HIGH_RISK_DEVELOPMENT` | yes | yes | yes | yes |
+
+A `DIRECT_DEVELOPMENT` run still gets a plan - the executors need briefs,
+ownership and acceptance criteria - it just skips the questions and the
+gate, and a red gate fails it rather than opening a replan cycle.
+`DIRECT_DEVELOPMENT` needs **LOW** risk specifically: `MEDIUM` or above
+always earns at least `PLANNED_DEVELOPMENT`.
+
+Invalid JSON, an unknown enum, a timeout or no answer at all all take the
+same conservative fallback: `NORMAL`/`MEDIUM`, which routes to
+`PLANNED_DEVELOPMENT` rather than the cheap path. The deterministic rules
+still run, so a fallback on a task that touches authentication still lands
+in `HIGH_RISK_DEVELOPMENT`.
+
+The same deterministic rules run a second time once a plan exists, now over
+every slice's `owns` and `touches_shared` globs rather than the request
+text, and can only raise the risk further. A `HIGH` or `CRITICAL` result -
+from either pass - forces the approval gate on for every cycle regardless of
+`approval_gate`, including a replan cycle, and the run's `done` message asks
+you to sign off, naming the factors that caused it.
+
 ## `grill` → dispatch the planner
 
 The machine renders `cycle-N/dispatch/planner-round-R.md` and dispatches
@@ -89,8 +129,10 @@ grinding.
 ## `approve` → the gate
 
 Applies when `approval_gate` is `chat` (default) and this is a chat-mode
-run's first cycle. The action carries the plan table command, the validator
-warnings and any recorded assumptions.
+run's first cycle - or unconditionally, every cycle, when the run is
+classified `HIGH_RISK_DEVELOPMENT` (see `classify` above). The action
+carries the plan table command, the validator warnings and any recorded
+assumptions.
 
 ```bash
 python scripts/goatcode.py approve --yes

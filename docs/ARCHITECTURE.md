@@ -86,6 +86,50 @@ model, runs identically on every OS, and costs nothing to repeat. The
 end-to-end test drives the entire pipeline with no LLM at all — that test
 passing is what proves the spine works on a given platform.
 
+## The classifier is advisory, the rules are not
+
+Sizing a task is a judgement call, so a model makes it. Acting on that
+judgement is a security decision, so a model does not.
+
+`goat-code-classifier` reads the request and returns a complexity and a
+risk. `classify.apply_rules` then evaluates the same request against
+deterministic patterns - authentication, cryptography, secrets, CI, infra,
+migrations, data deletion - and takes the **higher** of the two risks. It
+can raise what the model said. It can never lower it.
+
+That asymmetry is the whole design. A model that hallucinates `LOW` on an
+authentication change loses the pipeline nothing, because the rules raise it
+back. A model that is unavailable, times out, or returns prose loses nothing
+either: the fallback is `NORMAL`/`MEDIUM`, and the rules still run over the
+spec text. There is no input to the classifier that buys a task less
+scrutiny than the rules demand.
+
+The rules run twice, because they see different evidence each time. At
+classify time only the request exists. Once a plan exists, the same rules
+run again over the paths its slices claim, so a plan that reaches into
+`src/auth/**` escalates a run whose description never said so. The second
+pass may only raise.
+
+Routing lives in `workflow.py` and nowhere else. Four predicates - grill,
+gate, verifier, approval - are the only questions the machine asks about a
+workflow, so what a classification actually costs a run is readable in one
+sitting rather than inferred from conditionals spread across the phases.
+
+`DIRECT_DEVELOPMENT` requires **LOW** risk specifically, not just a small or
+simple task. `MEDIUM` or above always earns at least `PLANNED_DEVELOPMENT` -
+`MEDIUM` is the floor of the `dependencies` rule, so a dependency bump never
+reaches the executors unverified. That is also what keeps the fallback safe:
+its conservative `NORMAL`/`MEDIUM` routes to `PLANNED_DEVELOPMENT`, never the
+cheap path.
+
+A `HIGH` or `CRITICAL` classification - from either pass - forces the
+approval gate on for every cycle, whatever `approval_gate` says: `never` is
+the user waiving review for ordinary work, not for a change the
+deterministic rules flagged. That holds on a replan cycle too, so a run the
+second pass escalates at cycle 2 is gated before its remedial slices run,
+and the run's terminal message asks for a sign-off, naming the factors that
+caused it.
+
 ## One base for the whole run
 
 A run forks from the **base branch** - config, else `origin/HEAD`, else
