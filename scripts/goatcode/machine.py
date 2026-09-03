@@ -15,7 +15,7 @@ import pathlib
 
 import sys
 
-from . import debuglog, diffpkg, dispatch, gates, ledger, merge, miniyaml, osenv, progress, report, schema, tasks, workflow as workflowmod
+from . import debuglog, diffpkg, dispatch, gates, ledger, merge, miniyaml, osenv, progress, report, run as runmod, schema, tasks, workflow as workflowmod
 
 #: Actions the orchestrator knows how to perform.
 ACTIONS = ("run", "dispatch", "ask", "escalate", "stop")
@@ -184,14 +184,15 @@ def _action(run, kind, reason, message, **extra):
 def next_action(run, stack_profile=None):
     """The single next thing to do. Persists the derived phase."""
     evidence = Evidence(run)
+    # Escalate before any phase is decided, so the decision sees the new
+    # workflow. Doing it afterwards let a phase computed under the old
+    # workflow be persisted first - and if that phase was terminal, the
+    # re-derive short-circuited on it and the escalation was silently lost.
+    if run.phase not in runmod.TERMINAL_PHASES and evidence.plan_valid:
+        report.reassess_classification(run, evidence.doc)
     phase = derive_phase(run, evidence)
     if phase != run.phase:
         run.set_phase(phase)
-    if evidence.plan_valid:
-        if report.reassess_classification(run, evidence.doc):
-            # The workflow changed under us; re-derive with the new routing.
-            phase = derive_phase(run, evidence)
-            run.set_phase(phase)
 
     handler = {
         "classify": _classify,

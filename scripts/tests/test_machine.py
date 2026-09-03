@@ -991,3 +991,48 @@ def test_the_escalation_is_recorded_in_the_ledger(run):
 
     machine.next_action(run)
     assert any("re-classified" in e for e in ledger.entries(run))
+
+
+def test_an_escalation_is_not_lost_when_the_run_would_otherwise_be_done(run, git_repo):
+    """The ordering hazard: a phase computed under the old workflow must not
+    be persisted before the escalation, because a terminal one is
+    unreachable afterwards - derive_phase short-circuits on it."""
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["kind"] = "bugfix"
+    doc["kind_reason"] = "no e2e, so a green run would reach done in one call"
+    for item in doc["slices"]:
+        item["status"] = "done"
+    doc["slices"][0]["owns"] = ["src/auth/**"]
+    write_plan(run, doc)
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["scribe"] = {"status": "WRITTEN"}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+    machine.next_action(run)
+
+    reloaded = Run.load(git_repo)
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+    assert reloaded.phase != "done", "a run needing a verifier must not report finished"
+
+
+def test_a_plan_that_only_touches_shared_a_sensitive_path_still_escalates(run):
+    """`touches_shared` is read alongside `owns`; a glob living only there
+    must still trip the rules."""
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["slices"][0]["touches_shared"] = ["src/auth/**"]
+    write_plan(run, doc)
+
+    machine.next_action(run)
+    reloaded = Run.load(run.repo)
+    assert reloaded.classification["risk"] == "HIGH"
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
