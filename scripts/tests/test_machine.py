@@ -585,6 +585,7 @@ def test_a_remedial_cycle_narrows_the_verifier_to_what_moved(run, git_repo):
     osenv.write_text(run.cycle_dir() / "verdict.md", "VERDICT: FAIL" + "\n")
 
     run.advance_cycle()
+    run.set_approval("approved")  # cycle 2 of a high-risk run gates again
     second = conftest.commit_file(git_repo, "src/s2/index.js", "two", "s2")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
@@ -1089,3 +1090,50 @@ def test_an_ordinary_run_stops_without_asking_for_sign_off(run):
     action = machine.next_action(run)
     assert action["action"] == "stop"
     assert "sign-off" not in action["message"].lower()
+
+
+def test_a_run_escalated_after_the_first_cycle_is_still_gated(git_repo):
+    """The second deterministic pass can raise a run to high risk on a replan.
+    If the gate only ever considered cycle 1, those remedial slices - the ones
+    that touch what the rules flagged - would run unreviewed."""
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "approval_gate: never\n")
+    created = Run.create(git_repo, "x", "chat")
+    created.set_classification(
+        {"complexity": "COMPLEX", "risk": "LOW", "deterministic_overrides": []},
+        "PLANNED_DEVELOPMENT",
+    )
+    assert created.needs_approval() is False, "ordinary work honours approval_gate: never"
+
+    created.advance_cycle()
+    created.set_classification(
+        {"complexity": "COMPLEX", "risk": "HIGH", "deterministic_overrides": ["authentication"]},
+        "HIGH_RISK_DEVELOPMENT",
+    )
+    assert created.needs_approval() is True
+
+
+def test_the_sign_off_names_a_rules_only_escalation(run):
+    """A rules-driven escalation records its reasons in `deterministic_overrides`,
+    not `risk_factors` - the message must read the field that is actually set."""
+    run.set_classification(
+        {
+            "complexity": "COMPLEX",
+            "risk": "HIGH",
+            "risk_factors": [],
+            "deterministic_overrides": ["authentication"],
+        },
+        "HIGH_RISK_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    for index, item in enumerate(doc["slices"]):
+        item["owns"] = ["src/feature{}/**".format(index)]
+    write_plan(run, doc)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    finished(run)
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert "authentication" in action["message"]

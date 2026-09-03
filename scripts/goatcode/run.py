@@ -744,7 +744,7 @@ class Run:
         not for a change the deterministic rules flagged as touching
         authentication, secrets or production.
         """
-        if workflowmod.wants_approval(self.workflow) and self.cycle == 1:
+        if workflowmod.wants_approval(self.workflow):
             return True
 
         gate = self.config.get("approval_gate", "chat")

@@ -706,13 +706,16 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
             "nothing was committed to your branch {}".format(run.state.get("base_branch")),
         ]
         if workflowmod.wants_approval(run.workflow):
+            classification = run.classification or {}
+            reasons = list(classification.get("deterministic_overrides") or [])
+            for factor in classification.get("risk_factors") or []:
+                if factor not in reasons:
+                    reasons.append(factor)
             lines.append("")
             lines.append(
                 "This run was classified HIGH_RISK ({}). Review the diff before you"
                 " merge it - the pipeline asks for your sign-off rather than"
-                " assuming it.".format(
-                    ", ".join((run.classification or {}).get("risk_factors") or ["risk rules"])
-                )
+                " assuming it.".format(", ".join(reasons) or "risk rules")
             )
         message = "\n".join(lines)
         payload["finish"] = cli_argv(run, "finish")
