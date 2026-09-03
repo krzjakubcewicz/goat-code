@@ -36,6 +36,11 @@ def select(classification):
     Risk outranks complexity: a one-file change to authentication is SIMPLE
     by size and still deserves the whole pipeline.
 
+    The direct pipeline is for LOW risk only - anything at or above MEDIUM
+    earns a verifier. MEDIUM is the floor of the `dependencies` rule, so a
+    dependency bump reaching the executors unverified is never acceptable,
+    fallback classification or not.
+
     A value this function does not recognise is treated as unreadable, never
     as low. Reading an unknown risk as "not HIGH" would let a malformed
     classification buy the cheapest pipeline, which is the one thing routing
@@ -48,7 +53,7 @@ def select(classification):
         return "PLANNED_DEVELOPMENT"
     if risk in ("HIGH", "CRITICAL"):
         return "HIGH_RISK_DEVELOPMENT"
-    if complexity == "COMPLEX":
+    if risk == "MEDIUM" or complexity == "COMPLEX":
         return "PLANNED_DEVELOPMENT"
     return "DIRECT_DEVELOPMENT"
 

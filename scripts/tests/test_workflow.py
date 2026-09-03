@@ -16,7 +16,7 @@ def classification(complexity="NORMAL", risk="LOW"):
     [
         ("SIMPLE", "LOW", "DIRECT_DEVELOPMENT"),
         ("NORMAL", "LOW", "DIRECT_DEVELOPMENT"),
-        ("NORMAL", "MEDIUM", "DIRECT_DEVELOPMENT"),
+        ("NORMAL", "MEDIUM", "PLANNED_DEVELOPMENT"),
         ("COMPLEX", "LOW", "PLANNED_DEVELOPMENT"),
         ("COMPLEX", "MEDIUM", "PLANNED_DEVELOPMENT"),
         ("SIMPLE", "HIGH", "HIGH_RISK_DEVELOPMENT"),
@@ -89,3 +89,26 @@ def test_the_three_workflows_are_the_public_vocabulary():
         "PLANNED_DEVELOPMENT",
         "HIGH_RISK_DEVELOPMENT",
     )
+
+
+def test_a_medium_risk_task_earns_a_verifier():
+    """MEDIUM is the minimum risk of the `dependencies` rule. A dependency
+    change reaching the executors unverified is the direct pipeline being
+    sold to work that has not earned it."""
+    assert workflow.select({"complexity": "SIMPLE", "risk": "MEDIUM"}) == "PLANNED_DEVELOPMENT"
+    assert workflow.wants_verifier("PLANNED_DEVELOPMENT") is True
+
+
+def test_the_classifiers_fallback_never_reaches_the_direct_pipeline():
+    """The fail-safe property, pinned across the two modules that carry it.
+
+    `classify.FALLBACK` is what a timeout, malformed JSON or an invented enum
+    produces. If it routed to DIRECT_DEVELOPMENT the run would lose both the
+    verifier and the approval gate, which is precisely failing open.
+    """
+    from goatcode import classify
+
+    selected = workflow.select(classify.FALLBACK)
+    assert selected == "PLANNED_DEVELOPMENT"
+    assert workflow.wants_verifier(selected) is True
+    assert workflow.wants_gate(selected) is True
