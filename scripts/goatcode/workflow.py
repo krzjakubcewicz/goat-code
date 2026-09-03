@@ -9,6 +9,12 @@ from __future__ import annotations
 
 WORKFLOWS = ("DIRECT_DEVELOPMENT", "PLANNED_DEVELOPMENT", "HIGH_RISK_DEVELOPMENT")
 
+#: Mirrors classify.RISKS / classify.COMPLEXITIES. Kept local on purpose: the
+#: router must not import the classifier it routes for, and these are a
+#: contract between the two rather than an implementation detail of either.
+RISKS = ("LOW", "MEDIUM", "HIGH", "CRITICAL")
+COMPLEXITIES = ("SIMPLE", "NORMAL", "COMPLEX")
+
 #: What each workflow switches on: grill, approval gate, verifier, human sign-off.
 _SWITCHES = {
     "DIRECT_DEVELOPMENT": (False, False, False, False),
@@ -27,17 +33,22 @@ def select(classification):
 
     Risk outranks complexity: a one-file change to authentication is SIMPLE
     by size and still deserves the whole pipeline.
+
+    A value this function does not recognise is treated as unreadable, never
+    as low. Reading an unknown risk as "not HIGH" would let a malformed
+    classification buy the cheapest pipeline, which is the one thing routing
+    must never sell.
     """
     risk = str((classification or {}).get("risk", "")).upper()
     complexity = str((classification or {}).get("complexity", "")).upper()
 
+    if risk not in RISKS or complexity not in COMPLEXITIES:
+        return "PLANNED_DEVELOPMENT"
     if risk in ("HIGH", "CRITICAL"):
         return "HIGH_RISK_DEVELOPMENT"
     if complexity == "COMPLEX":
         return "PLANNED_DEVELOPMENT"
-    if complexity in ("SIMPLE", "NORMAL"):
-        return "DIRECT_DEVELOPMENT"
-    return "PLANNED_DEVELOPMENT"
+    return "DIRECT_DEVELOPMENT"
 
 
 def _switch(name, index):

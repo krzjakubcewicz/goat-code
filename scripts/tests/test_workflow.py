@@ -55,3 +55,23 @@ def test_what_each_workflow_switches_on(name, grill, gate, verifier, approval):
 def test_an_unknown_workflow_name_is_treated_as_the_heaviest():
     assert workflow.wants_verifier("NONSENSE") is True
     assert workflow.wants_grill("NONSENSE") is True
+
+
+@pytest.mark.parametrize(
+    "classification",
+    [
+        {"complexity": "SIMPLE", "risk": "BANANA"},
+        {"complexity": "BANANA", "risk": "LOW"},
+        {"complexity": "SIMPLE"},
+        {"risk": "LOW"},
+        {"complexity": "", "risk": ""},
+    ],
+)
+def test_an_unreadable_classification_never_buys_the_cheapest_pipeline(classification):
+    """Reading an unknown risk as "not HIGH" would invert the whole rule."""
+    assert workflow.select(classification) != "DIRECT_DEVELOPMENT"
+
+
+def test_a_well_formed_simple_task_still_gets_the_direct_pipeline():
+    """The guard must not swallow the case the routing exists to make cheap."""
+    assert workflow.select({"complexity": "SIMPLE", "risk": "LOW"}) == "DIRECT_DEVELOPMENT"
