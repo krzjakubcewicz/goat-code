@@ -922,6 +922,21 @@ def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
     assert machine.derive_phase(run) == "done", "gates alone decide a direct run"
 
 
+def test_a_direct_workflow_fails_on_a_failed_end_to_end_test(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+    run.state["e2e"] = {"status": "FAILED", "detail": "boom", "tests": None}
+    run.save()
+
+    assert machine.derive_phase(run) == "failed", "a direct run must not swallow a failed e2e test"
+
+
 def test_a_direct_workflow_fails_rather_than_replanning_on_a_red_gate(run):
     run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
     write_plan(run)
