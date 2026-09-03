@@ -12,7 +12,7 @@ import datetime
 import pathlib
 import re
 
-from . import debuglog, miniyaml, osenv
+from . import debuglog, miniyaml, osenv, workflow as workflowmod
 
 GOATCODE_DIR = ".goatcode"
 STATE_VERSION = 1
@@ -737,7 +737,16 @@ class Run:
         return decision
 
     def gate_applies(self):
-        """Whether this cycle needs the user to approve the plan."""
+        """Whether this cycle needs the user to approve the plan.
+
+        A high-risk classification forces the gate on regardless of config:
+        `approval_gate: never` is the user waiving review for ordinary work,
+        not for a change the deterministic rules flagged as touching
+        authentication, secrets or production.
+        """
+        if workflowmod.wants_approval(self.workflow) and self.cycle == 1:
+            return True
+
         gate = self.config.get("approval_gate", "chat")
         if gate == "never":
             return False

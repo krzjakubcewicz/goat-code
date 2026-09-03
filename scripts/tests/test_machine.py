@@ -1036,3 +1036,56 @@ def test_a_plan_that_only_touches_shared_a_sensitive_path_still_escalates(run):
     reloaded = Run.load(run.repo)
     assert reloaded.classification["risk"] == "HIGH"
     assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+
+
+def test_a_high_risk_run_is_gated_even_when_the_config_says_never(git_repo):
+    """Deterministic policy outranks a config that waives review."""
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "approval_gate: never\n")
+    created = Run.create(git_repo, "auth change", "chat")
+    created.set_classification({"complexity": "SIMPLE", "risk": "HIGH"}, "HIGH_RISK_DEVELOPMENT")
+    write_plan(created)
+
+    assert machine.derive_phase(created) == "approve"
+
+
+def test_a_direct_run_is_still_ungated_when_the_config_says_never(git_repo):
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "approval_gate: never\n")
+    created = Run.create(git_repo, "label change", "chat")
+    created.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(created)
+
+    assert machine.derive_phase(created) == "execute"
+
+
+def test_a_high_risk_run_asks_for_sign_off_when_it_stops(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "HIGH"}, "HIGH_RISK_DEVELOPMENT")
+    write_plan(run)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    finished(run)
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert "sign-off" in action["message"].lower()
+    assert "HIGH_RISK" in action["message"]
+
+
+def test_an_ordinary_run_stops_without_asking_for_sign_off(run):
+    """The shared PLAN fixture owns `src/auth/**`, which the second
+    deterministic pass escalates - so an "ordinary" run needs a plan that
+    touches nothing the rules care about."""
+    doc = copy.deepcopy(PLAN)
+    for index, item in enumerate(doc["slices"]):
+        item["owns"] = ["src/feature{}/**".format(index)]
+    write_plan(run, doc)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    finished(run)
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert "sign-off" not in action["message"].lower()

@@ -696,17 +696,25 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
     }
 
     if outcome == "done":
-        message = "\n".join(
-            [
-                "DONE",
-                "",
-                "branch: {}".format(run.integration_branch),
-                "review: git diff {}..{}".format(run.base_commit[:12], run.integration_branch),
-                "merge:  git merge {}".format(run.integration_branch),
-                "",
-                "nothing was committed to your branch {}".format(run.state.get("base_branch")),
-            ]
-        )
+        lines = [
+            "DONE",
+            "",
+            "branch: {}".format(run.integration_branch),
+            "review: git diff {}..{}".format(run.base_commit[:12], run.integration_branch),
+            "merge:  git merge {}".format(run.integration_branch),
+            "",
+            "nothing was committed to your branch {}".format(run.state.get("base_branch")),
+        ]
+        if workflowmod.wants_approval(run.workflow):
+            lines.append("")
+            lines.append(
+                "This run was classified HIGH_RISK ({}). Review the diff before you"
+                " merge it - the pipeline asks for your sign-off rather than"
+                " assuming it.".format(
+                    ", ".join((run.classification or {}).get("risk_factors") or ["risk rules"])
+                )
+            )
+        message = "\n".join(lines)
         payload["finish"] = cli_argv(run, "finish")
     else:
         message = "\n".join(
