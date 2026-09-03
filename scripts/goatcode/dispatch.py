@@ -155,6 +155,73 @@ def questions_path(run, round_no):
 
 
 # --------------------------------------------------------------------------
+# classifier
+# --------------------------------------------------------------------------
+
+
+def classifier(run):
+    """Prompt for the agent that sizes a run before anything is planned."""
+    lines = []
+    add = lines.append
+    target = run.root / "classification.json"
+
+    add("# Classifier dispatch - {}".format(run.run_id))
+    add("")
+    add("Decide how much machinery this task deserves, before any of it runs.")
+    add("")
+    add("## Read only these")
+    add("")
+    add("- The request: `{}`".format(run.spec_path))
+    add("- The detected stack: `{}`".format(run.stack_path))
+    add("")
+    add("**Do not read the whole repository.** You are sizing the request, not")
+    add("solving it. Look at a file only when the request names one and you")
+    add("genuinely cannot judge its blast radius without it.")
+    add("")
+    add("## Judge two independent things")
+    add("")
+    add("**complexity** - how much work this is:")
+    add("`SIMPLE` one file, one obvious change; `NORMAL` a few files in one")
+    add("module; `COMPLEX` several modules, architectural or API changes,")
+    add("schema changes, concurrency, or requirements you cannot pin down.")
+    add("")
+    add("**risk** - what it could break:")
+    add("`LOW` `MEDIUM` `HIGH` `CRITICAL`. Raise it for authentication,")
+    add("authorization, cryptography, secrets, CI/CD, infrastructure,")
+    add("dependency changes, migrations, data deletion, permissions, or")
+    add("anything touching customer data.")
+    add("")
+    add("These are independent. A one-file change to a login check is SIMPLE")
+    add("and HIGH, and that combination is the point of asking twice.")
+    add("")
+    add("## Write exactly this JSON to")
+    add("")
+    add("    {}".format(target))
+    add("")
+    add("```json")
+    add("{")
+    add('  "complexity": "SIMPLE | NORMAL | COMPLEX",')
+    add('  "risk": "LOW | MEDIUM | HIGH | CRITICAL",')
+    add('  "riskFactors": ["authentication"],')
+    add('  "complexityFactors": ["multiple modules"],')
+    add('  "reasoning": "One or two sentences on why."')
+    add("}")
+    add("```")
+    add("")
+    add("Then run:")
+    add("")
+    add("    {}".format(command(run, "classify", "--file", str(target))))
+    add("")
+    add("Your answer is **advisory**. Deterministic rules run over the same")
+    add("request and may raise the risk you give - they never lower it - so")
+    add("guessing HIGH to be safe buys nothing and costs the run a slower")
+    add("pipeline. Say what you actually think.")
+    add("")
+    add("Return one line: the complexity and risk you chose.")
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
 # executor
 # --------------------------------------------------------------------------
 

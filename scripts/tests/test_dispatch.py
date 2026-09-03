@@ -385,3 +385,31 @@ def test_the_planner_is_shown_the_capped_view_not_the_whole_log(run):
     text = dispatch.planner(run, 1)
     assert "progress show" in text
     assert "progress show --all" not in text
+
+
+# -- classifier -------------------------------------------------------------
+
+
+def test_the_classifier_prompt_names_its_inputs_and_output(run):
+    text = dispatch.classifier(run)
+    assert str(run.spec_path) in text
+    assert str(run.root / "classification.json") in text
+    assert "classify" in text
+
+
+def test_the_classifier_prompt_carries_the_exact_schema(run):
+    text = dispatch.classifier(run)
+    for field in ("complexity", "risk", "riskFactors", "complexityFactors", "reasoning"):
+        assert field in text
+    assert "SIMPLE" in text and "CRITICAL" in text
+
+
+def test_the_classifier_prompt_does_not_inline_the_repository(run):
+    """Cost control: the classifier reads metadata, not the codebase."""
+    text = dispatch.classifier(run)
+    assert "do not read the whole repository" in text.lower()
+
+
+def test_the_classifier_prompt_says_it_is_advisory(run):
+    text = dispatch.classifier(run)
+    assert "advisory" in text.lower()
