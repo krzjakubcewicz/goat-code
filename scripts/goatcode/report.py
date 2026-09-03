@@ -269,6 +269,47 @@ def record_slice(
     }
 
 
+def record_classification(run, payload=None, reason=None):
+    """Record how a run was sized, and which workflow that earns it.
+
+    Never raises. A classifier that timed out, returned prose, or invented an
+    enum must not stop the run - it costs the run its cheaper path, which is
+    the safe direction to fail in.
+    """
+    from . import classify, workflow as workflowmod
+
+    fallback = reason
+    if payload is None:
+        advisory = dict(classify.FALLBACK)
+        fallback = fallback or "no classification produced"
+    else:
+        try:
+            advisory = classify.parse(payload)
+        except classify.ClassifyError as exc:
+            advisory = dict(classify.FALLBACK)
+            fallback = "invalid classification: {}".format(exc)
+
+    spec = osenv.read_text(run.spec_path) if pathlib.Path(run.spec_path).exists() else ""
+    final = classify.apply_rules(advisory, spec, [])
+    # The spec's audit fields: which rules and which model produced this, so a
+    # routing decision stays explicable after either has changed.
+    final["classifier_version"] = classify.VERSION
+    final["model"] = (run.config.get("classifier") or {}).get("model")
+    final["fallback_reason"] = fallback
+    selected = workflowmod.select(final)
+    run.set_classification(final, selected)
+
+    detail = "classified {}/{} -> {}".format(final["complexity"], final["risk"], selected)
+    overrides = final.get("deterministic_overrides") or []
+    if overrides:
+        detail += "; deterministic override: {}".format(", ".join(overrides))
+    if fallback:
+        detail += "; fallback: {}".format(fallback)
+    ledger.append(run, detail)
+
+    return {"classification": final, "workflow": selected, "fallback": fallback}
+
+
 # --------------------------------------------------------------------------
 # role reports
 # --------------------------------------------------------------------------
@@ -276,6 +317,7 @@ def record_slice(
 
 #: Statuses each non-slice role may report.
 ROLE_STATUSES = {
+    "classifier": ("DONE", "FAILED"),
     "synthesizer": ("CLEAN", "ESCALATE"),
     "e2e": ("PASS", "SKIPPED", "FAILED"),
     "scribe": ("WRITTEN", "SKIPPED"),

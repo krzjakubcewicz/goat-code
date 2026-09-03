@@ -887,6 +887,32 @@ def cmd_report(args):
     return EXIT_OK
 
 
+def cmd_classify(args):
+    """Record how this run was sized. Never fails the run."""
+    run = resolve_run(args)
+    payload = None
+    reason = args.fallback
+    if args.file and not reason:
+        path = pathlib.Path(args.file)
+        if not path.exists():
+            reason = "no classification file at {}".format(path)
+        else:
+            try:
+                payload = json.loads(osenv.read_text(path))
+            except ValueError as exc:
+                reason = "classification file is not JSON: {}".format(exc)
+    result = reportmod.record_classification(run, payload, reason=reason)
+    text = "{}/{} -> {}".format(
+        result["classification"]["complexity"],
+        result["classification"]["risk"],
+        result["workflow"],
+    )
+    if result["fallback"]:
+        text += "  (fallback: {})".format(result["fallback"])
+    emit(args, result, text)
+    return EXIT_OK
+
+
 def cmd_answer(args):
     """Record the user's answers to a grill round."""
     run = resolve_run(args)
@@ -1303,6 +1329,11 @@ def build_parser():
     )
     p.add_argument("--force", action="store_true", help="skip the DONE checks (use only with a reason)")
     p.set_defaults(func=cmd_report)
+
+    p = add(sub, "classify", help="record how this run was sized, and route it")
+    p.add_argument("--file", help="the classification JSON the classifier wrote")
+    p.add_argument("--fallback", help="why classification could not be produced")
+    p.set_defaults(func=cmd_classify)
 
     p = add(sub, "answer", help="record the user's answers to a grill round")
     p.add_argument("pairs", nargs="*", metavar="QID=ANSWER")

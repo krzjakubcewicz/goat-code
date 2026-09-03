@@ -10,7 +10,7 @@ import pathlib
 
 import pytest
 
-from goatcode import osenv, worktree
+from goatcode import ledger, osenv, report, worktree
 from goatcode.run import Run
 from tests.conftest import make_run
 from tests.test_cli import cli, invoke, invoke_json, plan_for, slice_spec  # noqa: F401
@@ -375,3 +375,96 @@ def test_a_brief_for_a_slice_with_no_worktree_yet_still_renders(capsys, git_repo
     code, payload, _err = invoke_json(capsys, "--repo", str(git_repo), "brief", "S1")
     assert code == 0
     assert pathlib.Path(payload["briefs"][0]).exists()
+
+
+# -- classification ---------------------------------------------------------
+
+
+def _classification(**overrides):
+    base = {
+        "complexity": "SIMPLE",
+        "risk": "LOW",
+        "reasoning": "One label change.",
+        "riskFactors": [],
+        "complexityFactors": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_a_valid_classification_selects_a_workflow(capsys, node_repo):
+    run = start(capsys, node_repo)
+    result = report.record_classification(run, _classification())
+    assert result["workflow"] == "DIRECT_DEVELOPMENT"
+    assert Run.load(node_repo).workflow == "DIRECT_DEVELOPMENT"
+
+
+def test_the_rules_escalate_what_the_model_said(capsys, node_repo):
+    run = start(capsys, node_repo)
+    osenv.write_text(run.spec_path, "Rework the login token expiry.\n")
+    result = report.record_classification(run, _classification())
+    assert result["classification"]["risk"] == "HIGH"
+    assert result["workflow"] == "HIGH_RISK_DEVELOPMENT"
+    assert "authentication" in result["classification"]["deterministic_overrides"]
+
+
+def test_a_malformed_classification_falls_back_conservatively(capsys, node_repo):
+    run = start(capsys, node_repo)
+    result = report.record_classification(run, {"complexity": "TRIVIAL"})
+    assert result["fallback"]
+    assert result["classification"]["complexity"] == "NORMAL"
+    assert result["workflow"] == "PLANNED_DEVELOPMENT"
+
+
+def test_a_fallback_still_gets_the_high_risk_path_when_the_rules_say_so(capsys, node_repo):
+    """The spec's hard requirement: no classifier, still no shortcut."""
+    run = start(capsys, node_repo)
+    osenv.write_text(run.spec_path, "Rotate the production signing secret.\n")
+    result = report.record_classification(run, None, reason="timeout")
+    assert result["workflow"] == "HIGH_RISK_DEVELOPMENT"
+
+
+def test_the_classification_is_written_to_the_ledger(capsys, node_repo):
+    run = start(capsys, node_repo)
+    report.record_classification(run, _classification())
+    assert any("classified SIMPLE/LOW" in e for e in ledger.entries(run))
+
+
+def test_the_ledger_records_a_deterministic_override(capsys, node_repo):
+    run = start(capsys, node_repo)
+    osenv.write_text(run.spec_path, "Change the auth middleware.\n")
+    report.record_classification(run, _classification())
+    assert any("override" in e and "authentication" in e for e in ledger.entries(run))
+
+
+def test_the_cli_records_a_classification_from_a_file(capsys, node_repo):
+    run = start(capsys, node_repo)
+    target = run.root / "classification.json"
+    osenv.write_json(target, _classification())
+
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "classify", "--file", str(target)
+    )
+    assert code == 0
+    assert payload["workflow"] == "DIRECT_DEVELOPMENT"
+
+
+def test_the_cli_falls_back_when_the_file_is_not_json(capsys, node_repo):
+    run = start(capsys, node_repo)
+    target = run.root / "classification.json"
+    osenv.write_text(target, "not json at all")
+
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "classify", "--file", str(target)
+    )
+    assert code == 0, "a broken classifier must not stop the run"
+    assert payload["fallback"]
+
+
+def test_the_cli_takes_an_explicit_fallback(capsys, node_repo):
+    start(capsys, node_repo)
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "classify", "--fallback", "provider timeout"
+    )
+    assert code == 0
+    assert payload["fallback"] == "provider timeout"
