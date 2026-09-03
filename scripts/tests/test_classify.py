@@ -156,3 +156,26 @@ def test_matching_is_case_insensitive():
 def test_a_factor_is_reported_once_however_many_times_it_matches():
     found = classify.evaluate("auth, authentication, login, oauth", [])
     assert found["factors"].count("authentication") == 1
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "secrets are stored in vault",
+        "API tokens are rotated daily",
+        "private keys are stored securely",
+        "rotate the signing secret",
+        "backend/.env",
+        "the .env file",
+    ],
+)
+def test_the_secrets_rule_matches_the_plurals_of_its_own_vocabulary(text):
+    """It carried a trailing \\b and so missed "secrets", "tokens", "keys"."""
+    assert "secrets" in classify.evaluate(text, [])["factors"], text
+
+
+@pytest.mark.parametrize("text", ["tokenizer for the parser", "tokenize the input"])
+def test_the_secrets_rule_does_not_escalate_parser_work(text):
+    """Over-matching is the preferred direction, but not to the point of
+    routing every lexer change through the high-risk pipeline."""
+    assert classify.evaluate(text, [])["factors"] == [], text
