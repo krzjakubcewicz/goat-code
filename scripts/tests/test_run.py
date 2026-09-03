@@ -505,6 +505,27 @@ def test_an_unclassified_run_behaves_as_it_does_today(git_repo):
     assert run.workflow == "PLANNED_DEVELOPMENT"
 
 
+@pytest.mark.parametrize("stored", [None, ""])
+def test_a_falsy_workflow_in_state_still_means_the_full_pipeline(git_repo, stored):
+    """The guarantee that makes `classifier.enabled: false` safe.
+
+    `state.get("workflow") or ...` collapses a missing key, a null and an
+    empty string alike. Swapping it for an `is None` check would break the
+    last two silently, so all three are pinned rather than the easy one.
+    """
+    run = make_run(git_repo)
+    run.state["workflow"] = stored
+    run.save()
+    assert Run.load(git_repo).workflow == "PLANNED_DEVELOPMENT"
+
+
+def test_a_recorded_workflow_is_not_overridden_by_the_default(git_repo):
+    """The guard must not swallow a real routing decision."""
+    run = make_run(git_repo)
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    assert Run.load(git_repo).workflow == "DIRECT_DEVELOPMENT"
+
+
 def test_a_recorded_classification_is_read_back(git_repo):
     run = make_run(git_repo)
     run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
