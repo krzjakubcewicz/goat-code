@@ -106,7 +106,8 @@ gate_timeout_seconds: 1800
 setup_timeout_seconds: 1800
 
 # Classify each run's complexity and risk before planning, and route it:
-#   low risk, small     - straight to the executors, judged by the gates
+#   low risk, small     - a plan (the executors still need briefs), then
+#                         straight to the executors, judged by the gates
 #   complex, or medium  - grill, approval gate, and a verifier verdict
 #   high or critical    - all of that, plus your sign-off before it finishes
 #

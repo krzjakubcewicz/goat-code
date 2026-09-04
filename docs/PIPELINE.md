@@ -56,7 +56,9 @@ Phase becomes `grill`.
 
 Unless `classifier.enabled` is false, the machine dispatches
 `goat-code-classifier` on the cheapest configured model before anything else
-runs. It reads `spec.md` and `stack.json` - not the repository - and writes
+runs. It reads `spec.md` and `stack.json`, and is told not to read the rest
+of the repository - it may open one file beyond those two only when the
+request names it and blast radius cannot be judged without it. It writes
 `classification.json`, then runs:
 
 ```bash
