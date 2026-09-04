@@ -75,6 +75,25 @@ QUESTIONS = "\n".join(
 
 @pytest.fixture
 def run(git_repo):
+    """A run classified as needing the full pipeline.
+
+    Every test on this fixture asserts grill, approve or verify behaviour,
+    which is what PLANNED_DEVELOPMENT means. Saying so explicitly is more
+    honest than depending on "nothing has classified it yet", and it keeps
+    these tests describing the pipeline they were written for now that
+    classification exists.
+    """
+    created = Run.create(git_repo, "magic link", "chat")
+    created.set_classification(
+        {"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT"
+    )
+    created.set_phase("grill")
+    return created
+
+
+@pytest.fixture
+def unclassified_run(git_repo):
+    """A run before the classifier has spoken - what `init` leaves behind."""
     created = Run.create(git_repo, "magic link", "chat")
     created.set_phase("grill")
     return created
@@ -138,7 +157,7 @@ def finish_slice(run, slice_id):
 # -- phase derivation ------------------------------------------------------
 
 
-def test_a_fresh_run_is_grilling(run):
+def test_a_classified_run_starts_by_grilling(run):
     assert machine.derive_phase(run) == "grill"
 
 
@@ -172,7 +191,12 @@ def test_a_valid_plan_in_chat_mode_needs_approval(run):
 
 
 def test_spec_mode_skips_straight_to_execute(git_repo):
+    """Spec mode waives the approval gate, not the classification: the spec
+    file is exactly what the classifier reads."""
     run = Run.create(git_repo, "x", "spec")
+    run.set_classification(
+        {"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT"
+    )
     write_plan(run)
     assert machine.derive_phase(run) == "execute"
 
@@ -561,6 +585,7 @@ def test_a_remedial_cycle_narrows_the_verifier_to_what_moved(run, git_repo):
     osenv.write_text(run.cycle_dir() / "verdict.md", "VERDICT: FAIL" + "\n")
 
     run.advance_cycle()
+    run.set_approval("approved")  # cycle 2 of a high-risk run gates again
     second = conftest.commit_file(git_repo, "src/s2/index.js", "two", "s2")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
@@ -818,3 +843,359 @@ def test_an_executor_dispatch_records_its_slice_and_model(run):
 
     entries = ledger.entries(run)
     assert any("dispatch goat-code-executor S1 on haiku" in entry for entry in entries), entries
+
+
+# -- classification ---------------------------------------------------------
+
+
+def test_a_fresh_run_classifies_before_it_grills(unclassified_run):
+    assert machine.derive_phase(unclassified_run) == "classify"
+
+
+def test_a_run_that_already_has_a_plan_does_not_reclassify(unclassified_run):
+    """A legacy in-flight run, created before the classifier existed.
+
+    Its state.json has no classification and no `models.classifier` in its
+    snapshotted config - exactly what `Run.create` left behind pre-branch.
+    Re-entering `classify` on resume would route it to a cheaper workflow
+    and drop the verifier and approval gate it already earned by planning.
+    """
+    write_plan(unclassified_run)
+    approved(unclassified_run)
+    assert machine.derive_phase(unclassified_run) == "execute"
+
+
+def test_classification_dispatches_the_classifier_on_the_cheap_model(unclassified_run):
+    action = machine.next_action(unclassified_run)
+    assert action["action"] == "dispatch"
+    assert action["dispatches"][0]["agent"] == "goat-code-classifier"
+    assert action["dispatches"][0]["model"] == "haiku"
+
+
+def test_a_classified_run_moves_on_to_grill(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
+    assert machine.derive_phase(run) == "grill"
+
+
+def test_a_direct_workflow_skips_the_questions_not_the_planner(run):
+    """CORRECTED by controller ruling F1 - see the note at the end of this brief.
+
+    A direct run still derives `grill`; what it skips is being invited to ask.
+    The planner is dispatched with the `forced` prompt, which already says
+    "you must return PLAN, record anything unresolved as an assumption".
+    """
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    assert machine.derive_phase(run) == "grill"
+
+    action = machine.next_action(run)
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "final round" in prompt, "a direct run must not be invited to ask questions"
+
+
+def test_a_planned_workflow_is_still_invited_to_ask(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
+    action = machine.next_action(run)
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "Grill first" in prompt
+
+
+def test_a_direct_workflow_needs_no_approval(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    assert machine.derive_phase(run) == "execute", "no approval gate on a direct run"
+
+
+def test_a_planned_workflow_still_gates(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
+    write_plan(run)
+    assert machine.derive_phase(run) == "approve"
+
+
+def test_classification_switched_off_behaves_exactly_as_before(git_repo):
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "classifier:\n  enabled: false\n")
+    created = Run.create(git_repo, "magic link", "chat")
+    created.set_phase("grill")
+    assert machine.derive_phase(created) == "grill"
+
+
+def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+    finished(run)
+
+    assert machine.derive_phase(run) == "done", "gates alone decide a direct run"
+
+
+def test_a_direct_workflow_fails_on_a_failed_end_to_end_test(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+    run.state["e2e"] = {"status": "FAILED", "detail": "boom", "tests": None}
+    run.save()
+
+    assert machine.derive_phase(run) == "failed", "a direct run must not swallow a failed e2e test"
+
+
+def test_a_direct_workflow_fails_rather_than_replanning_on_a_red_gate(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+    assert machine.derive_phase(run) == "failed"
+
+
+def test_a_planned_workflow_still_dispatches_the_verifier(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+    action = machine.next_action(run)
+    assert action["dispatches"][0]["agent"] == "goat-code-verifier"
+
+
+# -- reassessing risk once the plan exists ----------------------------------
+
+
+def test_a_plan_that_reaches_into_sensitive_paths_escalates_the_run(run):
+    """The second deterministic pass: the spec was innocent, the plan is not."""
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["slices"][0]["owns"] = ["src/auth/**"]
+    write_plan(run, doc)
+
+    machine.next_action(run)
+    reloaded = Run.load(run.repo)
+    assert reloaded.classification["risk"] == "HIGH"
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+
+
+def test_the_second_pass_never_lowers_a_run(run):
+    run.set_classification(
+        {"complexity": "COMPLEX", "risk": "CRITICAL", "deterministic_overrides": []},
+        "HIGH_RISK_DEVELOPMENT",
+    )
+    write_plan(run)
+
+    machine.next_action(run)
+    reloaded = Run.load(run.repo)
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+
+
+def test_an_unreadable_spec_floors_the_reassessment_without_lowering_it(run):
+    """Escalate-only means an unreadable spec must not look like a clean
+    bill of health, but it also must not reset a risk the plan pass already
+    holds - only `record_classification`'s fallback does that reset."""
+    run.set_classification(
+        {"complexity": "COMPLEX", "risk": "CRITICAL", "deterministic_overrides": []},
+        "HIGH_RISK_DEVELOPMENT",
+    )
+    write_plan(run)
+    run.spec_path.write_bytes(b"\xff\xfe not valid utf-8")
+
+    updated = report.reassess_classification(run, tasks.load(run.tasks_path))
+
+    assert updated is None, "CRITICAL is already above the fallback floor"
+    assert Run.load(run.repo).classification["risk"] == "CRITICAL"
+
+
+def test_an_unreadable_spec_still_floors_a_low_risk_reassessment(run):
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    for slice_doc in doc["slices"]:
+        slice_doc["owns"] = ["src/ui/**"]
+    write_plan(run, doc)
+    run.spec_path.write_bytes(b"\xff\xfe not valid utf-8")
+
+    updated = report.reassess_classification(run, tasks.load(run.tasks_path))
+
+    assert updated["risk"] == "MEDIUM"
+    assert "spec-unreadable" in updated["deterministic_overrides"]
+
+
+def test_the_escalation_is_recorded_in_the_ledger(run):
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["slices"][0]["owns"] = [".github/workflows/**"]
+    write_plan(run, doc)
+
+    machine.next_action(run)
+    assert any("re-classified" in e for e in ledger.entries(run))
+
+
+def test_an_escalation_is_not_lost_when_the_run_would_otherwise_be_done(run, git_repo):
+    """The ordering hazard: a phase computed under the old workflow must not
+    be persisted before the escalation, because a terminal one is
+    unreachable afterwards - derive_phase short-circuits on it."""
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["kind"] = "bugfix"
+    doc["kind_reason"] = "no e2e, so a green run would reach done in one call"
+    for item in doc["slices"]:
+        item["status"] = "done"
+    doc["slices"][0]["owns"] = ["src/auth/**"]
+    write_plan(run, doc)
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["scribe"] = {"status": "WRITTEN"}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+    machine.next_action(run)
+
+    reloaded = Run.load(git_repo)
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+    assert reloaded.phase != "done", "a run needing a verifier must not report finished"
+
+
+def test_a_plan_that_only_touches_shared_a_sensitive_path_still_escalates(run):
+    """`touches_shared` is read alongside `owns`; a glob living only there
+    must still trip the rules."""
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["slices"][0]["touches_shared"] = ["src/auth/**"]
+    write_plan(run, doc)
+
+    machine.next_action(run)
+    reloaded = Run.load(run.repo)
+    assert reloaded.classification["risk"] == "HIGH"
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+
+
+def test_a_high_risk_run_is_gated_even_when_the_config_says_never(git_repo):
+    """Deterministic policy outranks a config that waives review."""
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "approval_gate: never\n")
+    created = Run.create(git_repo, "auth change", "chat")
+    created.set_classification({"complexity": "SIMPLE", "risk": "HIGH"}, "HIGH_RISK_DEVELOPMENT")
+    write_plan(created)
+
+    assert machine.derive_phase(created) == "approve"
+
+
+def test_a_direct_run_is_still_ungated_when_the_config_says_never(git_repo):
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "approval_gate: never\n")
+    created = Run.create(git_repo, "label change", "chat")
+    created.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(created)
+
+    assert machine.derive_phase(created) == "execute"
+
+
+def test_a_high_risk_run_asks_for_sign_off_when_it_stops(run):
+    run.set_classification({"complexity": "COMPLEX", "risk": "HIGH"}, "HIGH_RISK_DEVELOPMENT")
+    write_plan(run)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    finished(run)
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert "sign-off" in action["message"].lower()
+    assert "HIGH_RISK" in action["message"]
+
+
+def test_an_ordinary_run_stops_without_asking_for_sign_off(run):
+    """The shared PLAN fixture owns `src/auth/**`, which the second
+    deterministic pass escalates - so an "ordinary" run needs a plan that
+    touches nothing the rules care about."""
+    doc = copy.deepcopy(PLAN)
+    for index, item in enumerate(doc["slices"]):
+        item["owns"] = ["src/feature{}/**".format(index)]
+    write_plan(run, doc)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    finished(run)
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert "sign-off" not in action["message"].lower()
+
+
+def test_a_run_escalated_after_the_first_cycle_is_still_gated(git_repo):
+    """The second deterministic pass can raise a run to high risk on a replan.
+    If the gate only ever considered cycle 1, those remedial slices - the ones
+    that touch what the rules flagged - would run unreviewed."""
+    config = git_repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    osenv.write_text(config, "approval_gate: never\n")
+    created = Run.create(git_repo, "x", "chat")
+    created.set_classification(
+        {"complexity": "COMPLEX", "risk": "LOW", "deterministic_overrides": []},
+        "PLANNED_DEVELOPMENT",
+    )
+    assert created.needs_approval() is False, "ordinary work honours approval_gate: never"
+
+    created.advance_cycle()
+    created.set_classification(
+        {"complexity": "COMPLEX", "risk": "HIGH", "deterministic_overrides": ["authentication"]},
+        "HIGH_RISK_DEVELOPMENT",
+    )
+    assert created.needs_approval() is True
+
+
+def test_the_sign_off_names_a_rules_only_escalation(run):
+    """A rules-driven escalation records its reasons in `deterministic_overrides`,
+    not `risk_factors` - the message must read the field that is actually set."""
+    run.set_classification(
+        {
+            "complexity": "COMPLEX",
+            "risk": "HIGH",
+            "risk_factors": [],
+            "deterministic_overrides": ["authentication"],
+        },
+        "HIGH_RISK_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    for index, item in enumerate(doc["slices"]):
+        item["owns"] = ["src/feature{}/**".format(index)]
+    write_plan(run, doc)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    finished(run)
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert "authentication" in action["message"]

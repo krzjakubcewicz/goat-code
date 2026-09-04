@@ -15,7 +15,7 @@ import pathlib
 
 import sys
 
-from . import debuglog, diffpkg, dispatch, ledger, merge, miniyaml, osenv, progress, report, schema, tasks
+from . import debuglog, diffpkg, dispatch, gates, ledger, merge, miniyaml, osenv, progress, report, run as runmod, schema, tasks, workflow as workflowmod
 
 #: Actions the orchestrator knows how to perform.
 ACTIONS = ("run", "dispatch", "ask", "escalate", "stop")
@@ -92,7 +92,18 @@ def derive_phase(run, evidence=None):
     if run.phase in ("done", "failed", "aborted"):
         return run.phase
 
+    # Sizing the task comes before deciding how much pipeline it gets - but
+    # only for a run that has not planned yet. A run with an approved plan
+    # already earned its workflow; re-classifying it on resume (a legacy
+    # in-flight run created before the classifier existed, for instance)
+    # would route it down to a cheaper path and drop the verifier and
+    # approval gate it was already going through.
+    if run.wants_classification() and run.classification is None and not evidence.has_plan:
+        return "classify"
+
     if not evidence.has_plan:
+        # A direct run derives `grill` like any other; `_grill` is what
+        # suppresses the questions.
         return "ask" if evidence.questions.exists() else "grill"
 
     if not evidence.plan_valid:
@@ -101,21 +112,23 @@ def derive_phase(run, evidence=None):
     if run.approval == "revise":
         return "grill"
 
-    if run.needs_approval():
+    if workflowmod.wants_gate(run.workflow) and run.needs_approval():
         return "approve"
 
+    if not workflowmod.wants_verifier(run.workflow):
+        if evidence.merge_state.get("status") in ("clean", "empty"):
+            report_path = run.cycle_dir() / "gates.json"
+            if report_path.exists():
+                blocking = gates.blocking(osenv.read_json(report_path) or {})
+                if blocking:
+                    # No replan on a direct run: it was routed here because it
+                    # was small, and grinding a cycle budget on it is the cost
+                    # the routing exists to avoid.
+                    return "failed"
+                return _after_the_work_is_judged(run, evidence)
+
     if evidence.verdict == "PASS":
-        # A feature earns an end-to-end test before the run is called done.
-        # A bugfix does not: its slices already had to be written test-first.
-        if run.wants_e2e(evidence.doc) and not evidence.e2e.get("status"):
-            return "e2e"
-        if evidence.e2e.get("status") == "FAILED":
-            return "failed"
-        # One entry per completed run, with the learnings a later run would
-        # otherwise have to rediscover.
-        if run.wants_progress() and not evidence.progress.get("status"):
-            return "record"
-        return "done"
+        return _after_the_work_is_judged(run, evidence)
     if evidence.verdict == "FAIL":
         return "replan"
     # Only owed a replan while the plan has nothing to execute. Once the
@@ -136,6 +149,27 @@ def derive_phase(run, evidence=None):
         return "synthesize"
 
     return "synthesize"
+
+
+def _after_the_work_is_judged(run, evidence):
+    """What is left once the gates (direct run) or the verifier (PASS) have
+    cleared this cycle's work.
+
+    Shared by both tails so an e2e failure is terminal either way - a direct
+    run reaching this point on a red e2e must not be waved through to "done"
+    just because it skipped the verifier.
+    """
+    # A feature earns an end-to-end test before the run is called done. A
+    # bugfix does not: its slices already had to be written test-first.
+    if run.wants_e2e(evidence.doc) and not evidence.e2e.get("status"):
+        return "e2e"
+    if evidence.e2e.get("status") == "FAILED":
+        return "failed"
+    # One entry per completed run, with the learnings a later run would
+    # otherwise have to rediscover.
+    if run.wants_progress() and not evidence.progress.get("status"):
+        return "record"
+    return "done"
 
 
 # --------------------------------------------------------------------------
@@ -162,11 +196,18 @@ def _action(run, kind, reason, message, **extra):
 def next_action(run, stack_profile=None):
     """The single next thing to do. Persists the derived phase."""
     evidence = Evidence(run)
+    # Escalate before any phase is decided, so the decision sees the new
+    # workflow. Doing it afterwards let a phase computed under the old
+    # workflow be persisted first - and if that phase was terminal, the
+    # re-derive short-circuited on it and the escalation was silently lost.
+    if run.phase not in runmod.TERMINAL_PHASES and evidence.plan_valid:
+        report.reassess_classification(run, evidence.doc)
     phase = derive_phase(run, evidence)
     if phase != run.phase:
         run.set_phase(phase)
 
     handler = {
+        "classify": _classify,
         "grill": _grill,
         "ask": _ask,
         "plan": _plan,
@@ -230,6 +271,21 @@ def _log_action(run, action):
     return action
 
 
+# -- classify ----------------------------------------------------------------
+
+
+def _classify(run, _evidence, _stack):
+    text = dispatch.classifier(run)
+    path = dispatch.write(run, "classifier", text)
+    return _action(
+        run,
+        "dispatch",
+        "size the task before deciding how much pipeline it gets",
+        "dispatch goat-code-classifier ({})".format(_model(run, "classifier")),
+        dispatches=[_entry("goat-code-classifier", _model(run, "classifier"), path)],
+    )
+
+
 # -- grill -----------------------------------------------------------------
 
 
@@ -239,12 +295,19 @@ def _grill(run, evidence, _stack):
         revision = run.state.get("approval_feedback")
         run.set_approval(None)
 
-    forced = run.grill_exhausted() and not revision
+    # A direct run is never invited to ask: `forced` already renders "This is
+    # the final round. You must return `PLAN`. Record anything still
+    # unresolved in the plan's `assumptions:` list."
+    forced = not revision and (
+        run.grill_exhausted() or not workflowmod.wants_grill(run.workflow)
+    )
     text = dispatch.planner(run, evidence.round, forced=forced, revision=revision)
     path = dispatch.write(run, "planner-round-{}".format(evidence.round), text)
 
     if revision:
         reason = "the user asked for plan changes"
+    elif not workflowmod.wants_grill(run.workflow):
+        reason = "direct workflow: plan without a round of questions"
     elif forced:
         reason = "grill round cap reached; the planner must produce a plan"
     else:
@@ -645,17 +708,28 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
     }
 
     if outcome == "done":
-        message = "\n".join(
-            [
-                "DONE",
-                "",
-                "branch: {}".format(run.integration_branch),
-                "review: git diff {}..{}".format(run.base_commit[:12], run.integration_branch),
-                "merge:  git merge {}".format(run.integration_branch),
-                "",
-                "nothing was committed to your branch {}".format(run.state.get("base_branch")),
-            ]
-        )
+        lines = [
+            "DONE",
+            "",
+            "branch: {}".format(run.integration_branch),
+            "review: git diff {}..{}".format(run.base_commit[:12], run.integration_branch),
+            "merge:  git merge {}".format(run.integration_branch),
+            "",
+            "nothing was committed to your branch {}".format(run.state.get("base_branch")),
+        ]
+        if workflowmod.wants_approval(run.workflow):
+            classification = run.classification or {}
+            reasons = list(classification.get("deterministic_overrides") or [])
+            for factor in classification.get("risk_factors") or []:
+                if factor not in reasons:
+                    reasons.append(factor)
+            lines.append("")
+            lines.append(
+                "This run was classified HIGH_RISK ({}). Review the diff before you"
+                " merge it - the pipeline asks for your sign-off rather than"
+                " assuming it.".format(", ".join(reasons) or "risk rules")
+            )
+        message = "\n".join(lines)
         payload["finish"] = cli_argv(run, "finish")
     else:
         message = "\n".join(

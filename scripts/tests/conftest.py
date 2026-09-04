@@ -68,7 +68,15 @@ def _build_node_repo(repo):
         json.dumps(
             {
                 "name": "fixture",
-                "scripts": {"build": "node -e \"process.exit(0)\"", "test": "node scripts/test.js"},
+                "scripts": {
+                    "build": "node -e \"process.exit(0)\"",
+                    # A runnable typecheck. Without it, stack detection falls back
+                    # to `npx --no-install tsc`, which cannot run in a fixture that
+                    # never installs anything - so the gate failed in every test
+                    # that reached it, which until now nothing did.
+                    "typecheck": "node -e \"process.exit(0)\"",
+                    "test": "node scripts/test.js",
+                },
                 "devDependencies": {"typescript": "5.6.0"},
             },
             indent=2,

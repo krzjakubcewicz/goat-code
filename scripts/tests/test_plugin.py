@@ -17,26 +17,48 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 
+#: Scratch and vendored trees, named rather than enumerated.
+#:
+#: An earlier version of this listed the offenders one by one and rotted
+#: within a day: `.superpowers/` appeared, its briefs and ledger named an
+#: agent that did not exist yet, and two cross-reference tests failed for a
+#: reason that had nothing to do with the plugin. Every such directory so far
+#: has been a dot-directory, so that is the rule now.
+_VENDORED = {"node_modules", "telemetry"}
+
+#: Planning artifacts, which are a different thing again. A plan's whole job
+#: is to name agents, commands and skills that do not exist yet - that is what
+#: makes it a plan. Cross-referencing a proposal against what ships today
+#: would fail by design, so these describe the future and are not scanned.
+_PLANS = ROOT / "docs" / "superpowers"
+
+
+def _is_plugin_material(path):
+    # Relative to ROOT, not the absolute path: an absolute path carries
+    # every ancestor directory too, and a repo checked out under any
+    # dot-directory (plugins install to ~/.claude/plugins/) would otherwise
+    # make every path look like it lives under a dot-directory and empty
+    # this scan out from under every test that uses it.
+    parts = path.relative_to(ROOT).parts
+    if any(part.startswith(".") for part in parts):
+        return False
+    if _VENDORED & set(parts):
+        return False
+    return _PLANS not in path.parents
+
+
 AGENTS = sorted((ROOT / "agents").glob("*.md"))
 COMMANDS = sorted((ROOT / "commands").glob("*.md"))
 SKILLS = sorted((ROOT / "skills").glob("*/SKILL.md"))
-#: Directories that are not part of the plugin: git internals, installed
-#: dependencies, and everything `.gitignore` keeps out - local run telemetry,
-#: caches, virtualenvs, a run directory left behind by a self-test. A stray
-#: `.md` in any of them is not a plugin file and must not be cross-referenced
-#: as one; copied run artifacts in particular are full of paths that look like
-#: agent and command names.
-EXCLUDED_DIRS = {
-    ".git",
-    ".goatcode",
-    ".pytest_cache",
-    ".venv",
-    ".worktrees",
-    "__pycache__",
-    "node_modules",
-    "telemetry",
-}
-MARKDOWN = sorted(p for p in ROOT.rglob("*.md") if not EXCLUDED_DIRS & set(p.parts))
+MARKDOWN = sorted(p for p in ROOT.rglob("*.md") if _is_plugin_material(p))
+
+# An empty scan makes every cross-reference test that iterates it pass
+# vacuously - it looks green while checking nothing. Guard it here, once,
+# rather than trusting each test to notice its own parametrize list is empty.
+assert AGENTS, "agent scan came back empty"
+assert COMMANDS, "command scan came back empty"
+assert SKILLS, "skill scan came back empty"
+assert MARKDOWN, "markdown scan came back empty"
 
 
 def frontmatter(path):
@@ -92,6 +114,7 @@ def test_every_agent_exists():
         "goat-code-e2e",
         "goat-code-scribe",
         "goat-code-replanner",
+        "goat-code-classifier",
     }
 
 
@@ -306,6 +329,7 @@ def test_ci_covers_all_three_platforms():
 # -- model assignment ------------------------------------------------------
 
 EXPECTED_MODELS = {
+    "goat-code-classifier": "haiku",
     "goat-code-planner": "opus",
     "goat-code-executor": "haiku",
     "goat-code-synthesizer": "sonnet",

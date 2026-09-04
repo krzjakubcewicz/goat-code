@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import json
+import pathlib
 
 import pytest
 
@@ -76,6 +77,7 @@ class FakeAgent:
     def __init__(
         self, slices, ask_first=True, fail_verdicts=0, block=None, conflict=False,
         kind="feature", e2e_status="PASS", subprocess=False,
+        complexity="COMPLEX", risk="LOW",
     ):
         self.subprocess = subprocess
         self.repo = None  # set by make_driver
@@ -86,6 +88,8 @@ class FakeAgent:
         self.fail_verdicts = fail_verdicts
         self.block = dict(block or {})
         self.conflict = conflict
+        self.complexity = complexity
+        self.risk = risk
         self.planner_rounds = 0
         self.verdicts = []
         self.dispatched = []
@@ -97,9 +101,32 @@ class FakeAgent:
 
     # -- the agents --------------------------------------------------------
 
-    def planner(self, run, _dispatch):
+    def classifier(self, run, _dispatch):
+        """What the real classifier does: write the JSON, run the command."""
+        target = run.root / "classification.json"
+        osenv.write_json(
+            target,
+            {
+                "complexity": self.complexity,
+                "risk": self.risk,
+                "reasoning": "fixture",
+                "riskFactors": [],
+                "complexityFactors": [],
+            },
+        )
+        self.cli(run, "classify", "--file", str(target))
+
+    def planner(self, run, dispatch_entry):
+        """Ask on the first round, unless the machine forced a plan.
+
+        A real planner reads its prompt and obeys "you must return PLAN".
+        The fake has to as well, or a test asserting "a direct run does not
+        ask" is only asserting that the fake happened not to ask.
+        """
         self.planner_rounds += 1
-        if self.ask_first and self.planner_rounds == 1:
+        prompt = pathlib.Path(dispatch_entry["prompt"]).read_text(encoding="utf-8")
+        forced = "final round" in prompt
+        if self.ask_first and self.planner_rounds == 1 and not forced:
             (run.cycle_dir() / "questions-round-1.yaml").write_text(QUESTIONS, encoding="utf-8")
             return
         miniyaml.dump(plan_document(run, self.slices, self.kind), run.tasks_path)
@@ -187,6 +214,7 @@ class FakeAgent:
         run = Run.load(self.repo)
         self.dispatched.append((entry["agent"], entry["slice"], entry["model"]))
         handler = {
+            "goat-code-classifier": self.classifier,
             "goat-code-planner": self.planner,
             "goat-code-executor": self.executor,
             "goat-code-synthesizer": self.synthesizer,
@@ -275,6 +303,11 @@ def started(node_repo):
 
 
 def test_a_whole_run_reaches_done_with_no_model(started):
+    """Drives one real run through the whole shipped loop, no model involved.
+
+    The sequence starts at `classify`: sizing the task is what decides how
+    much of the rest of this list a run actually gets.
+    """
     agent = FakeAgent(
         [
             slice_doc("S1", "src/s1/**"),
@@ -290,6 +323,7 @@ def test_a_whole_run_reaches_done_with_no_model(started):
 
     ordered = [p for i, p in enumerate(driver.phases) if i == 0 or p != driver.phases[i - 1]]
     assert ordered == [
+        "classify",
         "grill",
         "ask",
         "grill",
@@ -370,6 +404,57 @@ def test_a_precise_spec_skips_the_question_round(started):
     driver.loop()
     assert "ask" not in driver.phases
     assert agent.planner_rounds == 1
+
+
+# -- classification ---------------------------------------------------------
+
+
+def test_a_simple_run_reaches_done_without_planner_questions_or_a_verifier(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], complexity="SIMPLE", risk="LOW")
+    driver = make_driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    assert "ask" not in driver.phases, "a direct run must not stop to ask"
+    dispatched = [a for a, _s, _m in agent.dispatched]
+    assert "goat-code-classifier" in dispatched
+    assert "goat-code-verifier" not in dispatched
+
+
+def test_a_complex_run_still_gets_the_whole_pipeline(started):
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], complexity="COMPLEX", risk="LOW")
+    driver = make_driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    dispatched = [a for a, _s, _m in agent.dispatched]
+    assert "goat-code-verifier" in dispatched
+
+
+def test_a_high_risk_run_is_routed_by_the_rules_not_the_model(started):
+    """The model says SIMPLE/LOW; the spec text says authentication."""
+    run = Run.load(started)
+    osenv.write_text(run.spec_path, "Change the login token expiry.\n")
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], complexity="SIMPLE", risk="LOW")
+    driver = make_driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    reloaded = Run.load(started)
+    assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
+    assert "goat-code-verifier" in [a for a, _s, _m in agent.dispatched]
+
+
+def test_a_classifier_that_writes_nothing_falls_back_and_still_finishes(started):
+    class Silent(FakeAgent):
+        def classifier(self, run, _dispatch):
+            self.cli(run, "classify", "--fallback", "fixture: no answer")
+
+    agent = Silent([slice_doc("S1", "src/s1/**")])
+    final = make_driver(started, agent).loop()
+
+    assert final["outcome"] == "done"
+    assert Run.load(started).workflow == "PLANNED_DEVELOPMENT"
 
 
 # -- the failure loop ------------------------------------------------------

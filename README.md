@@ -216,6 +216,7 @@ gets the expensive models; mechanical work does not.
 | Role | Model | Why |
 | --- | --- | --- |
 | orchestrator | haiku | follows a fixed script; the CLI does the thinking |
+| classifier | haiku | sizes the task before anything else runs |
 | planner | opus | interrogation and decomposition are the highest-leverage step |
 | executor | haiku | works from a complete brief, test-first, in one slice |
 | executor (after BLOCKED) | sonnet | one step up when haiku could not finish |

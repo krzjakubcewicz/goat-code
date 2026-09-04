@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import ledger, miniyaml, osenv, tasks, tdd
+from . import classify, ledger, miniyaml, osenv, tasks, tdd, workflow as workflowmod
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -267,6 +267,139 @@ def record_slice(
         "reason": reason,
         "evidence": dict(evidence) if evidence else None,
     }
+
+
+def _spec_text(run):
+    """The spec's on-disk text, or ``""`` if it has none yet.
+
+    Missing is expected - a run may not have written a spec yet, and "" is
+    the honest state for that. Unreadable (bad encoding, permissions,
+    replaced by a directory) is not the same thing: it is raised, so a
+    caller cannot mistake "the rules found nothing" for "the rules never
+    got to look."
+    """
+    path = pathlib.Path(run.spec_path)
+    if not path.exists():
+        return ""
+    return osenv.read_text(path)
+
+
+def reassess_classification(run, doc):
+    """Run the deterministic rules again, now that the plan names paths.
+
+    At classify time only the request existed. A plan that claims
+    `src/auth/**` is evidence the request never carried, so the same rules
+    see it now. Escalate-only: this can cost a run its cheap path and can
+    never buy one. Never raises: an unreadable spec floors the result at the
+    fallback's own risk rather than stopping `next_action` cold.
+    """
+    current = run.classification
+    if not current or not doc:
+        return None
+
+    paths = []
+    for item in tasks.slices(doc):
+        paths.extend(item.get("owns") or [])
+        paths.extend(item.get("touches_shared") or [])
+
+    try:
+        spec = _spec_text(run)
+        unreadable = False
+    except (OSError, UnicodeDecodeError):
+        spec = ""
+        unreadable = True
+
+    updated = classify.apply_rules(current, spec, paths)
+    if unreadable:
+        # An unreadable spec must not look like a clean bill of health from
+        # the rules. Floor the result at the fallback's own risk - never a
+        # downgrade, since apply_rules already guarantees `current`'s risk
+        # is the floor for its own merge.
+        updated["risk"] = classify.risk_at_least(updated["risk"], classify.FALLBACK["risk"])
+        if updated["risk"] != current.get("risk"):
+            overrides = list(updated.get("deterministic_overrides") or [])
+            if "spec-unreadable" not in overrides:
+                overrides.append("spec-unreadable")
+            updated["deterministic_overrides"] = overrides
+    if updated["risk"] == current.get("risk"):
+        return None
+
+    selected = workflowmod.select(updated)
+    run.set_classification(updated, selected)
+    ledger.append(
+        run,
+        "re-classified {}/{} -> {} after the plan claimed {}".format(
+            updated["complexity"],
+            updated["risk"],
+            selected,
+            ", ".join(updated.get("deterministic_overrides") or []),
+        ),
+    )
+    return updated
+
+
+def _fallback_advisory():
+    """A copy of `classify.FALLBACK` with its own list objects.
+
+    `dict(classify.FALLBACK)` is a shallow copy - the `_factors` lists would
+    still be the module constant's own objects, shared across every fallback.
+    """
+    advisory = dict(classify.FALLBACK)
+    advisory["risk_factors"] = list(advisory["risk_factors"])
+    advisory["complexity_factors"] = list(advisory["complexity_factors"])
+    return advisory
+
+
+def record_classification(run, payload=None, reason=None):
+    """Record how a run was sized, and which workflow that earns it.
+
+    Never raises. A classifier that timed out, returned prose, or invented an
+    enum must not stop the run - it costs the run its cheaper path, which is
+    the safe direction to fail in. Same for a spec.md that cannot be read:
+    the fallback classification stands in, so the model's own claim never
+    goes unchallenged against an empty haystack.
+    """
+    fallback = reason
+    if payload is None:
+        advisory = _fallback_advisory()
+        fallback = fallback or "no classification produced"
+    else:
+        try:
+            advisory = classify.parse(payload)
+        except classify.ClassifyError as exc:
+            advisory = _fallback_advisory()
+            fallback = "invalid classification: {}".format(
+                ", ".join(exc.fields) if exc.fields else "not a JSON object"
+            )
+
+    try:
+        spec = _spec_text(run)
+    except (OSError, UnicodeDecodeError) as exc:
+        advisory = _fallback_advisory()
+        fallback = "spec could not be read: {}".format(exc)
+        spec = ""
+    final = classify.apply_rules(advisory, spec, [])
+    # The spec's audit fields: which rules and which model produced this, so a
+    # routing decision stays explicable after either has changed.
+    final["classifier_version"] = classify.VERSION
+    # Match machine._model(run, "classifier") exactly: `models.classifier` is
+    # the key dispatch actually reads. `classifier.model` used to exist too
+    # and could disagree with it, which made the audit record lie about what
+    # ran.
+    final["model"] = run.config.get("models", {}).get("classifier", "sonnet")
+    final["fallback_reason"] = fallback
+    selected = workflowmod.select(final)
+    run.set_classification(final, selected)
+
+    detail = "classified {}/{} -> {}".format(final["complexity"], final["risk"], selected)
+    overrides = final.get("deterministic_overrides") or []
+    if overrides:
+        detail += "; deterministic override: {}".format(", ".join(overrides))
+    if fallback:
+        detail += "; fallback: {}".format(fallback)
+    ledger.append(run, detail)
+
+    return {"classification": final, "workflow": selected, "fallback": fallback}
 
 
 # --------------------------------------------------------------------------

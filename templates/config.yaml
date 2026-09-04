@@ -105,13 +105,29 @@ claude_bin: claude
 gate_timeout_seconds: 1800
 setup_timeout_seconds: 1800
 
-# Model per role. Executors run on haiku and escalate to
-# executor_escalated after a BLOCKED result.
+# Classify each run's complexity and risk before planning, and route it:
+#   low risk, small     - a plan (the executors still need briefs), then
+#                         straight to the executors, judged by the gates
+#   complex, or medium  - grill, approval gate, and a verifier verdict
+#   high or critical    - all of that, plus your sign-off before it finishes
+#
+# The classifier is advisory. Deterministic rules may raise a run's risk -
+# anything touching auth, crypto, secrets, CI, infra or migrations - and can
+# never lower it, so a wrong answer from the model cannot buy less scrutiny.
+#
+# enabled: false makes every run take the full pipeline, exactly as it did
+# before this existed.
+classifier:
+  enabled: true
+
+# Model per role, including the classifier itself. Executors run on haiku
+# and escalate to executor_escalated after a BLOCKED result.
 #
 # The orchestrator is the main thread, not an agent, so its model is not
 # set here - it comes from the `model:` frontmatter on /goat-code and
 # /goat-code-resume, or from your session model.
 models:
+  classifier: haiku
   planner: opus
   executor: haiku
   executor_escalated: sonnet
