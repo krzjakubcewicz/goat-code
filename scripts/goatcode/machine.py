@@ -92,8 +92,13 @@ def derive_phase(run, evidence=None):
     if run.phase in ("done", "failed", "aborted"):
         return run.phase
 
-    # Sizing the task comes before deciding how much pipeline it gets.
-    if run.wants_classification() and run.classification is None:
+    # Sizing the task comes before deciding how much pipeline it gets - but
+    # only for a run that has not planned yet. A run with an approved plan
+    # already earned its workflow; re-classifying it on resume (a legacy
+    # in-flight run created before the classifier existed, for instance)
+    # would route it down to a cheaper path and drop the verifier and
+    # approval gate it was already going through.
+    if run.wants_classification() and run.classification is None and not evidence.has_plan:
         return "classify"
 
     if not evidence.has_plan:

@@ -852,6 +852,19 @@ def test_a_fresh_run_classifies_before_it_grills(unclassified_run):
     assert machine.derive_phase(unclassified_run) == "classify"
 
 
+def test_a_run_that_already_has_a_plan_does_not_reclassify(unclassified_run):
+    """A legacy in-flight run, created before the classifier existed.
+
+    Its state.json has no classification and no `models.classifier` in its
+    snapshotted config - exactly what `Run.create` left behind pre-branch.
+    Re-entering `classify` on resume would route it to a cheaper workflow
+    and drop the verifier and approval gate it already earned by planning.
+    """
+    write_plan(unclassified_run)
+    approved(unclassified_run)
+    assert machine.derive_phase(unclassified_run) == "execute"
+
+
 def test_classification_dispatches_the_classifier_on_the_cheap_model(unclassified_run):
     action = machine.next_action(unclassified_run)
     assert action["action"] == "dispatch"
