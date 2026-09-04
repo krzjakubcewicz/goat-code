@@ -239,10 +239,9 @@ def test_the_evidence_standard_is_defined_once_and_cited_by_both_sides():
 def test_every_referenced_name_exists():
     """No dispatch target, skill or command reference may be a typo.
 
-    One prefix now covers agents, skills and commands, so a reference is
-    checked against the union of the three: a typo resolves to none of them.
-    Matching on the prefix alone - which worked while agents were `codag-` and
-    skills were `cod-ag-` - would now silently match nothing at all.
+    One prefix covers agents, skills and commands, so a reference is checked
+    against the union of the three: a typo resolves to none of them. Matching
+    the prefix alone would match everything and therefore check nothing.
     """
     known = (
         {p.stem for p in AGENTS}
