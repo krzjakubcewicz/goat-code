@@ -414,6 +414,22 @@ def test_the_recorded_model_matches_what_the_machine_dispatched_on(capsys, node_
     assert result["classification"]["model"] == machine._model(run, "classifier") == "opus"
 
 
+def test_an_unreadable_spec_forces_the_conservative_fallback(capsys, node_repo):
+    """The only place this branch could fail unsafe: a spec.md the rules
+    cannot read must not let a SIMPLE/LOW claim from the model stand
+    unchallenged - it must fall back to NORMAL/MEDIUM instead of an empty
+    haystack the rules would wave through."""
+    run = start(capsys, node_repo)
+    run.spec_path.write_bytes(b"\xff\xfe not valid utf-8")
+
+    result = report.record_classification(run, _classification())
+
+    assert result["classification"]["complexity"] == "NORMAL"
+    assert result["classification"]["risk"] == "MEDIUM"
+    assert result["workflow"] == "PLANNED_DEVELOPMENT"
+    assert "spec could not be read" in result["fallback"]
+
+
 def test_the_rules_escalate_what_the_model_said(capsys, node_repo):
     run = start(capsys, node_repo)
     osenv.write_text(run.spec_path, "Rework the login token expiry.\n")

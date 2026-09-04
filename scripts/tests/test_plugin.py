@@ -34,9 +34,15 @@ _PLANS = ROOT / "docs" / "superpowers"
 
 
 def _is_plugin_material(path):
-    if any(part.startswith(".") for part in path.parts):
+    # Relative to ROOT, not the absolute path: an absolute path carries
+    # every ancestor directory too, and a repo checked out under any
+    # dot-directory (plugins install to ~/.claude/plugins/) would otherwise
+    # make every path look like it lives under a dot-directory and empty
+    # this scan out from under every test that uses it.
+    parts = path.relative_to(ROOT).parts
+    if any(part.startswith(".") for part in parts):
         return False
-    if _VENDORED & set(path.parts):
+    if _VENDORED & set(parts):
         return False
     return _PLANS not in path.parents
 
@@ -45,6 +51,14 @@ AGENTS = sorted((ROOT / "agents").glob("*.md"))
 COMMANDS = sorted((ROOT / "commands").glob("*.md"))
 SKILLS = sorted((ROOT / "skills").glob("*/SKILL.md"))
 MARKDOWN = sorted(p for p in ROOT.rglob("*.md") if _is_plugin_material(p))
+
+# An empty scan makes every cross-reference test that iterates it pass
+# vacuously - it looks green while checking nothing. Guard it here, once,
+# rather than trusting each test to notice its own parametrize list is empty.
+assert AGENTS, "agent scan came back empty"
+assert COMMANDS, "command scan came back empty"
+assert SKILLS, "skill scan came back empty"
+assert MARKDOWN, "markdown scan came back empty"
 
 
 def frontmatter(path):

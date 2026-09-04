@@ -269,13 +269,29 @@ def record_slice(
     }
 
 
+def _spec_text(run):
+    """The spec's on-disk text, or ``""`` if it has none yet.
+
+    Missing is expected - a run may not have written a spec yet, and "" is
+    the honest state for that. Unreadable (bad encoding, permissions,
+    replaced by a directory) is not the same thing: it is raised, so a
+    caller cannot mistake "the rules found nothing" for "the rules never
+    got to look."
+    """
+    path = pathlib.Path(run.spec_path)
+    if not path.exists():
+        return ""
+    return osenv.read_text(path)
+
+
 def reassess_classification(run, doc):
     """Run the deterministic rules again, now that the plan names paths.
 
     At classify time only the request existed. A plan that claims
     `src/auth/**` is evidence the request never carried, so the same rules
     see it now. Escalate-only: this can cost a run its cheap path and can
-    never buy one.
+    never buy one. Never raises: an unreadable spec floors the result at the
+    fallback's own risk rather than stopping `next_action` cold.
     """
     current = run.classification
     if not current or not doc:
@@ -286,8 +302,25 @@ def reassess_classification(run, doc):
         paths.extend(item.get("owns") or [])
         paths.extend(item.get("touches_shared") or [])
 
-    spec = osenv.read_text(run.spec_path) if pathlib.Path(run.spec_path).exists() else ""
+    try:
+        spec = _spec_text(run)
+        unreadable = False
+    except (OSError, UnicodeDecodeError):
+        spec = ""
+        unreadable = True
+
     updated = classify.apply_rules(current, spec, paths)
+    if unreadable:
+        # An unreadable spec must not look like a clean bill of health from
+        # the rules. Floor the result at the fallback's own risk - never a
+        # downgrade, since apply_rules already guarantees `current`'s risk
+        # is the floor for its own merge.
+        updated["risk"] = classify.risk_at_least(updated["risk"], classify.FALLBACK["risk"])
+        if updated["risk"] != current.get("risk"):
+            overrides = list(updated.get("deterministic_overrides") or [])
+            if "spec-unreadable" not in overrides:
+                overrides.append("spec-unreadable")
+            updated["deterministic_overrides"] = overrides
     if updated["risk"] == current.get("risk"):
         return None
 
@@ -322,7 +355,9 @@ def record_classification(run, payload=None, reason=None):
 
     Never raises. A classifier that timed out, returned prose, or invented an
     enum must not stop the run - it costs the run its cheaper path, which is
-    the safe direction to fail in.
+    the safe direction to fail in. Same for a spec.md that cannot be read:
+    the fallback classification stands in, so the model's own claim never
+    goes unchallenged against an empty haystack.
     """
     fallback = reason
     if payload is None:
@@ -337,7 +372,12 @@ def record_classification(run, payload=None, reason=None):
                 ", ".join(exc.fields) if exc.fields else "not a JSON object"
             )
 
-    spec = osenv.read_text(run.spec_path) if pathlib.Path(run.spec_path).exists() else ""
+    try:
+        spec = _spec_text(run)
+    except (OSError, UnicodeDecodeError) as exc:
+        advisory = _fallback_advisory()
+        fallback = "spec could not be read: {}".format(exc)
+        spec = ""
     final = classify.apply_rules(advisory, spec, [])
     # The spec's audit fields: which rules and which model produced this, so a
     # routing decision stays explicable after either has changed.
@@ -369,7 +409,6 @@ def record_classification(run, payload=None, reason=None):
 
 #: Statuses each non-slice role may report.
 ROLE_STATUSES = {
-    "classifier": ("DONE", "FAILED"),
     "synthesizer": ("CLEAN", "ESCALATE"),
     "e2e": ("PASS", "SKIPPED", "FAILED"),
     "scribe": ("WRITTEN", "SKIPPED"),

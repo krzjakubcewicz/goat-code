@@ -1009,6 +1009,40 @@ def test_the_second_pass_never_lowers_a_run(run):
     assert reloaded.workflow == "HIGH_RISK_DEVELOPMENT"
 
 
+def test_an_unreadable_spec_floors_the_reassessment_without_lowering_it(run):
+    """Escalate-only means an unreadable spec must not look like a clean
+    bill of health, but it also must not reset a risk the plan pass already
+    holds - only `record_classification`'s fallback does that reset."""
+    run.set_classification(
+        {"complexity": "COMPLEX", "risk": "CRITICAL", "deterministic_overrides": []},
+        "HIGH_RISK_DEVELOPMENT",
+    )
+    write_plan(run)
+    run.spec_path.write_bytes(b"\xff\xfe not valid utf-8")
+
+    updated = report.reassess_classification(run, tasks.load(run.tasks_path))
+
+    assert updated is None, "CRITICAL is already above the fallback floor"
+    assert Run.load(run.repo).classification["risk"] == "CRITICAL"
+
+
+def test_an_unreadable_spec_still_floors_a_low_risk_reassessment(run):
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
+        "DIRECT_DEVELOPMENT",
+    )
+    doc = copy.deepcopy(PLAN)
+    for slice_doc in doc["slices"]:
+        slice_doc["owns"] = ["src/ui/**"]
+    write_plan(run, doc)
+    run.spec_path.write_bytes(b"\xff\xfe not valid utf-8")
+
+    updated = report.reassess_classification(run, tasks.load(run.tasks_path))
+
+    assert updated["risk"] == "MEDIUM"
+    assert "spec-unreadable" in updated["deterministic_overrides"]
+
+
 def test_the_escalation_is_recorded_in_the_ledger(run):
     run.set_classification(
         {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []},
