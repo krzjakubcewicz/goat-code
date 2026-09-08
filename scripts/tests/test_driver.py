@@ -13,7 +13,7 @@ import io
 
 import pytest
 
-from goatcode import agentcli, driver as drivermod
+from goatcode import agentcli, driver as drivermod, osenv, run as runmod
 
 
 class Tty(io.StringIO):
@@ -79,6 +79,16 @@ def test_words_become_a_note_against_the_recommendation():
 
 def test_an_out_of_range_number_is_treated_as_words():
     assert prompter("9\n").answers([QUESTION])[0][2] == "9"
+
+
+def test_the_base_branch_question_answers_with_a_usable_branch_name(git_repo):
+    """`goatcode run` feeds this answer straight back to `init --base`, so the
+    (Recommended) marker must not ride along with it."""
+    osenv.git(["branch", "develop", "main"], cwd=git_repo, check=True)
+    question = runmod.base_choice(git_repo, None, current="develop")["question"]
+
+    assert prompter(yes=True).answers([question]) == [("base_branch", "main", None)]
+    assert prompter("2\n").answers([question]) == [("base_branch", "develop", None)]
 
 
 def test_every_question_is_asked_in_order():
