@@ -144,6 +144,30 @@ Standing on a branch with commits the base lacks is common and not an error,
 so `init` names those commits and proceeds. Finding that out before
 executors start is the point.
 
+It is also, however, the one case where detection can be confidently wrong:
+someone working on a long-lived `develop` wants their runs to fork from
+`develop`, and no amount of looking at `origin/HEAD` will discover that. So
+the first run in a repository settles the question and writes the answer into
+`.goatcode/config.yaml`. It asks only when there is a genuine choice - the
+checked-out branch differs from the detected one - and recommends the
+detected branch, so an unattended `--yes` run means exactly what it meant
+before the question existed.
+
+Two consequences shape where that lives. It runs at the very top of `init`,
+before the run directory, the integration worktree and the baseline gates,
+because those are all measured against the base and installing a project's
+dependencies is the most expensive thing `init` does: a question asked after
+them would have to be paid for twice. And because `init` is a command rather
+than a machine action, it cannot ask - it exits `3` carrying an
+`AskUserQuestion`-shaped payload, and whoever called it asks and re-runs with
+`--base`. Exit `3` is a question, distinct from `1` (the pipeline is in a bad
+state) and `2` (you called it wrong).
+
+A recorded branch that has since been deleted is treated as if nothing were
+recorded, rather than as an error. The failure it replaces was a repository
+that could never start a run again until someone found and hand-edited a
+config file they may not have known existed.
+
 The branch is named at the start of `execute`, not at `init`, because
 `branch_template` can reference `{kind}` and `{slug}` - and `kind` is the
 planner's call, which does not exist until the plan does. Until then the run

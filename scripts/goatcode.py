@@ -53,10 +53,32 @@ from goatcode.run import Run, RunError  # noqa: E402
 EXIT_OK = 0
 EXIT_FAIL = 1
 EXIT_USAGE = 2
+EXIT_NEEDS_ANSWER = 3
 
 
 class CliError(RuntimeError):
     """A problem worth reporting to the caller without a traceback."""
+
+
+class NeedsBaseChoice(CliError):
+    """`init` cannot pick a base branch on its own and must ask.
+
+    Raised before anything is created, so answering it costs nothing to redo.
+    The caller - the orchestrator skill, or `cmd_run` - puts ``question`` to
+    the user and re-runs `init --base <answer>`.
+    """
+
+    def __init__(self, question):
+        self.question = question
+        options = "\n".join(
+            "  {}) {}".format(index, option["label"])
+            for index, option in enumerate(question["options"], 1)
+        )
+        super().__init__(
+            "{}\n{}\n{}\n\nre-run with: init --base <branch>".format(
+                question["question"], question["context"], options
+            )
+        )
 
 
 # --------------------------------------------------------------------------
@@ -136,8 +158,21 @@ def cmd_run(args):
             "(https://claude.com/claude-code), or pass --claude-bin.".format(args.claude_bin)
         )
 
+    console = drivermod.Console(quiet=args.quiet)
+
     if not args.resume:
-        code = cmd_init(args)
+        try:
+            code = cmd_init(args)
+        except NeedsBaseChoice as exc:
+            # Nothing has been built yet, so answering and starting over is
+            # free. The prompter already knows how to take the recommendation
+            # under --yes and how to refuse when there is no terminal.
+            try:
+                args.base = drivermod.Prompter(console, yes=args.yes).answers([exc.question])[0][1]
+            except drivermod.DriverError as err:
+                raise CliError(str(err))
+            console.write("base branch: {}".format(args.base))
+            code = cmd_init(args)
         if code != EXIT_OK:
             return code
 
@@ -150,7 +185,6 @@ def cmd_run(args):
         config["claude_bin"] = args.claude_bin
     config["extra_args"] = args.claude_arg or []
 
-    console = drivermod.Console(quiet=args.quiet)
     console.write("goat-code {} | {} | {}".format(run.run_id, version, repo))
     driver = drivermod.Driver(
         repo,
@@ -179,6 +213,32 @@ def cmd_run(args):
 # --------------------------------------------------------------------------
 
 
+def _pin_base_branch(args, repo):
+    """Settle which branch this repository's runs fork from, once and for all.
+
+    Returns the branch name if this call recorded it, else None.
+
+    ``--base`` is the answer channel, whoever is asking: the orchestrator
+    after an `AskUserQuestion`, the driver after a terminal prompt, or a
+    person who already knows. ``--force`` means the same here as everywhere
+    else - proceed - so it takes the recommended answer rather than asking.
+    """
+    configured = runmod.load_config(repo).get("base_branch")
+    if args.base:
+        if not runmod.branch_tip(repo, args.base):
+            raise CliError("no branch named {} in this repository".format(args.base))
+        runmod.record_base_branch(repo, args.base)
+        return args.base
+
+    choice = runmod.base_choice(repo, configured)
+    if choice["question"] and not args.force:
+        raise NeedsBaseChoice(choice["question"])
+    if choice["record"] and choice["branch"]:
+        runmod.record_base_branch(repo, choice["branch"])
+        return choice["branch"]
+    return None
+
+
 def cmd_init(args):
     repo, problems = runmod.preflight(getattr(args, "repo", None))
     if repo is None:
@@ -198,6 +258,12 @@ def cmd_init(args):
         title = _spec_title(spec_text) or spec_path.stem
     elif not args.prompt:
         raise CliError("pass --prompt \"...\" or --spec <file>")
+
+    # Settled before anything is built. The integration worktree and the
+    # baseline gates are both measured against the base commit, and installing
+    # a project's dependencies is the most expensive thing init does - so the
+    # one question that can change the base is asked before any of it.
+    base_recorded = _pin_base_branch(args, repo)
 
     runmod.ensure_ignored(repo)
     gitignored = False
@@ -248,6 +314,7 @@ def cmd_init(args):
         "specialist_skills": profile.get("specialist_skills", []),
         "baseline": (baseline or {}).get("summary"),
         "gitignore_updated": gitignored,
+        "base_branch_recorded": base_recorded,
         "debug_log": str(debuglog.target()) if debuglog.target() else None,
         "divergence": diverged,
         "kind_override": run.kind_override,
@@ -260,7 +327,11 @@ def cmd_init(args):
         "  spec:   {}".format(run.spec_path),
         "  stack:  {}".format(stackmod.summary_line(profile)),
         "  skills: {}".format(", ".join(profile.get("specialist_skills") or []) or "-"),
-        "  base:   {} on {}".format(run.base_commit[:7], run.state["base_branch"]),
+        "  base:   {} on {}{}".format(
+            run.base_commit[:7],
+            run.state["base_branch"],
+            " (recorded in .goatcode/config.yaml)" if base_recorded else "",
+        ),
         "  you:    {}".format(run.state.get("current_branch") or "(detached)"),
         "  branch: {}".format(run.integration_branch),
     ]
@@ -1173,6 +1244,7 @@ def build_parser():
     p = add(sub, "init", help="start a run: preflight, run dir, stack, baseline gates")
     p.add_argument("--prompt", help="feature request, for chat mode")
     p.add_argument("--spec", help="path to a markdown spec file")
+    p.add_argument("--base", help="the branch every run forks from; recorded for later runs")
     p.add_argument(
         "--kind",
         choices=runmod.KINDS,
@@ -1185,6 +1257,7 @@ def build_parser():
     p = add(sub, "run", help="run the whole pipeline here, without Claude Code")
     p.add_argument("--prompt", help="feature request, for chat mode")
     p.add_argument("--spec", help="path to a markdown spec file")
+    p.add_argument("--base", help="the branch every run forks from; recorded for later runs")
     p.add_argument("--resume", action="store_true", help="continue the existing run instead of starting one")
     p.add_argument("--yes", action="store_true", help="take every recommended answer and approve the plan")
     p.add_argument(
@@ -1392,6 +1465,15 @@ def main(argv=None):
     code = EXIT_OK
     try:
         code = args.func(args)
+    except NeedsBaseChoice as exc:
+        if getattr(args, "json", False):
+            print(json.dumps(
+                {"ok": False, "needs": "base_branch", "ask": exc.question, "error": str(exc)},
+                indent=2,
+            ))
+        else:
+            sys.stderr.write("goatcode: {}\n".format(exc))
+        code = EXIT_NEEDS_ANSWER
     except CliError as exc:
         if getattr(args, "json", False):
             print(json.dumps({"ok": False, "error": str(exc)}, indent=2))

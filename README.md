@@ -77,12 +77,14 @@ no model at all. That is what the end-to-end test does.
   the commit the run started from, in the OS temp directory. Your working
   tree is never involved.
 - **One base, one feature branch.** Every run forks from your base branch -
-  `main`, `master`, or whatever you configure - never from wherever you
-  happen to be standing. Before any code is written the work gets a properly
-  named branch, `feature/magic-link-login` by default, and everything lands
-  there. The final diff is exactly `base..feature`: the thing you would open
-  a pull request with. Nothing is merged into your branch, your HEAD is never
-  moved, and nothing is ever pushed.
+  never from wherever you happen to be standing. The first run settles which
+  branch that is and writes it down; if you started it from somewhere other
+  than the branch it detected, it asks you first. Before any code is written
+  the work gets a properly named branch, `feature/magic-link-login` by
+  default, and everything lands there. The final diff is exactly
+  `base..feature`: the thing you would open a pull request with. Nothing is
+  merged into your branch, your HEAD is never moved, and nothing is ever
+  pushed.
 - **A baseline.** Gates run once at the start, so a lint error that was
   already there is never blamed on the run — and never blocks it forever.
 - **A durable ledger.** Progress is on disk, so a crash or a context
@@ -247,14 +249,37 @@ Available placeholders: `{kind}` (feature or bugfix, from the plan),
 `{slug}` (from the goal), `{run_id}`, `{date}`, `{time}`, `{user}`. A name
 already in use gets a `-2` suffix.
 
-`base_branch` controls what it forks from; `null` auto-detects
-`origin/HEAD`, then `main`, then `master`.
+## The base branch
+
+`base_branch` in `.goatcode/config.yaml` is what every run forks from. You do
+not have to set it: the first run in a repository records the branch it
+detects - `origin/HEAD`'s target, then `main`, then `master` - and from then
+on the answer is fixed rather than re-derived each time.
+
+It only asks when there is a real choice, which is when you start a run from
+somewhere else:
+
+```
+Which branch should this repository's runs fork from?
+no base branch recorded yet, and you are on develop rather than main.
+  1) main (Recommended)
+  2) develop
+
+re-run with: init --base <branch>
+```
+
+`/goat-code` puts that to you directly; `goatcode run` asks in the terminal,
+and `--yes` takes the recommendation. Answer once and no later run asks
+again. Delete the recorded branch and the next run asks afresh rather than
+refusing to start.
 
 ## Configuration
 
 Optional. Copy `templates/config.yaml` to `.goatcode/config.yaml` in your
 project to change the parallelism, the cycle cap, the grill rounds, timeouts,
-the branch naming or the model per role.
+the branch naming or the model per role. The first run creates that file if
+it does not exist, to record the base branch; everything else in it stays
+yours.
 
 ## Run state
 

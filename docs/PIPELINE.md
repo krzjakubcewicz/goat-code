@@ -39,6 +39,14 @@ Everything below applies unchanged to both.
   final diff is exactly `base..feature`. If you are standing on another
   branch with commits the base lacks, it says so and names them; it does not
   block.
+- On the first run this resolution is **written back** to
+  `.goatcode/config.yaml`, so no later run re-derives it. When the branch you
+  are standing on is not the one it detected - or when a previously recorded
+  branch has since been deleted - it stops and asks which to pin, exit code
+  `3`, with the question in the `--json` payload under `ask`. Answer with
+  `init --base <branch>`. This happens before the run directory, the
+  integration worktree and the baseline gates, so a changed answer never
+  means installing dependencies twice.
 - Hides `.goatcode/` from git: always in `.git/info/exclude`, and — unless
   `manage_gitignore: false` — in the project's `.gitignore`, creating that
   file if absent. The `.gitignore` change is left uncommitted for you to

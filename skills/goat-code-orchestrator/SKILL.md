@@ -37,6 +37,14 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" init --spec <path>
 a linked worktree. Relay the message; do not work around it. `--force`
 exists, but tell the user what they are overriding.
 
+**Exit code 3 is a question, not a failure.** The first run in a repository
+has to settle which branch every run forks from, and it stops to ask when the
+user is standing somewhere other than the branch it detected. Add `--json`,
+put `ask` to the user with `AskUserQuestion` - it is already the right shape -
+and re-run the same `init` with `--base <their answer>`. Nothing was created
+before the question, so there is nothing to clean up. The answer is recorded
+in `.goatcode/config.yaml`, so no later run asks again.
+
 ## The loop
 
 ```bash

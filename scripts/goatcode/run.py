@@ -291,39 +291,183 @@ def gitignore_change_is_ours(repo):
     return strip_gitignore_block(current) == baseline
 
 
+def branch_tip(repo, name):
+    """The commit ``name`` points at, or None if there is no such branch."""
+    result = osenv.git(
+        ["rev-parse", "--verify", "--quiet", "refs/heads/" + name], cwd=pathlib.Path(repo)
+    )
+    return result.out if result.ok and result.out else None
+
+
 def resolve_base_branch(repo, configured=None):
     """The branch every run forks from, as ``(name, commit)``.
 
     Order: an explicit ``base_branch`` in config, then whatever
     ``origin/HEAD`` points at, then ``main``, then ``master``. Local refs
     only - goat-code never touches the network.
+
+    A ``configured`` branch that no longer exists returns ``(None, None)``
+    rather than raising: a stale recording is a question for the user, which
+    `base_choice` asks, not a failure.
     """
     repo = pathlib.Path(repo)
 
-    def tip(name):
-        result = osenv.git(["rev-parse", "--verify", "--quiet", "refs/heads/" + name], cwd=repo)
-        return result.out if result.ok and result.out else None
-
     if configured:
-        commit = tip(configured)
-        if not commit:
-            raise RunError(
-                "config sets base_branch: {} but that branch does not exist".format(configured)
-            )
-        return configured, commit
+        commit = branch_tip(repo, configured)
+        return (configured, commit) if commit else (None, None)
 
     head = osenv.git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], cwd=repo)
     if head.ok and head.out:
         name = head.out.rsplit("/", 1)[-1]
-        commit = tip(name)
+        commit = branch_tip(repo, name)
         if commit:
             return name, commit
 
     for name in ("main", "master"):
-        commit = tip(name)
+        commit = branch_tip(repo, name)
         if commit:
             return name, commit
     return None, None
+
+
+def current_branch(repo):
+    """The checked-out branch, or None on a detached HEAD."""
+    result = osenv.git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=pathlib.Path(repo))
+    return result.out if result.ok and result.out else None
+
+
+def base_choice(repo, configured=None, current=None):
+    """What ``init`` should do about the base branch, before it builds anything.
+
+    Returns ``{"branch", "commit", "question", "record", "reason"}``. A
+    ``question`` means init cannot proceed without an answer; ``record``
+    means the branch should be written into the config so no later run has
+    to decide again.
+
+    The three cases, in the order they are checked:
+
+    1. The config records a branch that exists - settled, nothing to write.
+    2. It records one that is gone - treated exactly as if nothing were
+       recorded, so a deleted branch self-heals instead of failing forever.
+    3. Nothing usable recorded - detect, and ask only when the user is
+       standing somewhere other than what was detected. Standing on the
+       detected base is not a choice, so it is recorded silently.
+    """
+    repo = pathlib.Path(repo)
+    if current is None:
+        current = current_branch(repo)
+
+    stale = None
+    if configured:
+        commit = branch_tip(repo, configured)
+        if commit:
+            return _choice(configured, commit)
+        stale = configured
+
+    detected, commit = resolve_base_branch(repo, None)
+    if detected is None:
+        return _choice(None, None, reason=stale and "recorded base branch {} is gone".format(stale))
+
+    reason = (
+        "recorded base branch {} no longer exists".format(stale)
+        if stale
+        else "no base branch recorded yet"
+    )
+    if current is None or current == detected:
+        return _choice(detected, commit, record=True, reason=reason)
+
+    return _choice(
+        detected,
+        commit,
+        record=True,
+        reason=reason,
+        question=_base_question(detected, current, reason),
+    )
+
+
+def _choice(branch, commit, question=None, record=False, reason=None):
+    return {
+        "branch": branch,
+        "commit": commit,
+        "question": question,
+        "record": record,
+        "reason": reason,
+    }
+
+
+def _base_question(detected, current, reason):
+    """An ``AskUserQuestion``-shaped question, one option per candidate.
+
+    The detected branch carries ``(Recommended)`` because taking it is what
+    goat-code already did before it asked at all: an unattended ``--yes`` run
+    means the same thing today as it did yesterday. ``driver.recommended``
+    and ``driver.plain`` read that marker, so both front-ends get the
+    default from the same string.
+    """
+    return {
+        "id": "base_branch",
+        "question": "Which branch should this repository's runs fork from?",
+        "header": "Base branch",
+        "context": "{}, and you are on {} rather than {}.".format(reason, current, detected),
+        "options": [
+            {
+                "label": "{} (Recommended)".format(detected),
+                "description": "What goat-code detects. Your commits on {} are not in it.".format(
+                    current
+                ),
+            },
+            {
+                "label": current,
+                "description": "The branch you are on. Every run forks from here from now on.",
+            },
+        ],
+    }
+
+
+def record_base_branch(repo, name):
+    """Write ``base_branch: <name>`` into ``.goatcode/config.yaml``.
+
+    A line-level edit rather than a re-serialise: ``miniyaml.dumps`` over the
+    whole file would drop every comment in it, and this file is mostly
+    comments explaining the knobs. Rendering the single line through
+    ``dumps`` still gets the quoting right for a branch name git allows but
+    YAML would otherwise read as something else.
+    """
+    path = goatcode_dir(repo) / "config.yaml"
+    line = miniyaml.dumps({"base_branch": name}).strip()
+
+    if not path.exists():
+        osenv.write_text(
+            path,
+            "# goat-code per-project configuration. Every option and its default\n"
+            "# is documented in templates/config.yaml in the plugin.\n"
+            "\n" + line + "\n",
+        )
+        return path
+
+    out = []
+    replaced = False
+    for existing in path.read_text(encoding="utf-8").splitlines():
+        if not replaced and _is_base_branch_key(existing):
+            out.append(line)
+            replaced = True
+        else:
+            out.append(existing)
+    if not replaced:
+        if out and out[-1].strip():
+            out.append("")
+        out.append(line)
+    osenv.write_text(path, "\n".join(out) + "\n")
+    return path
+
+
+def _is_base_branch_key(line):
+    """A top-level, uncommented ``base_branch:`` key - not one nested under
+    another mapping, and not the commented example in the template."""
+    if line[:1] in (" ", "\t", "#"):
+        return False
+    stripped = line.rstrip()
+    return stripped == "base_branch:" or stripped.startswith("base_branch: ")
 
 
 def divergence(repo, base_branch):
@@ -424,12 +568,15 @@ def preflight(repo=None):
     if not branch.ok:
         problems.append("HEAD is detached; check out a branch before starting a run")
 
+    # Only "there is nothing to fork from" is a preflight problem. A config
+    # naming a branch that has since been deleted is not: `base_choice` falls
+    # back to detection and init asks the user to pin one again.
     try:
-        base_branch, _commit = resolve_base_branch(root, load_config(root).get("base_branch"))
+        choice = base_choice(root, load_config(root).get("base_branch"), current=branch.out or None)
     except RunError as exc:
         problems.append(str(exc))
     else:
-        if base_branch is None:
+        if choice["branch"] is None:
             problems.append(
                 "no base branch found (looked for origin/HEAD, main, master); "
                 "set base_branch in .goatcode/config.yaml"
@@ -470,7 +617,7 @@ class Run:
                 "cannot find a base branch (looked for origin/HEAD, main, master); "
                 "set base_branch in .goatcode/config.yaml"
             )
-        current = osenv.git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd=repo).out
+        current = current_branch(repo)
         state = {
             "version": STATE_VERSION,
             "run_id": run_id,

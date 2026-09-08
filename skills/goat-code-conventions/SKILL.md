@@ -45,6 +45,7 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" <command> [--json]
 | `progress show` / `progress append --body F` | the cross-run log; append never rewrites. `show` gives the planner's view - every standing constraint plus the last few entries - and `--all` the whole file |
 | `progress promote "<rule>"` | promote a learning that has now recurred into a standing constraint every future plan carries |
 | `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |
+| `init --base BRANCH` | answer the base-branch question, and record it for every later run |
 | `classify --file F` / `classify --fallback "why"` | record how a run was sized, and route it |
 | `plan validate` / `plan show` / `plan waves` | gate and inspect tasks.yaml |
 | `wave next` | slice ids dispatchable right now, capped at the parallel limit |
@@ -68,10 +69,24 @@ python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" <command> [--json]
 | `status` / `resume` / `finish` / `abort` | lifecycle |
 
 Exit codes: `0` success, `1` the pipeline is not in a good state (act on
-it), `2` you called it wrong.
+it), `2` you called it wrong, `3` `init` needs an answer before it can
+start - see the base branch, below.
 
 Add `--json` for machine-readable output; it works before or after the
 subcommand.
+
+## The base branch
+
+One branch per repository, settled on the first run and recorded as
+`base_branch` in `.goatcode/config.yaml`. Everything a run creates forks from
+it: the baseline gates, every slice worktree, the integration branch and the
+feature branch. That is what makes the final diff exactly `base..feature`.
+
+`init` records the branch it detects without asking. It asks - exit code `3`,
+with an `AskUserQuestion`-shaped `ask` in the `--json` payload - only when the
+user is standing on a different branch, or when the recorded one has since
+been deleted. The answer comes back as `init --base <branch>`. Nothing is
+created before that question, so answering it costs nothing.
 
 ## Run directory
 

@@ -87,10 +87,12 @@ def test_config_overrides_the_detection(git_repo):
     assert name == "develop"
 
 
-def test_a_configured_branch_that_does_not_exist_is_an_error(git_repo):
-    with pytest.raises(RunError) as excinfo:
-        runmod.resolve_base_branch(git_repo, "nope")
-    assert "does not exist" in str(excinfo.value)
+def test_a_configured_branch_that_does_not_exist_falls_back_to_detection(git_repo):
+    """Not an error any more: a deleted base is a question, and `base_choice`
+    asks it rather than leaving the repository permanently unrunnable."""
+    assert runmod.resolve_base_branch(git_repo, "nope") == (None, None)
+    _root, problems = runmod.preflight(git_repo)
+    assert not [p for p in problems if "base" in p]
 
 
 def test_no_base_branch_at_all_is_reported(git_repo):
@@ -99,6 +101,163 @@ def test_no_base_branch_at_all_is_reported(git_repo):
     assert name is None
     _root, problems = runmod.preflight(git_repo)
     assert any("no base branch found" in p for p in problems)
+
+
+# -- pinning the base on the first run -------------------------------------
+
+
+def test_standing_on_the_detected_base_records_it_without_asking(git_repo):
+    choice = runmod.base_choice(git_repo, None, current="main")
+    assert choice["branch"] == "main"
+    assert choice["question"] is None, "there is no choice to make, so nothing is asked"
+    assert choice["record"] is True
+
+
+def test_standing_elsewhere_asks_which_branch_is_the_base(git_repo):
+    osenv.git(["branch", "develop", "main"], cwd=git_repo, check=True)
+    choice = runmod.base_choice(git_repo, None, current="develop")
+
+    labels = [option["label"] for option in choice["question"]["options"]]
+    assert labels == ["main (Recommended)", "develop"], (
+        "the detected base is recommended, so --yes means today what it meant yesterday"
+    )
+    assert "develop" in choice["question"]["context"]
+
+
+def test_a_recorded_base_settles_it_for_every_later_run(git_repo):
+    osenv.git(["branch", "develop", "main"], cwd=git_repo, check=True)
+    choice = runmod.base_choice(git_repo, "develop", current="main")
+    assert choice["branch"] == "develop"
+    assert choice["question"] is None
+    assert choice["record"] is False, "already recorded; nothing to write"
+
+
+def test_a_recorded_base_that_was_deleted_asks_again(git_repo):
+    osenv.git(["branch", "develop", "main"], cwd=git_repo, check=True)
+    choice = runmod.base_choice(git_repo, "gone", current="develop")
+    assert choice["question"] is not None
+    assert "gone" in choice["reason"], "say why it is asking a second time"
+
+
+def test_a_detached_head_takes_the_detected_base(git_repo):
+    """Nowhere to stand is not a choice between two branches."""
+    choice = runmod.base_choice(git_repo, None, current=None)
+    assert choice["branch"] == "main"
+    assert choice["question"] is None
+
+
+def test_recording_creates_a_config_file_when_there_is_none(git_repo):
+    path = runmod.record_base_branch(git_repo, "develop")
+    assert path.exists()
+    assert runmod.load_config(git_repo)["base_branch"] == "develop"
+
+
+def test_recording_keeps_the_comments_and_the_other_keys(git_repo):
+    configure(
+        git_repo,
+        "# how many at once\nparallel: 7\n\n# the base\nbase_branch: null\nmax_cycles: 9\n",
+    )
+    runmod.record_base_branch(git_repo, "release/2.0")
+
+    text = (git_repo / ".goatcode" / "config.yaml").read_text(encoding="utf-8")
+    assert "# how many at once" in text and "# the base" in text
+    config = runmod.load_config(git_repo)
+    assert config["base_branch"] == "release/2.0"
+    assert config["parallel"] == 7 and config["max_cycles"] == 9
+
+
+def test_recording_appends_when_the_key_is_absent(git_repo):
+    configure(git_repo, "parallel: 7\n")
+    runmod.record_base_branch(git_repo, "develop")
+    assert runmod.load_config(git_repo)["base_branch"] == "develop"
+    assert runmod.load_config(git_repo)["parallel"] == 7
+
+
+def test_recording_ignores_a_nested_key_of_the_same_name(git_repo):
+    """`base_branch` under another mapping is a different setting entirely."""
+    configure(git_repo, "models:\n  base_branch: nonsense\nparallel: 7\n")
+    runmod.record_base_branch(git_repo, "develop")
+
+    text = (git_repo / ".goatcode" / "config.yaml").read_text(encoding="utf-8")
+    assert "  base_branch: nonsense" in text
+    assert runmod.load_config(git_repo)["base_branch"] == "develop"
+
+
+def test_init_records_the_base_it_detected(capsys, node_repo):
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline"
+    )
+    assert code == 0
+    assert payload["base_branch_recorded"] == "main"
+    assert runmod.load_config(node_repo)["base_branch"] == "main"
+
+
+def test_init_stops_and_asks_when_standing_off_the_base(capsys, node_repo):
+    osenv.git(["checkout", "-q", "-b", "develop"], cwd=node_repo, check=True)
+    commit(node_repo, "wip.txt")
+
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline"
+    )
+    assert code == 3, "a new exit code: this is a question, not a failure"
+    assert payload["needs"] == "base_branch"
+    assert [o["label"] for o in payload["ask"]["options"]] == ["main (Recommended)", "develop"]
+    assert not (node_repo / ".goatcode" / "runs").exists(), (
+        "nothing may be built before the base is settled - answering must be free"
+    )
+
+
+def test_init_takes_the_answer_and_forks_from_it(capsys, node_repo):
+    osenv.git(["checkout", "-q", "-b", "develop"], cwd=node_repo, check=True)
+    tip = commit(node_repo, "wip.txt")
+
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline",
+        "--base", "develop",
+    )
+    assert code == 0
+    assert payload["base_branch"] == "develop" and payload["base_commit"] == tip
+    assert runmod.load_config(node_repo)["base_branch"] == "develop"
+
+    run = Run.load(node_repo)
+    path, _branch, _setup = worktree.create(run, "S1", setup=False)
+    assert osenv.git_out(["rev-parse", "HEAD"], cwd=path) == tip
+
+
+def test_init_refuses_a_base_that_is_not_a_branch(capsys, node_repo):
+    code, _payload, err = invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--base", "nope"
+    )
+    assert code != 0
+    assert "no branch named nope" in err or "no branch named nope" in str(_payload)
+
+
+def test_init_asks_again_once_the_recorded_base_is_deleted(capsys, node_repo):
+    osenv.git(["branch", "develop", "main"], cwd=node_repo, check=True)
+    invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline",
+        "--base", "develop",
+    )
+    osenv.git(["branch", "-D", "develop"], cwd=node_repo, check=True)
+    osenv.git(["checkout", "-q", "-b", "next"], cwd=node_repo, check=True)
+
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "y", "--no-baseline"
+    )
+    assert code == 3
+    assert "develop" in payload["ask"]["context"], "name the branch that went missing"
+
+
+def test_force_takes_the_recommendation_rather_than_asking(capsys, node_repo):
+    osenv.git(["checkout", "-q", "-b", "develop"], cwd=node_repo, check=True)
+    commit(node_repo, "wip.txt")
+
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline", "--force"
+    )
+    assert code == 0
+    assert payload["base_branch"] == "main"
+    assert runmod.load_config(node_repo)["base_branch"] == "main"
 
 
 # -- the run forks from the base, not from HEAD ---------------------------
@@ -303,7 +462,8 @@ def test_init_warns_about_commits_the_base_does_not_have(capsys, node_repo):
     commit(node_repo, "wip.txt", "unpushed work")
 
     code, payload, _err = invoke_json(
-        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline"
+        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline",
+        "--base", "main",
     )
     assert code == 0, "a diverged branch warns; it does not block"
     assert payload["divergence"]["branch"] == "my-wip"
@@ -313,7 +473,10 @@ def test_init_warns_about_commits_the_base_does_not_have(capsys, node_repo):
 def test_the_divergence_warning_is_visible_in_the_output(capsys, node_repo):
     osenv.git(["checkout", "-q", "-b", "my-wip"], cwd=node_repo, check=True)
     commit(node_repo, "wip.txt", "unpushed work")
-    _code, out, _err = invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
+    _code, out, _err = invoke(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline",
+        "--base", "main",
+    )
     assert "my-wip" in out
     assert "NOT included in this run" in out
     assert "unpushed work" in out
