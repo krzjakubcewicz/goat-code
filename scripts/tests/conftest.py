@@ -33,6 +33,9 @@ def no_stray_tracing(monkeypatch):
     test in the suite write a log file.
     """
     monkeypatch.delenv("GOATCODE_DEBUG", raising=False)
+    # Set by the driver for the guard hook. Inherited from a developer's own
+    # shell it would point the guard at a repository no test is using.
+    monkeypatch.delenv("GOATCODE_REPO", raising=False)
     debuglog.detach()
     yield
     debuglog.detach()

@@ -34,6 +34,7 @@ from goatcode import (  # noqa: E402
     diffpkg,
     dispatch as dispatchmod,
     gates as gatesmod,
+    guard as guardmod,
     ledger as ledgermod,
     machine as machinemod,
     merge as mergemod,
@@ -774,6 +775,7 @@ def cmd_verify_package(args):
         "tasks": str(run.tasks_path),
         "criteria": criteria,
         "assumptions": doc.get("assumptions") or [],
+        "guard_violations": guardmod.violations(run.root),
     }
     payload.update(previous)
     lines = [
@@ -784,9 +786,14 @@ def cmd_verify_package(args):
         "  spec:    {}".format(payload["spec"]),
         "  tasks:   {}".format(payload["tasks"]),
         "  criteria:{} across {} slices".format(len(criteria), len(tasksmod.slices(doc))),
-        "",
-        gatesmod.render(report),
     ]
+    if payload["guard_violations"]:
+        lines.append(
+            "  guard:   {} call(s) refused for reaching outside the repository".format(
+                len(payload["guard_violations"])
+            )
+        )
+    lines += ["", gatesmod.render(report)]
     emit(args, payload, "\n".join(lines))
     return EXIT_OK
 
@@ -1083,6 +1090,12 @@ def cmd_status(args):
         summary["ready"] = tasksmod.ready(doc)
         lines.append("  slices: {}".format(_counts_text(summary["counts"])))
         lines.append("  ready:  {}".format(", ".join(summary["ready"]) or "-"))
+    if summary["guard_violations"]:
+        lines.append(
+            "  guard:  {} call(s) refused for reaching outside the repository - see {}".format(
+                summary["guard_violations"], run.root / guardmod.LOG_NAME
+            )
+        )
     summary["ledger"] = ledgermod.entries(run)[-5:]
     if summary["ledger"]:
         lines.append("")

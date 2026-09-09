@@ -12,7 +12,7 @@ import datetime
 import pathlib
 import re
 
-from . import debuglog, miniyaml, osenv, workflow as workflowmod
+from . import debuglog, guard, miniyaml, osenv, workflow as workflowmod
 
 GOATCODE_DIR = ".goatcode"
 STATE_VERSION = 1
@@ -95,6 +95,14 @@ DEFAULT_CONFIG = {
     # pipeline, exactly as it did before this existed.
     "classifier": {
         "enabled": True,
+    },
+    # Confine a live run to this repository. A tool call resolving outside
+    # the repo, its worktrees and goat-code's own files is refused and
+    # recorded. extra_roots names directories a run genuinely needs -
+    # relative to the repository - for a monorepo with a sibling package.
+    "guard": {
+        "enabled": True,
+        "extra_roots": [],
     },
     # Subdirectory holding the build system, for a repo where detection
     # cannot tell on its own - a monorepo with a backend/ and a frontend/.
@@ -948,6 +956,7 @@ class Run:
             "base_commit": (self.base_commit or "")[:7],
             "integration_branch": self.integration_branch,
             "worktrees": self.state.get("worktrees", {}),
+            "guard_violations": len(guard.violations(self.root)),
             "updated_at": self.state.get("updated_at"),
         }
 

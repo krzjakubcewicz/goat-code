@@ -202,6 +202,60 @@ several slices — a route registry, a migrations directory. Those go in
 `touches_shared`, executors may only append, and the synthesizer reconciles
 what lands.
 
+## The repository boundary is enforced, not requested
+
+Agents were observed reading and globbing files in other repositories. The
+cost is not only tokens: an executor that reads a sibling project reasons
+about code that is not under test and will not be in the diff.
+
+Nothing stopped it, and the reason is structural. Every mechanism in the
+dispatch **widens** what an agent may touch and none narrows it: a worktree
+lives outside the repository, so `--add-dir <repo>` has to add the repository
+back, and a plugin subagent simply inherits whatever the main thread is
+allowed. There was no place where a boundary could be expressed.
+
+The one place that can express it is a `PreToolUse` hook, which fires for a
+subagent's tool calls as well as the main thread's, and blocks by exiting 2
+with the reason on stderr - where the agent reads it. That is also why the
+enforcement is not agent-file wording: an instruction is advice, and this is
+the same asymmetry as the classifier. Sizing a task is judgement, so a model
+does it; acting on the judgement is not, so a model does not.
+
+**The boundary is enumerated, not assumed.** "The repository, and nothing
+else" breaks goat-code on its first dispatch: worktrees are in the system temp
+directory, `goatcode.py` is in the plugin cache, and the skills the agents are
+told to load resolve from `~/.claude/plugins` and instruct them to read their
+own reference files. So `guard.allowed_roots` lists the repository, the run's
+worktrees, goat-code's installation, installed plugins, and whatever
+`guard.extra_roots` names.
+
+**Both sides of every comparison are `realpath`'d.** A prefix match on literal
+strings is defeated by one symlink inside the repository, which is precisely
+the shape a containment guard has to survive.
+
+**It is scoped to a live run.** A hook is loaded for a whole session, so
+without that check it would police the user's own reads in any repository
+goat-code has ever touched. No run, or a finished one, and it exits 0 before
+doing anything else.
+
+**It fails open.** An unparseable payload, an unreadable `state.json`, no
+interpreter on `PATH` - allow. A guard that can take down every run it is
+guarding is worse than no guard, and the hook is the one piece of goat-code
+the test suite cannot drive end to end. That is also why the *decision* lives
+in `guard.py`, which is ordinary tested code, and the hook is a thin
+try/except around it.
+
+Refusals go to `guard.jsonl` in the run directory, appended one line at a
+time. Deliberately not the ledger: `ledger.append` is read-modify-write with
+no lock, and a wave of executors tripping the guard would corrupt it.
+
+The known ceiling is Bash. File tools name their paths exactly; a shell
+command does not, and `$(...)`, aliases and a script that moves on its own
+cannot be caught by reading the command string. Absolute paths, `cd` and
+`git -C` are checked, which covers honest drift and the obvious escapes. The
+upgrade, if that stops being enough, is a sandboxed executor - not a better
+regular expression.
+
 ## The baseline
 
 A repository with one pre-existing lint error would otherwise fail

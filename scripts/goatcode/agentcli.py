@@ -25,6 +25,9 @@ from . import debuglog, miniyaml, osenv
 #: regardless of the working directory - the same trick as ``dispatch.CLI``.
 AGENTS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "agents"
 
+#: The PreToolUse guard, in the same installation as the agents.
+HOOKS_DIR = AGENTS_DIR.parent / "hooks"
+
 #: What we tell the agent. Everything it needs is in the prompt file; keeping
 #: this to one line is what stops briefs and diffs entering anyone's context.
 INSTRUCTION = "Read {} and follow it."
@@ -70,6 +73,31 @@ def definition(agent):
     return miniyaml.loads(header), body.strip()
 
 
+def guard_settings():
+    """``--settings`` JSON registering the PreToolUse guard, or "".
+
+    Read out of the plugin's own ``hooks/hooks.json`` rather than restated
+    here, so the standalone path and the plugin path cannot come to disagree
+    about which tools are guarded. ``${CLAUDE_PLUGIN_ROOT}`` is what Claude
+    Code expands for an installed plugin; nothing expands it for a bare
+    ``claude`` process, so it is substituted here.
+
+    Passed as a JSON string rather than a file: no temporary file to write,
+    race over, or fail to remove after a killed run. Returns "" when the
+    hook is not there, because a missing guard must not stop a dispatch -
+    the same fail-open rule the hook itself follows.
+    """
+    manifest = HOOKS_DIR / "hooks.json"
+    if not manifest.exists() or not (HOOKS_DIR / "repo_guard.sh").exists():
+        return ""
+    try:
+        hooks = json.loads(manifest.read_text(encoding="utf-8"))["hooks"]
+    except (ValueError, KeyError):
+        return ""
+    root = str(HOOKS_DIR.parent).replace("\\", "/")
+    return json.dumps({"hooks": hooks}).replace("${CLAUDE_PLUGIN_ROOT}", root)
+
+
 def build_argv(entry, repo, config=None):
     """The full ``claude`` invocation for one dispatch."""
     config = config or {}
@@ -100,6 +128,14 @@ def build_argv(entry, repo, config=None):
         "--add-dir",
         str(repo),
     ]
+
+    settings = guard_settings()
+    if settings:
+        # The guard travels with the dispatch rather than relying on the user
+        # having installed goat-code as a plugin: `python goatcode.py run`
+        # from a plain clone has no plugin, and would otherwise be the one
+        # way to run agents with no boundary at all.
+        argv += ["--settings", settings]
 
     tools = fields.get("tools")
     if isinstance(tools, list) and "*" not in tools:
@@ -136,7 +172,14 @@ def dispatch(entry, repo, config=None, on_event=None):
                 on_event(kind, name, detail)
 
     try:
-        outcome = osenv.stream(argv, cwd=entry.get("cwd") or str(repo), on_line=consume)
+        outcome = osenv.stream(
+            argv,
+            cwd=entry.get("cwd") or str(repo),
+            # An executor stands in a worktree outside the repository, so the
+            # guard cannot find the run by walking up from there. Name it.
+            env={"GOATCODE_REPO": str(repo)},
+            on_line=consume,
+        )
     except osenv.CommandError:
         raise AgentError(
             "cannot run {!r}. Install the Claude Code CLI, or set claude_bin in "

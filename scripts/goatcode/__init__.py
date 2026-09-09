@@ -5,4 +5,4 @@ Linux. The agents call this package through ``scripts/goatcode.py``.
 """
 
 #: Kept in step with .claude-plugin/plugin.json; a test pins them together.
-__version__ = "0.3.0"
+__version__ = "0.4.0"

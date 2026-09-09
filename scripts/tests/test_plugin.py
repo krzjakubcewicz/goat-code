@@ -95,6 +95,36 @@ def test_plugin_manifest_is_valid():
     assert re.match(r"^\d+\.\d+\.\d+$", data["version"])
 
 
+def test_the_guard_hook_is_wired_up():
+    """A hook naming a script that is not there is a guard that never runs,
+    and nothing else would notice."""
+    data = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    entries = data["hooks"]["PreToolUse"]
+    assert len(entries) == 1
+
+    for tool in ("Read", "Edit", "Write", "Glob", "Grep", "Bash"):
+        assert tool in entries[0]["matcher"]
+
+    command = entries[0]["hooks"][0]["command"]
+    assert "${CLAUDE_PLUGIN_ROOT}" in command, "the path must resolve wherever it is installed"
+    for name in ("repo_guard.sh", "repo_guard.py"):
+        assert (ROOT / "hooks" / name).exists()
+
+
+def test_the_standalone_driver_ships_the_same_hook():
+    """`goatcode run` from a plain clone has no plugin, so it passes the hook
+    itself. The two must not come to disagree about what is guarded."""
+    module = importlib.import_module("goatcode.agentcli")
+    settings = json.loads(module.guard_settings())
+    manifest = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+
+    assert (
+        settings["hooks"]["PreToolUse"][0]["matcher"]
+        == manifest["hooks"]["PreToolUse"][0]["matcher"]
+    )
+    assert "${CLAUDE_PLUGIN_ROOT}" not in json.dumps(settings), "nothing expands it for a bare claude"
+
+
 def test_the_script_layer_reports_the_plugin_version():
     """Two places claim a version; they had already drifted apart once."""
     import goatcode

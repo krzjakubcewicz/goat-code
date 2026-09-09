@@ -1,0 +1,16 @@
+{
+  "description": "Confines a live goat-code run to the repository it was started in: a tool call resolving outside the repo, its worktrees and goat-code's own files is refused and recorded on the run. Dormant unless a run is in progress.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write|NotebookEdit|Glob|Grep|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/repo_guard.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
