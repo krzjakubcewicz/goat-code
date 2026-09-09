@@ -88,6 +88,18 @@ user is standing on a different branch, or when the recorded one has since
 been deleted. The answer comes back as `init --base <branch>`. Nothing is
 created before that question, so answering it costs nothing.
 
+## One repository
+
+A run may read and write the repository it was started in, that run's
+worktrees, and goat-code's own files. Nothing else - not a sibling checkout,
+not another project you remember, however relevant it looks.
+
+This is enforced by a `PreToolUse` hook while a run is live, not left to
+judgement. A refused call comes back naming the path and is recorded in the
+run's `guard.jsonl`, which the verifier is shown. If a path outside genuinely
+matters, say so in your report: `guard.extra_roots` in
+`.goatcode/config.yaml` is the user's decision, not yours.
+
 ## Run directory
 
 Everything lives in the target repo under `.goatcode/`, hidden from git via

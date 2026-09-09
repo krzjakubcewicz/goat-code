@@ -85,6 +85,10 @@ no model at all. That is what the end-to-end test does.
   `base..feature`: the thing you would open a pull request with. Nothing is
   merged into your branch, your HEAD is never moved, and nothing is ever
   pushed.
+- **One repository.** While a run is in progress, an agent's tool call that
+  resolves outside the repository, its worktrees and goat-code's own files is
+  refused and recorded. It holds even under `bypassPermissions`, and it goes
+  dormant the moment the run finishes, so your own sessions are untouched.
 - **A baseline.** Gates run once at the start, so a lint error that was
   already there is never blamed on the run — and never blocks it forever.
 - **A durable ledger.** Progress is on disk, so a crash or a context
@@ -188,6 +192,46 @@ agents use resolve at all - and also means your own hooks and `CLAUDE.md`
 reach every agent. `--claude-arg=--safe-mode` turns all of it off, including
 those skills.
 
+## Staying in one repository
+
+Agents wander. Left alone one will read a sibling project to see how it
+solved something, and then reason about code that is not under test and will
+not be in the diff.
+
+So while a run is live, every agent tool call is checked against the places a
+run legitimately reaches - the repository, the run's worktrees, and
+goat-code's own files - and anything else is refused, with the reason handed
+back to the agent:
+
+```
+goat-code: /home/you/other-project/src/app.js is outside this run's
+repository, so it was refused.
+```
+
+The agent carries on; nothing is killed over one stray path. Each refusal is
+recorded in `.goatcode/runs/<id>/guard.jsonl`, counted by `goat-code-status`,
+and shown to the verifier, so a wandering agent is visible afterwards rather
+than only in a transcript.
+
+It is enforced by a hook, not by asking the agents nicely, which is why it
+holds under `permission_mode: bypassPermissions` too. It is dormant unless a
+run is actually in progress.
+
+For a monorepo where slices genuinely need a sibling package:
+
+```yaml
+guard:
+  extra_roots:
+    - ../design-system
+```
+
+`guard.enabled: false` turns it off entirely.
+
+One honest limit: file tools are checked exactly, but a shell command cannot
+be parsed with certainty. Bash is checked for absolute paths, `cd` and
+`git -C`, which covers ordinary drift and the obvious escapes. Airtight
+containment of a shell needs an OS sandbox, not a hook.
+
 ## What you get back
 
 On success:
@@ -289,7 +333,7 @@ Everything lives in `.goatcode/` in the target repo, hidden from git via
 ```
 .goatcode/runs/<run-id>/
   spec.md  stack.json  state.json  ledger.md  baseline-gates.json
-  tasks.yaml
+  tasks.yaml  guard.jsonl
   cycle-1/
     briefs/  reports/  merge-report.md  gates.json  review.diff  verdict.md
 ```
