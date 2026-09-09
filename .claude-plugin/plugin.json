@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "goat-code",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Multi-agent feature pipeline: grill -> plan -> parallel executors in worktrees -> synthesize -> verify -> replan. Stack-aware, cross-OS, zero-dependency.",
   "author": {
     "name": "kjakubcewicz"

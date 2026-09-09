@@ -95,6 +95,14 @@ def test_plugin_manifest_is_valid():
     assert re.match(r"^\d+\.\d+\.\d+$", data["version"])
 
 
+def test_the_script_layer_reports_the_plugin_version():
+    """Two places claim a version; they had already drifted apart once."""
+    import goatcode
+
+    data = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert goatcode.__version__ == data["version"]
+
+
 def test_marketplace_manifest_points_at_this_plugin():
     data = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     assert data["name"] == "goat-code"
