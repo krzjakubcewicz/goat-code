@@ -72,11 +72,37 @@ is the only place routing lives: four predicates (`wants_grill`, `wants_gate`,
 `wants_verifier`, `wants_approval`) over three workflows. Anything unreadable
 or unknown falls to the safe middle or heavier, never to `DIRECT_DEVELOPMENT`.
 
+**Nothing reaches an agent except through a file.** `brief.py` writes the
+slice brief, `diffpkg.py` writes the review package, `dispatch.py` renders
+every prompt to disk, and the dispatch itself is `Agent(prompt="Read <path>")`.
+That is what keeps the orchestrator's context small, and it means changing
+what an agent is told is a Python edit, not a markdown one.
+
 Module map worth knowing: `run.py` (run dir + state), `schema.py` (tasks.yaml
-validation, glob-overlap test), `miniyaml.py` (hand-written YAML subset),
-`osenv.py` (the only subprocess boundary), `dispatch.py` (renders every agent
-prompt), `gates.py` (build/typecheck/lint/test + baseline classification),
-`stack.py` (stack detection).
+validation, glob-overlap test), `tasks.py` (the only writer of tasks.yaml,
+locked and re-read because executors report concurrently), `miniyaml.py`
+(hand-written YAML subset), `osenv.py` (the only subprocess boundary),
+`dispatch.py` (renders every agent prompt), `brief.py` / `diffpkg.py` (the
+files agents are handed), `gates.py` (build/typecheck/lint/test + baseline
+classification), `stack.py` (stack detection), `merge.py` (mechanical
+integration before the synthesizer is asked anything), `report.py` (how an
+agent's result is verified, not read), `tdd.py` (walks a slice's commits to
+check the executor really went test-first), `guard.py` (the repo boundary
+decision), `agentcli.py` + `driver.py` (the standalone front-end).
+
+**Three logs, three jobs.** `ledger.md` is per-run machine bookkeeping for
+crash recovery — on resume, trust it and `git log` over recollection, and never
+re-dispatch a step it records. `progress.txt` is cross-run and written for a
+human: one entry per completed run plus what it learnt. `debuglog.py` traces
+every command and is off unless `GOATCODE_DEBUG=1`. `stats.py` derives timings
+from the first two, so it works on any run, not just a debug one.
+
+**The hook layer is the one untestable piece.** `hooks/hooks.json` registers a
+PreToolUse hook; `repo_guard.sh` finds an interpreter across three platforms
+(`python3` alone is wrong on Windows) and `repo_guard.py` feeds the payload to
+`guard.py`. A guard that cannot start exits 0 — allow — because it must not
+block the run it was meant to protect. All the judgement lives in `guard.py`
+precisely so `test_guard.py` can reach it; keep the shims dumb.
 
 ## Invariants enforced by tests
 
@@ -98,6 +124,12 @@ Breaking one of these fails the suite, usually far from where you edited.
   limit; `.gitattributes` forces LF everywhere.
 - **Never touch the user's repo state.** No commits to their branch, no HEAD
   moves, no pushes. `init` writes a `.gitignore` entry and leaves it uncommitted.
+- **One version, two places.** `goatcode.__version__` and
+  `.claude-plugin/plugin.json` must agree; they drifted once, so
+  `test_plugin.py::test_the_script_layer_reports_the_plugin_version` pins them.
+- **`telemetry/` is gitignored and stays that way.** It holds real transcripts —
+  verbatim prompts, file contents from built projects, an account email. Local
+  material only; never commit it and never quote it into a doc.
 
 ## Style
 
