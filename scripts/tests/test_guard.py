@@ -279,3 +279,49 @@ def test_main_still_blocks_when_everything_works(git_repo, elsewhere, monkeypatc
     run.set_phase("execute")
     call = json.dumps(payload(git_repo, file_path=str(elsewhere / "src" / "app.js")))
     assert run_main(hook(), monkeypatch, call) == 2
+
+
+def test_an_interpreter_that_is_not_python_does_not_take_down_the_hook(tmp_path, git_repo, elsewhere):
+    """A name can be on PATH and not be a usable Python: the Microsoft Store
+    app-execution alias, a pyenv shim with no version for this directory. Both
+    print and exit non-zero, and Claude Code reports that as a failed hook on
+    every tool call. `command -v` cannot tell them apart from a real
+    interpreter, so the shell has to look at what the interpreter did.
+    """
+    import pathlib
+    import shutil
+    import subprocess
+
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("needs a POSIX sh")
+
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "python3"
+    stub.write_text("#!/bin/sh\necho 'no Python here' >&2\nexit 9009\n", encoding="utf-8")
+    stub.chmod(0o755)
+
+    script = pathlib.Path(__file__).resolve().parents[2] / "hooks" / "repo_guard.sh"
+    env = dict(os.environ, PATH=str(stub_dir) + os.pathsep + os.environ["PATH"])
+
+    def hook_says(body):
+        return subprocess.run(
+            [sh, str(script)],
+            input=json.dumps(body),
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+    run = make_run(git_repo)
+    run.set_phase("execute")
+
+    # The stub is first on PATH and cannot answer; the real interpreter behind
+    # it still gets the payload, so the verdict is the guard's, not the stub's.
+    outside = hook_says(payload(git_repo, file_path=str(elsewhere / "src" / "app.js")))
+    assert outside.returncode == 2, outside.stderr
+    assert "outside this run's repository" in outside.stderr
+
+    inside = hook_says(payload(git_repo, file_path=str(git_repo / "README.md")))
+    assert inside.returncode == 0, inside.stderr
