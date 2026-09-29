@@ -111,10 +111,13 @@ def add_constraint(repo, text):
         return existing
 
     target = constraints_path(repo)
-    body = osenv.read_text(target) if target.exists() else CONSTRAINTS_HEADER
-    if not body.endswith("\n"):
-        body += "\n"
-    osenv.write_text(target, body + "- " + text + "\n")
+    if not target.exists():
+        osenv.write_text(target, CONSTRAINTS_HEADER)
+        body = CONSTRAINTS_HEADER
+    else:
+        body = osenv.read_text(target)
+    healed = "" if not body or body.endswith("\n") else "\n"
+    osenv.append_text(target, healed + "- " + text + "\n", lock=True)
     return existing + [text]
 
 
@@ -158,12 +161,14 @@ def append(repo, run, body, now=None):
     target = path_for(repo)
     existing = read(repo)
     if not existing.strip():
+        osenv.write_text(target, HEADER)
         existing = HEADER
 
     entry = "{}\n{}\n".format(render_header(run, now), body)
-    if not existing.endswith("\n"):
-        existing += "\n"
-    osenv.write_text(target, "{}\n{}\n{}\n".format(existing, entry, SEPARATOR))
+    # Appended rather than rewritten. One recorded log reached 43 KB over
+    # eight runs, and every entry re-emitted all of it to add its own.
+    healed = "" if existing.endswith("\n") else "\n"
+    osenv.append_text(target, "{}\n{}\n{}\n".format(healed, entry, SEPARATOR), lock=True)
     return entry
 
 

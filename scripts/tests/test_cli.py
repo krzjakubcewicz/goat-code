@@ -10,13 +10,14 @@ import importlib.util
 import json
 import pathlib
 import sys
+import threading
 
 import pytest
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from goatcode import miniyaml, osenv, worktree  # noqa: E402
+from goatcode import ledger, miniyaml, osenv, worktree  # noqa: E402
 from goatcode.run import Run  # noqa: E402
 from tests.conftest import make_run  # noqa: E402
 
@@ -289,6 +290,30 @@ def test_ledger_appends_and_reads(capsys, node_repo):
     invoke(capsys, "--repo", str(node_repo), "ledger", "slice S1 complete (commits a..b)")
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "ledger")
     assert payload["completed"] == ["S1"]
+
+
+def test_concurrent_ledger_writers_lose_nothing(node_repo):
+    """Executors report in parallel. A read-modify-write dropped whichever
+    entry landed second, which made the recovery map claim work was undone."""
+    run = make_run(node_repo)
+    errors = []
+
+    def writer(worker):
+        try:
+            for n in range(20):
+                ledger.append(run, "worker {} step {}".format(worker, n))
+        except Exception as exc:  # pragma: no cover - only on a real failure
+            errors.append(exc)
+
+    threads = [threading.Thread(target=writer, args=(w,)) for w in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert not errors
+    written = [e for e in ledger.entries(run) if "step" in e]
+    assert len(written) == 40, "entries were lost to a concurrent write"
 
 
 def test_resume_reports_what_to_trust(capsys, node_repo):

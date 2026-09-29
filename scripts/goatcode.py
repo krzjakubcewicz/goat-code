@@ -552,9 +552,9 @@ def cmd_worktree(args):
             path, branch, setup = worktreemod.create(
                 run, slice_id, setup=not args.no_setup, stack_profile=profile
             )
-            tasksmod.set_field(run.tasks_path, slice_id, "worktree", str(path))
-            tasksmod.set_field(run.tasks_path, slice_id, "branch", branch)
-            tasksmod.record_commits(run.tasks_path, slice_id, base=worktreemod.start_point(run))
+            tasksmod.record_worktree(
+                run.tasks_path, slice_id, path, branch, worktreemod.start_point(run)
+            )
             created.append(
                 {
                     "slice": slice_id,

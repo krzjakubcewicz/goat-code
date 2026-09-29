@@ -277,3 +277,66 @@ def test_a_shared_path_a_slice_touches_also_makes_it_changed():
 def test_no_changed_files_leaves_every_slice_unchanged():
     doc = copy.deepcopy(PLAN)
     assert tasks.unchanged_slices(doc, []) == ["S1", "S2", "S3"]
+
+
+# -- line-level updates ----------------------------------------------------
+#
+# A status change is four characters. Re-emitting the document to make it
+# rewrote the whole plan - fifty kilobytes on a real run - and lost every
+# comment in it on the way.
+
+
+def test_a_status_change_rewrites_only_its_own_line(plan_file):
+    before = plan_file.read_text(encoding="utf-8").split("\n")
+    tasks.set_status(plan_file, "S2", "done")
+    after = plan_file.read_text(encoding="utf-8").split("\n")
+
+    assert len(before) == len(after)
+    differing = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+    assert len(differing) == 1
+    assert after[differing[0]].strip() == "status: done"
+    assert tasks.get(tasks.load(plan_file), "S2")["status"] == "done"
+
+
+def test_an_in_place_update_keeps_the_comments_around_it(plan_file):
+    text = plan_file.read_text(encoding="utf-8")
+    plan_file.write_text(text.replace("slices:", "# hand-written note\nslices:"), encoding="utf-8")
+
+    tasks.set_status(plan_file, "S1", "done")
+    assert "# hand-written note" in plan_file.read_text(encoding="utf-8")
+
+
+def test_an_unsupported_shape_falls_back_to_a_full_write(plan_file):
+    """S2 has no ``commits`` key, so there is no line to splice. The document
+    must still come out right - the fallback is what shipped before."""
+    tasks.record_commits(plan_file, "S2", base="abc1234", head="def5678")
+    assert tasks.get(tasks.load(plan_file), "S2")["commits"] == {
+        "base": "abc1234",
+        "head": "def5678",
+    }
+
+
+def test_both_write_paths_produce_the_same_document(plan_file, tmp_path):
+    spliced = tmp_path / "spliced.yaml"
+    spliced.write_bytes(plan_file.read_bytes())
+    tasks.set_status(spliced, "S1", "done")
+
+    doc = tasks.load(plan_file)
+    tasks.get(doc, "S1")["status"] = "done"
+    tasks.save(plan_file, doc)
+
+    assert tasks.load(spliced) == tasks.load(plan_file)
+
+
+def test_recording_a_worktree_takes_one_update(plan_file, monkeypatch):
+    calls = []
+    real = tasks.update
+    monkeypatch.setattr(tasks, "update", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+
+    tasks.record_worktree(plan_file, "S1", r"C:\tmp\goatcode\ab\S1", "goat/s1", "4d2f1db")
+
+    assert len(calls) == 1
+    item = tasks.get(tasks.load(plan_file), "S1")
+    assert item["branch"] == "goat/s1"
+    assert item["worktree"].endswith("S1")
+    assert item["commits"]["base"] == "4d2f1db"

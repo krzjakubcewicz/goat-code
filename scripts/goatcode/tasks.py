@@ -5,6 +5,12 @@ worktrees, all reporting status into one file. Every mutation therefore
 goes through :func:`update`, which takes a lock, re-reads from disk,
 applies the change and writes atomically. Nothing here caches the document
 across a mutation.
+
+Where the change is a scalar on one slice - which is every change the
+pipeline makes - it is spliced into the file line by line rather than the
+document being re-emitted, so a status moving to ``done`` rewrites one line
+instead of fifty kilobytes and the plan keeps any comment in it. Anything
+the splice cannot place unambiguously falls back to the full write.
 """
 
 from __future__ import annotations
@@ -90,18 +96,42 @@ def unchanged_slices(doc, changed_files):
     return out
 
 
-def update(path, mutate):
+def update(path, mutate, splice=None):
     """Apply ``mutate(doc)`` under a lock and write the result atomically.
 
     ``mutate`` receives the freshly-read document and may return a value,
     which :func:`update` passes back to the caller.
+
+    ``splice`` restates the same change as ``(slice_id, [(key_path, value)])``
+    so it can be written line by line instead of the whole plan being
+    re-emitted. Only for mutations that always apply: one that decides not to
+    change anything, the way :func:`claim` does, must not pass it.
     """
     path = pathlib.Path(path)
     with osenv.FileLock(path):
-        doc = load(path)
+        if not path.exists():
+            raise TaskError("no plan at {}".format(path))
+        text = osenv.read_text(path)
+        doc = miniyaml.loads(text)
+        if not isinstance(doc, dict):
+            raise TaskError("{} does not contain a mapping".format(path))
         result = mutate(doc)
-        save(path, doc)
+        spliced = _splice(text, splice) if splice else None
+        if spliced is None:
+            save(path, doc)
+        else:
+            osenv.write_text(path, spliced)
     return result
+
+
+def _splice(text, splice):
+    """The plan with each edit applied in place, or ``None`` to re-serialise."""
+    slice_id, edits = splice
+    for keys, value in edits:
+        text = miniyaml.set_in_sequence_item(text, "id", slice_id, keys, value)
+        if text is None:
+            return None
+    return text
 
 
 def set_field(path, slice_id, field, value):
@@ -113,7 +143,7 @@ def set_field(path, slice_id, field, value):
         item[field] = value
         return previous
 
-    return update(path, mutate)
+    return update(path, mutate, splice=(slice_id, [((field,), value)]))
 
 
 def set_status(path, slice_id, status):
@@ -137,7 +167,38 @@ def record_commits(path, slice_id, base=None, head=None):
             commits["head"] = head
         return dict(commits)
 
-    return update(path, mutate)
+    # Mirrors the mutation exactly, ``is not None`` included: a splice that
+    # skipped an edit the document got would leave the two disagreeing.
+    pairs = (("base", base), ("head", head))
+    edits = [(("commits", name), val) for name, val in pairs if val is not None]
+    return update(path, mutate, splice=(slice_id, edits) if edits else None)
+
+
+def record_worktree(path, slice_id, worktree, branch, base):
+    """Where an executor will work and what it starts from, in one update.
+
+    Three separate setters meant three lock-parse-write cycles over the whole
+    plan for every slice in the wave, to record facts that are all known at
+    the same moment.
+    """
+
+    def mutate(doc):
+        item = get(doc, slice_id)
+        item["worktree"] = str(worktree)
+        item["branch"] = branch
+        commits = item.get("commits")
+        if not isinstance(commits, dict):
+            commits = {"base": None, "head": None}
+            item["commits"] = commits
+        commits["base"] = base
+        return dict(commits)
+
+    edits = [
+        (("worktree",), str(worktree)),
+        (("branch",), branch),
+        (("commits", "base"), base),
+    ]
+    return update(path, mutate, splice=(slice_id, edits))
 
 
 def claim(path, slice_id):

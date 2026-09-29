@@ -107,6 +107,52 @@ def test_write_text_is_atomic_and_lf(tmp_path):
     assert not list(tmp_path.glob("**/*.tmp*"))
 
 
+def test_write_text_skips_an_identical_rewrite(tmp_path, monkeypatch):
+    target = tmp_path / "prompt.md"
+    osenv.write_text(target, "same\n")
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("rewrote bytes that were already there")
+
+    monkeypatch.setattr(osenv.os, "replace", refuse)
+    osenv.write_text(target, "same\n")
+    assert target.read_bytes() == b"same\n"
+
+
+def test_write_text_still_writes_when_the_bytes_differ(tmp_path):
+    target = tmp_path / "prompt.md"
+    osenv.write_text(target, "one\n")
+    osenv.write_text(target, "two\n")
+    assert target.read_bytes() == b"two\n"
+
+
+def test_append_text_adds_lf_without_reading_first(tmp_path):
+    target = tmp_path / "deep" / "log.md"
+    osenv.append_text(target, "one\n")
+    osenv.append_text(target, "two\n")
+    assert target.read_bytes() == b"one\ntwo\n"
+
+
+def test_locked_appends_do_not_interleave(tmp_path):
+    """Append mode alone is not enough on Windows, where O_APPEND is a
+    seek-then-write that two writers can land on the same offset."""
+    target = tmp_path / "log.md"
+
+    def writer(worker):
+        for n in range(20):
+            osenv.append_text(target, "{}-{}\n".format(worker, n), lock=True)
+
+    threads = [threading.Thread(target=writer, args=(w,)) for w in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    lines = target.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 60
+    assert sorted(lines) == sorted("{}-{}".format(w, n) for w in range(3) for n in range(20))
+
+
 def test_write_json_roundtrip(tmp_path):
     target = tmp_path / "data.json"
     osenv.write_json(target, {"b": 1, "a": [1, 2]})
