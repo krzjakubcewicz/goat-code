@@ -343,9 +343,22 @@ def rmtree_force(path):
 
 
 def write_text(path, text):
-    """Atomically write UTF-8 text with LF endings."""
+    """Atomically write UTF-8 text with LF endings.
+
+    A write of bytes that are already there is not a write. Prompts, briefs
+    and review packages get re-rendered every time the machine re-enters a
+    phase - re-deriving is the whole point of ``next_action`` - and leaving
+    the file alone keeps a run directory's timestamps saying when a prompt
+    was actually produced. Compared as bytes rather than through
+    ``read_text``, whose universal-newline translation would call a CRLF file
+    identical to the LF one we are about to write.
+    """
     path = pathlib.Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    payload = text.encode("utf-8")
+    if path.exists() and path.read_bytes() == payload:
+        debuglog.log("write-skip", path=path, bytes=len(text))
+        return
     tmp = path.with_name(path.name + ".tmp{}".format(os.getpid()))
     # Path.open takes newline on every version; Path.write_text only from
     # 3.10, and the floor is 3.9.
@@ -353,6 +366,25 @@ def write_text(path, text):
         handle.write(text)
     os.replace(str(tmp), str(path))
     debuglog.log("write", path=path, bytes=len(text))
+
+
+def append_text(path, text, lock=False):
+    """Append UTF-8 text with LF endings.
+
+    ``lock`` for a file several processes append to. Append mode alone is not
+    enough on Windows, where ``O_APPEND`` is emulated as seek-then-write and
+    two writers land on the same offset: a 2x20-entry concurrency test lost
+    three lines to interleaving before the lock went in. It is off by default
+    because a single-writer log should not pay for a lock directory.
+    """
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if lock:
+        with FileLock(path):
+            return append_text(path, text)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+    debuglog.log("append", path=path, bytes=len(text))
 
 
 def read_text(path):

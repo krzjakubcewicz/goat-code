@@ -19,15 +19,18 @@ def append(run, line, now=None):
     stamp = (now or datetime.datetime.now()).replace(microsecond=0).isoformat()
     entry = "- [{}] cycle {}: {}".format(stamp, run.cycle, line.strip())
     path = pathlib.Path(run.ledger_path)
-    existing = osenv.read_text(path) if path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    # A retried command must not double-log. One recorded run has "scribe
-    # written" twice, seven seconds apart, which makes the recovery map claim
-    # a step happened twice when it happened once.
-    if _same_as_last(existing, entry):
-        return entry
-    osenv.write_text(path, existing + entry + "\n")
+    # Appended under a lock, not read-modify-written. Executors report
+    # concurrently: rewriting the whole file drops whichever entry lands
+    # second, and on Windows even append mode interleaves without the lock.
+    with osenv.FileLock(path):
+        existing = osenv.read_text(path) if path.exists() else ""
+        # A retried command must not double-log. One recorded run has "scribe
+        # written" twice, seven seconds apart, which makes the recovery map
+        # claim a step happened twice when it happened once.
+        if _same_as_last(existing, entry):
+            return entry
+        healed = "" if not existing or existing.endswith("\n") else "\n"
+        osenv.append_text(path, healed + entry + "\n")
     return entry
 
 

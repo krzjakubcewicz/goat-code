@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from goatcode import miniyaml
+from goatcode import miniyaml, osenv
 from goatcode.miniyaml import YamlError, dumps, loads
 
 TASKS_SAMPLE = """
@@ -222,3 +222,89 @@ def test_dump_and_load_file_roundtrip(tmp_path):
     miniyaml.dump(payload, target)
     assert target.read_bytes().count(b"\r") == 0
     assert miniyaml.load(target) == payload
+
+
+def test_dump_leaves_the_old_file_whole_when_the_write_fails(tmp_path, monkeypatch):
+    """Truncate-in-place lost the plan on a crash mid-write. The temp-file
+    swap means a failure leaves what was already there."""
+    target = tmp_path / "tasks.yaml"
+    miniyaml.dump({"version": 1}, target)
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(osenv.os, "replace", boom)
+    with pytest.raises(OSError):
+        miniyaml.dump({"version": 2}, target)
+    assert miniyaml.load(target) == {"version": 1}
+
+
+# -- line-level updates ----------------------------------------------------
+
+NESTED_COMMITS = """
+slices:
+  - id: S1
+    title: First
+    status: pending
+    commits:
+      base: null
+      head: null
+  - id: S2
+    title: Second
+    status: pending
+"""
+
+
+def _spliced(text, slice_id, path, value):
+    out = miniyaml.set_in_sequence_item(text, "id", slice_id, path, value)
+    assert out is not None, "refused a shape it should have handled"
+    return out
+
+
+def test_splicing_a_scalar_changes_one_line_and_nothing_else():
+    out = _spliced(TASKS_SAMPLE, "S1", ("status",), "done")
+    before, after = TASKS_SAMPLE.split("\n"), out.split("\n")
+    differing = [i for i, (a, b) in enumerate(zip(before, after)) if a != b]
+    assert len(before) == len(after)
+    assert len(differing) == 1
+    assert after[differing[0]].strip() == "status: done"
+
+
+def test_a_spliced_document_equals_the_reserialised_one():
+    expected = loads(TASKS_SAMPLE)
+    expected["slices"][1]["status"] = "done"
+    assert loads(_spliced(TASKS_SAMPLE, "S2", ("status",), "done")) == expected
+
+
+def test_splicing_reaches_a_nested_scalar():
+    out = _spliced(NESTED_COMMITS, "S1", ("commits", "base"), "4d2f1db")
+    assert loads(out)["slices"][0]["commits"] == {"base": "4d2f1db", "head": None}
+    assert loads(out)["slices"][1] == loads(NESTED_COMMITS)["slices"][1]
+
+
+def test_splicing_quotes_a_value_that_yaml_would_read_as_something_else():
+    out = _spliced(NESTED_COMMITS, "S1", ("status",), "123")
+    assert '"123"' in out
+    assert loads(out)["slices"][0]["status"] == "123"
+
+
+@pytest.mark.parametrize(
+    "slice_id, path, value, why",
+    [
+        ("S1", ("nope",), "x", "key is not in the item"),
+        ("S404", ("status",), "x", "no item has that id"),
+        ("S1", ("owns",), "x", "the key opens a block sequence"),
+        ("S1", ("acceptance",), "x", "the key opens a block of mappings"),
+        ("S1", ("depends_on",), "x", "the value is a flow collection"),
+        ("S1", ("commits", "base"), "x", "the parent is a flow mapping"),
+        ("S1", ("status",), ["a"], "the new value is not a scalar"),
+        ("S1", (), "x", "no key path at all"),
+    ],
+)
+def test_splicing_refuses_anything_ambiguous(slice_id, path, value, why):
+    assert miniyaml.set_in_sequence_item(TASKS_SAMPLE, "id", slice_id, path, value) is None, why
+
+
+def test_splicing_refuses_when_two_items_claim_the_same_id():
+    doubled = TASKS_SAMPLE.replace("  - id: S2", "  - id: S1")
+    assert miniyaml.set_in_sequence_item(doubled, "id", "S1", ("status",), "done") is None

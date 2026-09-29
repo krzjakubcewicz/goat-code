@@ -939,7 +939,7 @@ class Run:
         """Append a clarification section to the spec, keeping it the record."""
         existing = osenv.read_text(self.spec_path) if self.spec_path.exists() else ""
         prefix = "" if existing.endswith("\n\n") or existing == "" else "\n\n"
-        osenv.write_text(self.spec_path, existing + prefix + section.rstrip() + "\n")
+        osenv.append_text(self.spec_path, prefix + section.rstrip() + "\n")
 
     def summary(self):
         """Compact dict for ``goatcode status``."""

@@ -23,7 +23,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-__all__ = ["YamlError", "loads", "load", "dumps", "dump"]
+__all__ = ["YamlError", "loads", "load", "dumps", "dump", "set_in_sequence_item"]
 
 _NULLS = {"", "~", "null", "Null", "NULL"}
 _TRUE = {"true", "True", "TRUE"}
@@ -587,8 +587,115 @@ def dumps(value):
 
 
 def dump(value, path):
-    """Write ``value`` to ``path`` as UTF-8 with LF endings."""
-    # Path.open takes newline on every version; Path.write_text only from
-    # 3.10, and the floor is 3.9.
-    with pathlib.Path(path).open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write(dumps(value))
+    """Write ``value`` to ``path`` as UTF-8 with LF endings.
+
+    Through ``osenv.write_text`` rather than ``open("w")``: this is how
+    tasks.yaml is written, and a truncate-in-place that a crash interrupts
+    leaves the run's source of truth half a document.
+    """
+    from . import osenv
+
+    osenv.write_text(path, dumps(value))
+
+
+def _indent_of(raw):
+    return len(raw) - len(raw.lstrip(" "))
+
+
+def set_in_sequence_item(text, key, match_value, path, value):
+    """Set one scalar inside the sequence item whose ``key`` is ``match_value``.
+
+    A line-level edit, for the same reason ``run.record_base_branch`` does one
+    on config.yaml: re-emitting the whole document to move a slice from
+    ``claimed`` to ``done`` rewrites fifty kilobytes to change four
+    characters.
+
+    Returns the new text, or ``None`` whenever the shape is anything but
+    unambiguous - key absent, matched twice, a block scalar, a flow mapping.
+    The caller then re-serialises, which is what shipped before this existed,
+    so the worst case is the old behaviour rather than a mangled plan.
+    """
+    if not path:
+        return None
+    try:
+        rendered = _scalar(value)
+    except TypeError:
+        return None
+
+    lines = text.split("\n")
+    found = None
+    for i, raw in enumerate(lines):
+        body = _strip_comment(raw.strip())
+        if not body.startswith("- "):
+            continue
+        head = body[2:]
+        colon = _find_key_colon(head)
+        if colon < 0 or head[:colon].strip() != key:
+            continue
+        if head[colon + 1 :].strip() != match_value:
+            continue
+        if found is not None:
+            return None
+        found = (i, _indent_of(raw))
+    if found is None:
+        return None
+
+    start, item_indent = found
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if lines[j].strip() and _indent_of(lines[j]) <= item_indent:
+            end = j
+            break
+
+    # "- " is two columns, so the item's own keys sit one level in from it.
+    target = _locate_key(lines, start + 1, end, item_indent + 2, path)
+    if target is None:
+        return None
+    index, indent = target
+    lines[index] = "{}{}: {}".format(" " * indent, _scalar(str(path[-1])), rendered)
+    return "\n".join(lines)
+
+
+def _opens_block(lines, start, end, indent):
+    """True when the next content after a bare key is that key's own block."""
+    for i in range(start, end):
+        if lines[i].strip():
+            return _indent_of(lines[i]) > indent
+    return False
+
+
+def _locate_key(lines, start, end, indent, path):
+    """Line index and indent of the scalar at ``path``, or ``None``."""
+    hit = None
+    for i in range(start, end):
+        raw = lines[i]
+        if not raw.strip() or _indent_of(raw) != indent:
+            continue
+        body = _strip_comment(raw.strip())
+        colon = _find_key_colon(body)
+        if colon < 0 or body[:colon].strip() != path[0]:
+            continue
+        if hit is not None:
+            return None
+        hit = i
+    if hit is None:
+        return None
+
+    body = _strip_comment(lines[hit].strip())
+    tail = body[_find_key_colon(body) + 1 :].strip()
+    if len(path) == 1:
+        # A block scalar or a flow collection is not one line to swap, and a
+        # key with nothing after the colon is a null scalar only when no
+        # block follows it - otherwise swapping the line orphans the block.
+        if tail[:1] in ("|", ">", "[", "{"):
+            return None
+        if not tail and _opens_block(lines, hit + 1, end, indent):
+            return None
+        return hit, indent
+
+    stop = end
+    for j in range(hit + 1, end):
+        if lines[j].strip() and _indent_of(lines[j]) <= indent:
+            stop = j
+            break
+    return _locate_key(lines, hit + 1, stop, indent + 2, path[1:])
