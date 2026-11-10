@@ -229,6 +229,19 @@ def test_all_slices_finished_moves_to_synthesize(run):
     assert machine.derive_phase(run) == "synthesize"
 
 
+def test_finishing_cycle_two_synthesizes_before_verifying(run):
+    """cycle 1's clean merge record used to survive into cycle 2, so verify
+    was built at the previous cycle's integration ref."""
+    write_plan(run)
+    approved(run)
+    run.state["merge"] = {"status": "clean", "merged": [], "pending": [], "worktree": "w"}
+    run.save()
+    run.advance_cycle()
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    assert machine.derive_phase(run) == "synthesize"
+
+
 def test_a_clean_merge_moves_to_verify(run):
     write_plan(run)
     approved(run)

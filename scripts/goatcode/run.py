@@ -918,6 +918,10 @@ class Run:
         # replan cycles never grill.
         self.state["plan_fix_attempts"] = 0
         self.state["approval"] = None
+        # The merge record describes the last cycle's integration. Left in
+        # place, derive_phase reads it as a clean merge, skips synthesize,
+        # and verify judges the previous cycle's ref.
+        self.state.pop("merge", None)
         self.cycle_dir().mkdir(parents=True, exist_ok=True)
         (self.cycle_dir() / "briefs").mkdir(exist_ok=True)
         (self.cycle_dir() / "reports").mkdir(exist_ok=True)

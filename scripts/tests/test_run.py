@@ -436,6 +436,13 @@ def test_advance_cycle_resets_per_cycle_counters(git_repo):
     assert run.grill_rounds == 1, "grill rounds are not per-cycle; replans never grill"
 
 
+def test_a_new_cycle_forgets_the_previous_merge(git_repo):
+    run = make_run(git_repo)
+    run.state["merge"] = {"status": "clean", "pending": []}
+    run.advance_cycle()
+    assert "merge" not in run.state
+
+
 def test_new_phases_are_accepted(git_repo):
     run = make_run(git_repo)
     for phase in ("ask", "replan"):
