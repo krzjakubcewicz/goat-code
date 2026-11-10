@@ -105,6 +105,17 @@ max_cost_usd: null
 # The Claude Code executable, if it is not on PATH.
 claude_bin: claude
 
+# The Python interpreter agents are told to call, and the one the repository
+# guard hook runs under. null uses the interpreter running goat-code for the
+# commands, and searches PATH for python3, python, py for the hook. Set it
+# when that search lands on the wrong thing - on Windows, the Microsoft Store
+# alias or a pyenv shim. Use forward slashes or single quotes: a backslash in
+# double quotes is a YAML escape. If it is set and does not run, the run
+# stops instead of falling back to PATH.
+#
+#   python: 'C:/Users/me/AppData/Local/Programs/Python/Python313/python.exe'
+python: null
+
 # Seconds before a gate command or a setup command is killed.
 gate_timeout_seconds: 1800
 setup_timeout_seconds: 1800
@@ -138,8 +149,8 @@ classifier:
 #     extra_roots:
 #       - ../design-system
 #
-# The interpreter's own directory is admitted automatically, so a Windows
-# python.exe path in a rendered command needs no entry here.
+# The interpreter's own directory, and the configured python's, are admitted
+# automatically, so a python.exe path in a rendered command needs no entry here.
 guard:
   enabled: true
   extra_roots: []

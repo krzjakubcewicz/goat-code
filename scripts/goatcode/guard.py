@@ -64,8 +64,12 @@ def allowed_roots(repo, config=None, state=None):
     # refused goat-code's own commands, which taught agents to route around
     # refusals. Empty under an embedded interpreter, so skip rather than
     # admit the working directory.
-    if sys.executable:
-        roots.append(os.path.dirname(sys.executable))
+    # The configured python is the one those commands name instead. A bare
+    # name puts no path in the command, and its dirname would be the working
+    # directory, so only an absolute path is admitted.
+    for exe in (sys.executable, config.get("python")):
+        if exe and os.path.isabs(str(exe)):
+            roots.append(os.path.dirname(str(exe)))
 
     if state:
         # One entry covers every worktree of the run, the integration one

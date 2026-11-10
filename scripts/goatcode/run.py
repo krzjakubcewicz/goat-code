@@ -119,6 +119,10 @@ DEFAULT_CONFIG = {
     "max_cost_usd": None,
     # The Claude Code executable, if it is not on PATH.
     "claude_bin": "claude",
+    # The Python interpreter agents are told to call, and the one the guard
+    # hook runs under. null: the interpreter running goat-code for commands,
+    # and python3, python, py off PATH for the hook.
+    "python": None,
     "models": {
         "classifier": "haiku",
         "planner": "opus",

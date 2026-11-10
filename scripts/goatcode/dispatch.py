@@ -30,10 +30,20 @@ def command(run, *args):
     explicit, so the command works from an executor's worktree, from any
     shell, on any platform.
     """
-    parts = ['"{}"'.format(sys.executable), '"{}"'.format(CLI), "--repo", '"{}"'.format(run.repo)]
+    parts = ['"{}"'.format(interpreter(run)), '"{}"'.format(CLI), "--repo", '"{}"'.format(run.repo)]
     parts += ["--run", run.run_id]
     parts += [_quote(str(a)) for a in args]
     return " ".join(parts)
+
+
+def interpreter(run):
+    """The Python every rendered command names.
+
+    ``python`` in the config wins: the interpreter running goat-code is not
+    always one an agent can or should call - on Windows it may be a Store
+    alias or a pyenv shim the guard cannot see past.
+    """
+    return str(run.config.get("python") or sys.executable)
 
 
 def _quote(value):

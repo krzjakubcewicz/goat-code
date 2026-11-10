@@ -27,6 +27,38 @@
 # whether a call stays inside the run's repository, and carrying on unguarded
 # is how a run writes outside it unnoticed. The message says what is wrong so
 # the agent reports it instead of retrying.
+#
+# `python:` in .goatcode/config.yaml beats all of that: it is how a user whose
+# PATH python is wrong gets a guarded run. The repository is found the way
+# repo_guard.py finds it - GOATCODE_REPO, else walk up from here - and the key
+# is read with sed, since the YAML parser lives on the other side of the
+# interpreter this is choosing. A configured python that does not run stops
+# the run rather than falling back to PATH, which would hide the mistake.
+dir=${GOATCODE_REPO:-$PWD}
+while [ -n "$dir" ] && [ ! -f "$dir/.goatcode/config.yaml" ]; do
+  parent=$(dirname "$dir")
+  [ "$parent" = "$dir" ] && dir= || dir=$parent
+done
+if [ -n "$dir" ]; then
+  config="$dir/.goatcode/config.yaml"
+  configured=$(tr -d '\r' <"$config" | sed -n 's/^python:[[:space:]]*//p' | head -n 1 |
+    sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//' -e "s/^['\"]//" -e "s/['\"]\$//")
+  case "$configured" in
+    "" | null | "~") ;;
+    *)
+      if "$configured" -c '' </dev/null >/dev/null 2>&1; then
+        "$configured" "$(dirname "$0")/repo_guard.py"
+        status=$?
+        if [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; then
+          exit "$status"
+        fi
+      fi
+      echo "goat-code: python in $config ($configured) does not run the repository guard, so the run is stopped. Fix or remove that setting. Report this to the user; do not work around it." >&2
+      exit 2
+      ;;
+  esac
+fi
+
 for interpreter in python3 python py; do
   command -v "$interpreter" >/dev/null 2>&1 || continue
   "$interpreter" -c '' </dev/null >/dev/null 2>&1 || continue

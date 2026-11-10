@@ -1212,3 +1212,14 @@ def test_the_sign_off_names_a_rules_only_escalation(run):
     action = machine.next_action(run)
     assert action["action"] == "stop"
     assert "authentication" in action["message"]
+
+
+def test_next_commands_use_the_configured_python(run):
+    run.config["python"] = "/opt/python3.12/bin/python3"
+    assert machine.cli_argv(run, "merge")[0] == "/opt/python3.12/bin/python3"
+
+
+def test_next_commands_default_to_the_running_python(run):
+    import sys
+
+    assert machine.cli_argv(run, "merge")[0] == sys.executable
