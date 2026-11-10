@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
 
@@ -63,6 +64,26 @@ def test_installed_skills_are_allowed(git_repo, roots):
 
 
 # -- what is outside --------------------------------------------------------
+
+
+def test_the_interpreter_directory_is_an_allowed_root(git_repo, roots):
+    """Dispatch prompts name the interpreter by absolute path; refusing it
+    refused goat-code's own commands, 52 times in one run."""
+    assert guard.real(os.path.dirname(sys.executable)) in roots
+
+
+def test_a_command_naming_the_interpreter_is_not_refused(git_repo, roots):
+    command = '"{}" -V'.format(sys.executable)
+    assert guard.verdict("Bash", {"command": command}, roots, cwd=git_repo) is None
+
+
+def test_the_interpreter_directory_does_not_widen_containment(git_repo, roots, elsewhere):
+    assert guard.verdict("Read", read(elsewhere / "src" / "app.js"), roots, cwd=git_repo)
+
+
+def test_allowed_roots_survives_no_executable(git_repo, monkeypatch):
+    monkeypatch.setattr(sys, "executable", "")
+    assert guard.allowed_roots(git_repo)
 
 
 def test_another_repository_is_refused(git_repo, roots, elsewhere):
@@ -322,6 +343,8 @@ def test_an_interpreter_that_is_not_python_does_not_take_down_the_hook(tmp_path,
     outside = hook_says(payload(git_repo, file_path=str(elsewhere / "src" / "app.js")))
     assert outside.returncode == 2, outside.stderr
     assert "outside this run's repository" in outside.stderr
+    assert "no Python here" not in outside.stderr
 
     inside = hook_says(payload(git_repo, file_path=str(git_repo / "README.md")))
     assert inside.returncode == 0, inside.stderr
+    assert "no Python here" not in inside.stderr

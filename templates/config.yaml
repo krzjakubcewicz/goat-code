@@ -137,6 +137,9 @@ classifier:
 #   guard:
 #     extra_roots:
 #       - ../design-system
+#
+# The interpreter's own directory is admitted automatically, so a Windows
+# python.exe path in a rendered command needs no entry here.
 guard:
   enabled: true
   extra_roots: []
