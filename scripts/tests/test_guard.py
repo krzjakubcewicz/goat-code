@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
 
@@ -63,6 +64,41 @@ def test_installed_skills_are_allowed(git_repo, roots):
 
 
 # -- what is outside --------------------------------------------------------
+
+
+def test_the_interpreter_directory_is_an_allowed_root(git_repo, roots):
+    """Dispatch prompts name the interpreter by absolute path; refusing it
+    refused goat-code's own commands, 52 times in one run."""
+    assert guard.real(os.path.dirname(sys.executable)) in roots
+
+
+def test_a_command_naming_the_interpreter_is_not_refused(git_repo, roots):
+    command = '"{}" -V'.format(sys.executable)
+    assert guard.verdict("Bash", {"command": command}, roots, cwd=git_repo) is None
+
+
+def test_the_interpreter_directory_does_not_widen_containment(git_repo, roots, elsewhere):
+    assert guard.verdict("Read", read(elsewhere / "src" / "app.js"), roots, cwd=git_repo)
+
+
+def test_the_configured_python_directory_is_an_allowed_root(git_repo, tmp_path):
+    """Rendered commands name the configured python, so refusing its
+    directory would refuse goat-code's own commands again."""
+    exe = tmp_path / "py313" / "python.exe"
+    exe.parent.mkdir()
+    roots = guard.allowed_roots(git_repo, {"python": str(exe)})
+    assert guard.real(exe.parent) in roots
+
+
+def test_a_bare_configured_python_name_admits_nothing(git_repo):
+    """A name resolved off PATH puts no path in the command, so there is
+    nothing to admit - and dirname("python3") would be the working directory."""
+    assert guard.allowed_roots(git_repo, {"python": "python3"}) == guard.allowed_roots(git_repo)
+
+
+def test_allowed_roots_survives_no_executable(git_repo, monkeypatch):
+    monkeypatch.setattr(sys, "executable", "")
+    assert guard.allowed_roots(git_repo)
 
 
 def test_another_repository_is_refused(git_repo, roots, elsewhere):
@@ -322,6 +358,102 @@ def test_an_interpreter_that_is_not_python_does_not_take_down_the_hook(tmp_path,
     outside = hook_says(payload(git_repo, file_path=str(elsewhere / "src" / "app.js")))
     assert outside.returncode == 2, outside.stderr
     assert "outside this run's repository" in outside.stderr
+    assert "no Python here" not in outside.stderr
 
     inside = hook_says(payload(git_repo, file_path=str(git_repo / "README.md")))
     assert inside.returncode == 0, inside.stderr
+    assert "no Python here" not in inside.stderr
+
+
+def test_no_working_interpreter_stops_the_run(tmp_path):
+    """A guard that cannot start used to allow everything. Nothing then says
+    whether a call stays inside the repository, so the shim blocks instead."""
+    import shutil
+    import subprocess
+
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("needs a POSIX sh")
+
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    for name in ("python3", "python", "py"):
+        stub = stub_dir / name
+        stub.write_text("#!/bin/sh\nexit 9009\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+    import pathlib
+
+    script = pathlib.Path(__file__).resolve().parents[2] / "hooks" / "repo_guard.sh"
+    # sh's own directory stays on PATH for dirname; a real python there would
+    # defeat the test, so skip rather than pass for the wrong reason.
+    path = str(stub_dir) + os.pathsep + os.path.dirname(sh)
+    if shutil.which("python3", path=os.path.dirname(sh)) or shutil.which("python", path=os.path.dirname(sh)):
+        pytest.skip("a real python sits beside sh")
+    result = subprocess.run(
+        [sh, str(script)], input="{}", capture_output=True, text=True, env=dict(os.environ, PATH=path)
+    )
+    assert result.returncode == 2, result.stderr
+    assert "no working Python" in result.stderr
+
+
+def _shim(env_extra, body, path=None):
+    """Run hooks/repo_guard.sh the way Claude Code does."""
+    import pathlib
+    import shutil
+    import subprocess
+
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("needs a POSIX sh")
+    script = pathlib.Path(__file__).resolve().parents[2] / "hooks" / "repo_guard.sh"
+    env = dict(os.environ, **env_extra)
+    if path is not None:
+        env["PATH"] = path
+    return subprocess.run([sh, str(script)], input=json.dumps(body), capture_output=True, text=True, env=env)
+
+
+def _write_python_setting(repo, value):
+    config = repo / ".goatcode" / "config.yaml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text("parallel: 3\npython: {}  # the one agents call\n".format(value), encoding="utf-8")
+
+
+def test_the_hook_runs_the_configured_python(tmp_path, git_repo, elsewhere):
+    """The setting in .goatcode/config.yaml beats the PATH search, so a user
+    whose PATH python is wrong can still run guarded."""
+    run = make_run(git_repo)
+    run.set_phase("execute")
+
+    marker = tmp_path / "used"
+    wrapper = tmp_path / "bin" / "mypython"
+    wrapper.parent.mkdir()
+    real_python = sys.executable.replace(chr(92), "/")
+    wrapper.write_text(
+        '#!/bin/sh\necho used >> "{}"\nexec "{}" "$@"\n'.format(str(marker).replace(chr(92), "/"), real_python),
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    _write_python_setting(git_repo, "'{}'".format(str(wrapper).replace(chr(92), "/")))
+
+    result = _shim({"GOATCODE_REPO": str(git_repo)}, payload(git_repo, file_path=str(elsewhere / "src" / "app.js")))
+    assert result.returncode == 2, result.stderr
+    assert "outside this run's repository" in result.stderr
+    assert marker.exists()
+
+
+def test_a_configured_python_that_does_not_run_stops_the_run(tmp_path, git_repo):
+    """A setting the user wrote is not second-guessed by falling back to PATH:
+    that would hide the mistake. Stop, and name the file to fix."""
+    _write_python_setting(git_repo, '"{}"'.format((tmp_path / "nope" / "python.exe").as_posix()))
+
+    result = _shim({"GOATCODE_REPO": str(git_repo)}, payload(git_repo, file_path=str(git_repo / "README.md")))
+    assert result.returncode == 2
+    assert "config.yaml" in result.stderr
+    assert "nope" in result.stderr
+
+
+def test_a_null_python_setting_falls_back_to_the_path_search(git_repo):
+    _write_python_setting(git_repo, "null")
+    result = _shim({"GOATCODE_REPO": str(git_repo)}, payload(git_repo, file_path=str(git_repo / "README.md")))
+    assert result.returncode == 0, result.stderr

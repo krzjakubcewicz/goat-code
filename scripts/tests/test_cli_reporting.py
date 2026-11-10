@@ -286,9 +286,10 @@ def test_verify_package_names_the_previous_verdict_and_what_moved(capsys, node_r
     invoke(capsys, "--repo", str(node_repo), "verify-package")
     osenv.write_text(run.cycle_dir() / "verdict.md", "VERDICT: FAIL\n")
 
+    integration = pathlib.Path(Run.load(node_repo).state["merge"]["worktree"])
     invoke(capsys, "--repo", str(node_repo), "cycle")
-    run = Run.load(node_repo)
-    integration = pathlib.Path(run.state["merge"]["worktree"])
+    # a new cycle owes its own merge; the last cycle's record is gone
+    invoke(capsys, "--repo", str(node_repo), "merge")
     _commit(integration, "src/b/extra.js", "// remedial\n")
 
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "verify-package")
@@ -347,7 +348,8 @@ def test_verify_package_leaves_a_stack_that_already_works(capsys, node_repo):
     plan_for(run, [slice_with_tests("S1", "src/a/**")])
     working_slice(capsys, node_repo, "S1")
     invoke(capsys, "--repo", str(node_repo), "task", "status", "S1", "done")
-    invoke(capsys, "--repo", str(node_repo), "merge")
+    _c, _o, _e = invoke(capsys, "--repo", str(node_repo), "merge")
+    print("DBG", _c, _o, _e, Run.load(node_repo).state.get("merge"))
 
     invoke(capsys, "--repo", str(node_repo), "verify-package")
     assert osenv.read_json(run.stack_path)["commands"] == before["commands"]

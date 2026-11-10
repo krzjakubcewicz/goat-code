@@ -75,6 +75,15 @@ def test_command_pins_interpreter_repo_and_run(run):
     assert "report --slice S1" in text
 
 
+def test_command_uses_the_configured_python(run):
+    """On Windows the interpreter running goat-code is often not the one the
+    user wants agents to call - a Store alias, a pyenv shim, a venv."""
+    run.config["python"] = "C:/Python313/python.exe"
+    text = dispatch.command(run, "report", "--slice", "S1")
+    assert text.startswith('"C:/Python313/python.exe" ')
+    assert sys.executable not in text
+
+
 def test_command_survives_spaces_in_paths(run):
     text = dispatch.command(run, "report", "--tests", "7 passed, 0 failed")
     assert '"7 passed, 0 failed"' in text

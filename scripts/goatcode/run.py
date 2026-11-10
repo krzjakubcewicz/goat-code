@@ -119,6 +119,10 @@ DEFAULT_CONFIG = {
     "max_cost_usd": None,
     # The Claude Code executable, if it is not on PATH.
     "claude_bin": "claude",
+    # The Python interpreter agents are told to call, and the one the guard
+    # hook runs under. null: the interpreter running goat-code for commands,
+    # and python3, python, py off PATH for the hook.
+    "python": None,
     "models": {
         "classifier": "haiku",
         "planner": "opus",
@@ -918,6 +922,10 @@ class Run:
         # replan cycles never grill.
         self.state["plan_fix_attempts"] = 0
         self.state["approval"] = None
+        # The merge record describes the last cycle's integration. Left in
+        # place, derive_phase reads it as a clean merge, skips synthesize,
+        # and verify judges the previous cycle's ref.
+        self.state.pop("merge", None)
         self.cycle_dir().mkdir(parents=True, exist_ok=True)
         (self.cycle_dir() / "briefs").mkdir(exist_ok=True)
         (self.cycle_dir() / "reports").mkdir(exist_ok=True)

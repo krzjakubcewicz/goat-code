@@ -749,7 +749,7 @@ def _model(run, role):
 
 def cli_argv(run, *args):
     """A runnable command, as a list, with repo and run pinned."""
-    return [sys.executable, str(dispatch.CLI), "--repo", str(run.repo), "--run", run.run_id] + [
+    return [dispatch.interpreter(run), str(dispatch.CLI), "--repo", str(run.repo), "--run", run.run_id] + [
         str(a) for a in args
     ]
 

@@ -13,14 +13,60 @@
 # nothing else, because it fails open. Any other status came from the
 # launcher rather than the guard - try the next name.
 #
-# Finding no working interpreter exits 0 - allow. A guard that cannot start
-# must not block the run it was meant to guard.
+# The status is checked after the guard runs, which is too late for the
+# launcher's stderr: it is already in the hook's output, and Claude Code shows
+# that to the agent as the reason the call was blocked. A "Python not found"
+# glued to the guard's refusal made agents conclude the interpreter was
+# broken instead of acting on the refusal. So each candidate first runs the
+# cheapest program only a real interpreter completes, output discarded.
+# </dev/null matters: the payload is on stdin exactly once and belongs to the
+# guard. The status check stays for a candidate that passes and is still not
+# the guard.
+#
+# Finding no working interpreter exits 2 - block. Without one nothing can say
+# whether a call stays inside the run's repository, and carrying on unguarded
+# is how a run writes outside it unnoticed. The message says what is wrong so
+# the agent reports it instead of retrying.
+#
+# `python:` in .goatcode/config.yaml beats all of that: it is how a user whose
+# PATH python is wrong gets a guarded run. The repository is found the way
+# repo_guard.py finds it - GOATCODE_REPO, else walk up from here - and the key
+# is read with sed, since the YAML parser lives on the other side of the
+# interpreter this is choosing. A configured python that does not run stops
+# the run rather than falling back to PATH, which would hide the mistake.
+dir=${GOATCODE_REPO:-$PWD}
+while [ -n "$dir" ] && [ ! -f "$dir/.goatcode/config.yaml" ]; do
+  parent=$(dirname "$dir")
+  [ "$parent" = "$dir" ] && dir= || dir=$parent
+done
+if [ -n "$dir" ]; then
+  config="$dir/.goatcode/config.yaml"
+  configured=$(tr -d '\r' <"$config" | sed -n 's/^python:[[:space:]]*//p' | head -n 1 |
+    sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//' -e "s/^['\"]//" -e "s/['\"]\$//")
+  case "$configured" in
+    "" | null | "~") ;;
+    *)
+      if "$configured" -c '' </dev/null >/dev/null 2>&1; then
+        "$configured" "$(dirname "$0")/repo_guard.py"
+        status=$?
+        if [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; then
+          exit "$status"
+        fi
+      fi
+      echo "goat-code: python in $config ($configured) does not run the repository guard, so the run is stopped. Fix or remove that setting. Report this to the user; do not work around it." >&2
+      exit 2
+      ;;
+  esac
+fi
+
 for interpreter in python3 python py; do
   command -v "$interpreter" >/dev/null 2>&1 || continue
+  "$interpreter" -c '' </dev/null >/dev/null 2>&1 || continue
   "$interpreter" "$(dirname "$0")/repo_guard.py"
   status=$?
   if [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; then
     exit "$status"
   fi
 done
-exit 0
+echo "goat-code: no working Python (python3, python or py) was found, so the repository guard cannot run and the run is stopped. Install Python 3.9+ and put it on PATH, then restart. Report this to the user; do not work around it." >&2
+exit 2
