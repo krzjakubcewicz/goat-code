@@ -100,8 +100,8 @@ from the first two, so it works on any run, not just a debug one.
 **The hook layer is the one untestable piece.** `hooks/hooks.json` registers a
 PreToolUse hook; `repo_guard.sh` finds an interpreter across three platforms
 (`python3` alone is wrong on Windows) and `repo_guard.py` feeds the payload to
-`guard.py`. A guard that cannot start exits 0 — allow — because it must not
-block the run it was meant to protect. All the judgement lives in `guard.py`
+`guard.py`. No working interpreter exits 2 — block — because an unguarded run can write
+outside its repository unnoticed; the message tells the agent to report it. All the judgement lives in `guard.py`
 precisely so `test_guard.py` can reach it; keep the shims dumb.
 
 ## Invariants enforced by tests

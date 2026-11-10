@@ -23,8 +23,10 @@
 # guard. The status check stays for a candidate that passes and is still not
 # the guard.
 #
-# Finding no working interpreter exits 0 - allow. A guard that cannot start
-# must not block the run it was meant to guard.
+# Finding no working interpreter exits 2 - block. Without one nothing can say
+# whether a call stays inside the run's repository, and carrying on unguarded
+# is how a run writes outside it unnoticed. The message says what is wrong so
+# the agent reports it instead of retrying.
 for interpreter in python3 python py; do
   command -v "$interpreter" >/dev/null 2>&1 || continue
   "$interpreter" -c '' </dev/null >/dev/null 2>&1 || continue
@@ -34,4 +36,5 @@ for interpreter in python3 python py; do
     exit "$status"
   fi
 done
-exit 0
+echo "goat-code: no working Python (python3, python or py) was found, so the repository guard cannot run and the run is stopped. Install Python 3.9+ and put it on PATH, then restart. Report this to the user; do not work around it." >&2
+exit 2

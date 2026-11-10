@@ -348,3 +348,35 @@ def test_an_interpreter_that_is_not_python_does_not_take_down_the_hook(tmp_path,
     inside = hook_says(payload(git_repo, file_path=str(git_repo / "README.md")))
     assert inside.returncode == 0, inside.stderr
     assert "no Python here" not in inside.stderr
+
+
+def test_no_working_interpreter_stops_the_run(tmp_path):
+    """A guard that cannot start used to allow everything. Nothing then says
+    whether a call stays inside the repository, so the shim blocks instead."""
+    import shutil
+    import subprocess
+
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("needs a POSIX sh")
+
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    for name in ("python3", "python", "py"):
+        stub = stub_dir / name
+        stub.write_text("#!/bin/sh\nexit 9009\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+    import pathlib
+
+    script = pathlib.Path(__file__).resolve().parents[2] / "hooks" / "repo_guard.sh"
+    # sh's own directory stays on PATH for dirname; a real python there would
+    # defeat the test, so skip rather than pass for the wrong reason.
+    path = str(stub_dir) + os.pathsep + os.path.dirname(sh)
+    if shutil.which("python3", path=os.path.dirname(sh)) or shutil.which("python", path=os.path.dirname(sh)):
+        pytest.skip("a real python sits beside sh")
+    result = subprocess.run(
+        [sh, str(script)], input="{}", capture_output=True, text=True, env=dict(os.environ, PATH=path)
+    )
+    assert result.returncode == 2, result.stderr
+    assert "no working Python" in result.stderr
