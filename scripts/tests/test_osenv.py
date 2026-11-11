@@ -10,6 +10,7 @@ import re
 import stat
 import sys
 import threading
+import time
 
 import pytest
 
@@ -187,6 +188,28 @@ def test_file_lock_times_out(tmp_path):
         with pytest.raises(TimeoutError):
             with osenv.FileLock(target, timeout=0.2):
                 pass
+
+
+def test_a_stale_lock_that_cannot_be_removed_times_out(tmp_path, monkeypatch):
+    """A stale lock held open by another process cannot be deleted on
+    Windows. The retry skipped the deadline check, so the wait never ended."""
+    target = tmp_path / "tasks.yaml"
+    lock = tmp_path / "tasks.yaml.lock"
+    lock.mkdir()
+    long_ago = time.time() - 3600
+    os.utime(lock, (long_ago, long_ago))
+
+    attempts = []
+
+    def cannot_remove(_path):
+        attempts.append(1)
+        assert len(attempts) < 200, "spinning on a lock that will not go away"
+        return False
+
+    monkeypatch.setattr(osenv, "rmtree_force", cannot_remove)
+    with pytest.raises(TimeoutError):
+        with osenv.FileLock(target, timeout=0.2):
+            pass
 
 
 def test_file_lock_releases_on_exception(tmp_path):
