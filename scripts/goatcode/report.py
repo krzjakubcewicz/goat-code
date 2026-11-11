@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import classify, diffpkg, gates, ledger, miniyaml, osenv, schema, tasks, tdd, workflow as workflowmod
+from . import classify, diffpkg, gates, ledger, miniyaml, osenv, schema, stack as stackmod, tasks, tdd, workflow as workflowmod
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -156,8 +156,58 @@ def verify_done(run, doc, slice_id, status="DONE", evidence=None, profile=None):
     if status == "DONE":
         problems.extend(evidence_findings(item, evidence, path))
         problems.extend(tdd_findings(run, item, path, profile))
+        # Last, and only on an otherwise sound report: it is the one check
+        # here that costs real time.
+        if not problems:
+            problems.extend(test_findings(run, item, path, profile))
 
     return problems
+
+
+def test_findings(run, item, worktree_path, profile=None):
+    """Run the test files the brief declares. Returns the ones that fail.
+
+    `--tests "7 passed"` is the executor's own sentence and was stored as
+    written. The stack already knows how to run one test file, so the claim
+    can be checked instead.
+    """
+    commands = (profile or {}).get("commands") or {}
+    template = commands.get("test_one")
+    if not template:
+        return []
+    # ponytail: only when commands run at the worktree root. with a
+    # project_dir one level down, the declared paths and the command's cwd
+    # disagree and a good slice would be refused; resolve the path against
+    # project_dir when a nested stack needs this check.
+    if (profile or {}).get("project_dir") or (profile or {}).get("commands_cwd"):
+        return []
+
+    problems = []
+    timeout = run.config.get("gate_timeout_seconds", 1800)
+    for entry in item.get("tests") or []:
+        relpath = entry.get("path") if isinstance(entry, dict) else entry
+        if not relpath or not (pathlib.Path(worktree_path) / relpath).exists():
+            continue
+        argv = [str(part).replace(stackmod.PATH_TOKEN, str(relpath)) for part in template]
+        try:
+            result = osenv.run(argv, cwd=worktree_path, timeout=timeout)
+        except osenv.CommandError:
+            # The runner is not on this host - it often lives only in the
+            # project's container. Not the same thing as a failing test.
+            return []
+        if result.ok or result.returncode == 124:
+            continue
+        tail = "\n".join((result.stdout + "\n" + result.stderr).strip().splitlines()[-15:])
+        problems.append(
+            "the declared test {} fails (`{}` exited {}):\n{}".format(
+                relpath, stackmod.command_text(argv), result.returncode, _indent(tail)
+            )
+        )
+    return problems
+
+
+def _indent(text):
+    return "\n".join("      " + line for line in text.splitlines())
 
 
 def boundary_findings(item, worktree_path, base, profile=None):
@@ -312,8 +362,10 @@ def record_slice(
     # hidden behind a vague concern string.
     if status == "DONE_WITH_CONCERNS" and not force and item.get("worktree"):
         worktree_path = pathlib.Path(item["worktree"])
-        late = evidence_findings(item, evidence, worktree_path) + tdd_findings(
-            run, item, worktree_path, profile
+        late = (
+            evidence_findings(item, evidence, worktree_path)
+            + tdd_findings(run, item, worktree_path, profile)
+            + [finding.splitlines()[0] for finding in test_findings(run, item, worktree_path, profile)]
         )
         if late:
             concerns = "; ".join([c for c in [concerns] if c] + late)

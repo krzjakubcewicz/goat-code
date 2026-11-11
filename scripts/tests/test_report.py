@@ -688,3 +688,51 @@ def test_done_is_rejected_when_another_branch_was_merged_in(run, plan):
     with pytest.raises(ReportError) as excinfo:
         report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
     assert "merge" in str(excinfo.value)
+
+
+# -- the declared tests are run --------------------------------------------
+#
+# `--tests "7 passed, 0 failed"` was stored as the executor wrote it. The
+# brief says not to report DONE on a red test; nothing ran one.
+
+
+def _runnable(path, slice_id, body):
+    """Make the slice's declared test a script the fixture stack can run."""
+    import sys
+
+    from goatcode import stack
+
+    _commit(path, {DECLARED_TEST[slice_id]: body}, "a real test")
+    return {"commands": {"test_one": [sys.executable, stack.PATH_TOKEN]}}
+
+
+def test_done_is_rejected_when_a_declared_test_fails(run, plan):
+    path = prepare(run, "S1")
+    profile = _runnable(path, "S1", "import sys\nprint('expected 1, got 2')\nsys.exit(1)\n")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", tests="1 passed", evidence=EVIDENCE["S1"], profile=profile)
+    assert DECLARED_TEST["S1"] in str(excinfo.value)
+    assert "expected 1, got 2" in str(excinfo.value)
+
+
+def test_done_is_accepted_when_the_declared_tests_pass(run, plan):
+    path = prepare(run, "S1")
+    profile = _runnable(path, "S1", "print('ok')\n")
+    result = report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"], profile=profile)
+    assert result["slice_status"] == "done"
+
+
+def test_a_failing_declared_test_goes_on_the_record_of_a_concern(run, plan):
+    path = prepare(run, "S1")
+    profile = _runnable(path, "S1", "import sys\nsys.exit(1)\n")
+    report.record_slice(run, "S1", "DONE_WITH_CONCERNS", concerns="flaky", profile=profile)
+    concerns = tasks.get(tasks.load(run.tasks_path), "S1")["report"]["concerns"]
+    assert DECLARED_TEST["S1"] in concerns
+
+
+def test_a_test_runner_that_is_not_installed_does_not_block(run, plan):
+    """A tool missing from this host often exists only in the project's
+    container. That is not the same as a failing test."""
+    path = prepare(run, "S1")
+    profile = {"commands": {"test_one": ["definitely-not-a-real-binary-xyz", "<path>"]}}
+    assert report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"], profile=profile)
