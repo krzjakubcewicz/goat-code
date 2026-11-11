@@ -44,6 +44,11 @@ def start(run, doc, reset=False):
     if reset:
         osenv.git(["merge", "--abort"], cwd=path)
         osenv.git(["reset", "--hard", run.base_commit], cwd=path, check=True)
+    elif _merge_in_progress(path):
+        # Starting means no merge is recorded, so one still open in the
+        # worktree is a conflict the last cycle's synthesizer escalated.
+        # Merging into it blames the first slice queued for the old conflict.
+        osenv.git(["merge", "--abort"], cwd=path)
     state = {
         "status": "in-progress",
         "worktree": str(path),

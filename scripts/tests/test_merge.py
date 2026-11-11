@@ -184,6 +184,23 @@ def test_merge_state_survives_a_reload(run, plan, git_repo):
     assert merge.state_of(reloaded)["conflicted"] == "S2"
 
 
+def test_a_merge_left_open_by_the_last_cycle_is_aborted_first(run, plan):
+    """A synthesizer that escalates leaves the conflicted merge open in the
+    integration worktree, and the next cycle forgets the merge record. The
+    first slice of the new cycle was then "merged" into that open merge and
+    blamed for the old conflict."""
+    conflicting(run)
+    tasks.set_status(run.tasks_path, "S3", "pending")
+    doc = tasks.load(run.tasks_path)
+    assert merge.run_merge(run, doc)["conflicted"] == "S2"
+
+    run.advance_cycle()
+    state = merge.run_merge(run, doc)
+
+    assert state["merged"] == ["S1"]
+    assert state["conflicted"] == "S2"
+
+
 def test_resume_after_the_synthesizer_resolves(run, plan):
     conflicting(run)
     tasks.set_status(run.tasks_path, "S3", "pending")
