@@ -175,6 +175,7 @@ def dispatch(entry, repo, config=None, on_event=None):
             # guard cannot find the run by walking up from there. Name it.
             env={"GOATCODE_REPO": str(repo)},
             on_line=consume,
+            timeout=_timeout_seconds(config),
         )
     except osenv.CommandError:
         raise AgentError(
@@ -233,6 +234,15 @@ def _target(payload):
         if isinstance(value, str) and value.strip():
             return value.strip().splitlines()[0][:100]
     return ""
+
+
+def _timeout_seconds(config):
+    """The wall-clock limit on one agent process, or None for no limit."""
+    minutes = (config or {}).get("agent_timeout_minutes")
+    try:
+        return float(minutes) * 60 if minutes else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _receipt(entry, result, returncode, stderr, elapsed):

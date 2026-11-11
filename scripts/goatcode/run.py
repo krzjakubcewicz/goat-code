@@ -120,6 +120,8 @@ DEFAULT_CONFIG = {
     "permission_mode": "acceptEdits",
     # Hard dollar cap per agent dispatch. null for none.
     "max_cost_usd": None,
+    # Wall-clock limit on one agent process, in minutes. null for none.
+    "agent_timeout_minutes": 60,
     # The Claude Code executable, if it is not on PATH.
     "claude_bin": "claude",
     # The Python interpreter agents are told to call, and the one the guard

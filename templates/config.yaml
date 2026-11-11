@@ -109,6 +109,11 @@ permission_mode: acceptEdits
 # Hard dollar cap per agent dispatch. null for none.
 max_cost_usd: null
 
+# Wall-clock limit on one agent process, in minutes. A process still running
+# past it is stopped and its slice recorded as blocked, so one hung call
+# cannot hold the run. null for no limit.
+agent_timeout_minutes: 60
+
 # The Claude Code executable, if it is not on PATH.
 claude_bin: claude
 

@@ -22,6 +22,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 from . import debuglog
@@ -131,13 +132,37 @@ def run(argv, cwd=None, check=False, timeout=None, env=None):
     return result
 
 
-def stream(argv, cwd=None, env=None, on_line=None):
+#: The exit code a :func:`stream` that hit its timeout reports, after
+#: coreutils' ``timeout``.
+TIMED_OUT = 124
+
+
+def _kill_tree(proc):
+    """Stop a process that outlived its timeout, and what it started."""
+    if os.name == "nt":
+        # A killed parent leaves its children holding the stdout pipe, and
+        # the reader waits on them. taskkill /T takes the tree.
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, shell=False,
+        )
+        return
+    # ponytail: the parent only. a child that keeps the pipe open would hold
+    # the reader; start the process in its own session and killpg if that
+    # shows up, at the cost of ctrl-c no longer reaching the agent.
+    proc.kill()
+
+
+def stream(argv, cwd=None, env=None, on_line=None, timeout=None):
     """Run ``argv``, handing each stdout line to ``on_line`` as it arrives.
 
     Same rules as :func:`run` - no shell, resolved executable, uniform
     environment - but output is not buffered to completion, so a caller can
     show what a long-running process is doing. The returned Result carries
     stderr and the exit code; stdout went to ``on_line``.
+
+    ``timeout`` is in seconds. Past it the process is killed and the Result
+    carries :data:`TIMED_OUT`.
     """
     argv, merged = _invocation(argv, env)
     started = time.time()
@@ -159,13 +184,39 @@ def stream(argv, cwd=None, env=None, on_line=None):
         debuglog.log("exec", rc=127, cwd=cwd, argv=argv, error="executable not found")
         raise CommandError(argv, 127, "", "executable not found: {}".format(argv[0]))
 
-    for line in proc.stdout:
-        if on_line:
-            on_line(line)
-    err = proc.stderr.read()
+    # stderr is drained alongside stdout, not after it. Read afterwards, a
+    # child that filled the stderr pipe blocked on the write, never closed
+    # stdout, and each side waited on the other.
+    errors = []
+    drain = threading.Thread(target=lambda: errors.append(proc.stderr.read()), daemon=True)
+    drain.start()
+
+    expired = threading.Event()
+
+    def give_up():
+        expired.set()
+        _kill_tree(proc)
+
+    timer = threading.Timer(timeout, give_up) if timeout else None
+    if timer:
+        timer.daemon = True
+        timer.start()
+    try:
+        for line in proc.stdout:
+            if on_line:
+                on_line(line)
+        returncode = proc.wait()
+    finally:
+        if timer:
+            timer.cancel()
+    drain.join(timeout=10)
     proc.stdout.close()
     proc.stderr.close()
-    returncode = proc.wait()
+
+    err = "".join(errors)
+    if expired.is_set():
+        returncode = TIMED_OUT
+        err = "timed out after {}s and was stopped\n{}".format(int(timeout), err)
 
     result = Result(argv, returncode, "", err, time.time() - started)
     debuglog.log("exec", rc=returncode, ms=int(result.duration * 1000), cwd=cwd, argv=argv)

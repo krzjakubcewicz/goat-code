@@ -394,3 +394,31 @@ def test_stream_does_not_need_a_consumer():
 def test_stream_on_a_missing_binary_fails_like_run():
     with pytest.raises(osenv.CommandError):
         osenv.stream(["definitely-not-a-real-binary-xyz"])
+
+
+def test_stream_survives_a_child_that_floods_stderr():
+    """stderr was only read after stdout reached its end. A child that
+    filled the stderr pipe blocked on the write, never closed stdout, and
+    the two sides waited on each other for good."""
+    body = (
+        "import sys\n"
+        "sys.stderr.write('x' * 1000000)\n"
+        "sys.stderr.flush()\n"
+        "sys.stdout.write('done' + chr(10))\n"
+    )
+    seen = []
+    result = osenv.stream([sys.executable, "-c", body], on_line=seen.append, timeout=60)
+    assert result.ok
+    assert [line.strip() for line in seen] == ["done"]
+    assert len(result.stderr) == 1000000
+
+
+def test_stream_gives_up_on_a_child_that_never_finishes():
+    """An agent process had no wall-clock limit at all, so one hung call
+    held the whole run."""
+    started = time.time()
+    result = osenv.stream([sys.executable, "-c", "import time; time.sleep(120)"], timeout=1)
+    assert time.time() - started < 30
+    assert not result.ok
+    assert result.returncode == osenv.TIMED_OUT
+    assert "timed out after 1s" in result.stderr
