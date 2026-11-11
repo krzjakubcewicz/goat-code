@@ -128,7 +128,7 @@ Never claim success when `outcome` is `failed`.
 
 After an interruption or a context compaction, just run `next`. The phase is
 derived from what is on disk, so it is right regardless of what you
-remember. Anything the ledger records as done **is** done.
+remember. Anything `tasks.yaml` records as done **is** done.
 
 `resume --json` prints the same picture in human terms if you want to tell
 the user where you are picking up.

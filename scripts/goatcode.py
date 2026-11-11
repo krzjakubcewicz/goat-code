@@ -1116,7 +1116,7 @@ def cmd_ledger(args):
         emit(args, {"entry": entry}, entry)
         return EXIT_OK
     listed = ledgermod.entries(run)
-    emit(args, {"entries": listed, "completed": sorted(ledgermod.completed_slices(run))}, "\n".join(listed))
+    emit(args, {"entries": listed}, "\n".join(listed))
     return EXIT_OK
 
 
@@ -1195,10 +1195,13 @@ def cmd_abort(args):
 def cmd_resume(args):
     run = resolve_run(args)
     payload = run.summary()
-    payload["completed_slices"] = sorted(ledgermod.completed_slices(run))
+    payload["completed_slices"] = []
     payload["ledger"] = ledgermod.entries(run)
     if pathlib.Path(run.tasks_path).exists():
         doc = load_plan(run)
+        # From the statuses the checked `report` command wrote, not from
+        # ledger prose.
+        payload["completed_slices"] = sorted(tasksmod.finished(doc))
         payload["counts"] = tasksmod.counts(doc)
         payload["ready"] = tasksmod.ready(doc)
         payload["remaining"] = tasksmod.remaining(doc)

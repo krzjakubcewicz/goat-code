@@ -108,7 +108,6 @@ def test_done_records_the_head_commit(run, plan):
 def test_done_writes_a_ledger_entry(run, plan):
     prepare(run, "S1")
     report.record_slice(run, "S1", "DONE", tests="3 passed", evidence=EVIDENCE["S1"])
-    assert ledger.completed_slices(run) == set()  # "done", not the word "complete"
     assert any("slice S1 done" in entry for entry in ledger.entries(run))
 
 

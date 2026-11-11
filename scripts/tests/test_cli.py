@@ -289,7 +289,7 @@ def test_ledger_appends_and_reads(capsys, node_repo):
     invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
     invoke(capsys, "--repo", str(node_repo), "ledger", "slice S1 complete (commits a..b)")
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "ledger")
-    assert payload["completed"] == ["S1"]
+    assert any("slice S1 complete (commits a..b)" in entry for entry in payload["entries"])
 
 
 def test_concurrent_ledger_writers_lose_nothing(node_repo):
@@ -320,7 +320,6 @@ def test_resume_reports_what_to_trust(capsys, node_repo):
     run = make_run(node_repo)
     plan_for(run, [slice_spec("S1", "src/a/**"), slice_spec("S2", "src/b/**")])
     invoke(capsys, "--repo", str(node_repo), "task", "status", "S1", "done")
-    invoke(capsys, "--repo", str(node_repo), "ledger", "slice S1 complete")
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "resume")
     assert payload["completed_slices"] == ["S1"]
     assert payload["ready"] == ["S2"]
