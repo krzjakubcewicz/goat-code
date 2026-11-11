@@ -379,3 +379,56 @@ def test_a_slice_branches_off_the_integration_tip(run, git_repo):
 def test_start_point_is_the_base_commit_before_anything_merges(run):
     worktree.create_integration(run)
     assert worktree.start_point(run) == run.base_commit
+
+
+# -- what the brief was missing ----------------------------------------------
+
+
+def test_brief_points_at_the_spec_and_what_the_user_answered(run, plan):
+    """The executor got one line of goal and one of intent. Why the feature
+    exists, and everything the user said while being grilled, stayed in a
+    file it was never told about."""
+    text = brief.build(run, plan, "S1")
+    assert str(run.spec_path) in text
+    assert "Clarifications" in text
+
+
+def test_brief_names_the_paths_other_slices_own(run, plan):
+    """`Never touch a path owned by another slice`, with no way to know
+    which paths those were."""
+    text = brief.build(run, plan, "S1")
+    assert "`src/mail/**`" in text and "S2" in text
+
+
+def test_brief_carries_the_standing_constraints_itself(run, plan, git_repo):
+    """They reached an executor only if the planner copied them into the
+    plan, which nothing checked."""
+    from goatcode import progress
+
+    progress.add_constraint(git_repo, "Never log a token value.")
+    assert "Never log a token value." in brief.build(run, plan, "S1")
+
+
+def test_a_standing_constraint_the_plan_repeats_is_listed_once(run, plan, git_repo):
+    from goatcode import progress
+
+    progress.add_constraint(git_repo, "Node >= 20, no new runtime deps")
+    assert brief.build(run, plan, "S1").count("Node >= 20, no new runtime deps") == 1
+
+
+def test_an_assumption_recorded_as_a_mapping_reads_as_prose(run, plan):
+    plan["assumptions"] = [{"topic": "ttl", "chose": "15 minutes"}]
+    text = brief.build(run, plan, "S1")
+    assert "topic: ttl; chose: 15 minutes" in text
+    assert "{'topic'" not in text
+
+
+def test_brief_and_dispatch_agree_on_what_to_return(run, plan):
+    """Three places told the executor what to hand back, in three ways."""
+    text = brief.build(run, plan, "S1")
+    assert "commit range" not in text
+    assert "only the status line" in text
+
+
+def test_brief_says_test_files_are_inside_the_boundary(run, plan):
+    assert "test files" in brief.build(run, plan, "S1").split("## Files you own")[1].split("##")[0]

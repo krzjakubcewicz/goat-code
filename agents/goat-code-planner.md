@@ -147,6 +147,11 @@ Follow `superpowers:writing-plans` for task right-sizing, then write
   the literal error string, the exact status code, the specific boundary.
 - Publish `interfaces` on any slice another slice depends on, and list them
   in the dependent's `uses_interfaces`.
+- Put what you found while exploring into each slice's `notes`: the helper
+  to reuse, the file whose pattern to follow, the test to model the new one
+  on, each by `path:line`. The executor does not see your exploration, and
+  it is given this field verbatim. Without it, it rediscovers the codebase
+  or writes a second copy of something that exists.
 - Set `model` per slice, cheapest that can do the job: `haiku` for ordinary
   work where the brief will carry a complete spec, `sonnet` where the slice
   spans several files or needs integration judgement, `opus` only where it

@@ -267,9 +267,13 @@ def classifier(run):
     add("    {}".format(command(run, "classify", "--file", str(target))))
     add("")
     add("Your answer is **advisory**. Deterministic rules run over the same")
-    add("request and may raise the risk you give - they never lower it - so")
-    add("guessing HIGH to be safe buys nothing and costs the run a slower")
-    add("pipeline. Say what you actually think.")
+    add("request and may raise what you give - they never lower it. Both ways")
+    add("of being wrong cost something. Too high, and a small change waits on")
+    add("questions, an approval and a review it did not need. Too low - LOW")
+    add("risk with SIMPLE or NORMAL - and the run gets no question round, no")
+    add("approval gate and no verifier: nothing reads the result but the")
+    add("gates. Say what you actually think, and when you are torn between two")
+    add("levels, take the higher.")
     add("")
     add("Return one line: the complexity and risk you chose.")
     return "\n".join(lines)
@@ -315,6 +319,21 @@ def executor(run, doc, slice_id, stack=None):
         add("## Notes from the planner")
         add("")
         add(str(notes))
+        add("")
+
+    last = item.get("report") or {}
+    if last.get("status") == "BLOCKED" and last.get("reason"):
+        # A blocked slice was sent to the stronger model with the identical
+        # prompt: no reason, and no word that the worktree holds commits.
+        add("## The last attempt at this slice stopped")
+        add("")
+        add("It reported:")
+        add("")
+        add("    {}".format(str(last["reason"]).strip()))
+        add("")
+        add("Whatever it committed is already in the worktree. Read `git log`")
+        add("there before you start, keep what is sound, and deal with what")
+        add("stopped it rather than starting again from nothing.")
         add("")
 
     answered = [c for c in item.get("context") or [] if isinstance(c, dict)]
@@ -435,6 +454,23 @@ def synthesizer(run, doc, merge_state):
     ))
     add("- The plan, for what each slice was meant to do: `{}`".format(run.tasks_path))
     add("")
+    # It was told to keep both slices' intent and given neither, nor which
+    # slices were already on the branch the conflict is against.
+    sides = [merge_state.get("conflicted")] + list(merge_state.get("merged") or [])
+    intents = []
+    for slice_id in sides:
+        try:
+            item = _slice(doc, slice_id)
+        except KeyError:
+            continue
+        intents.append((slice_id, item.get("intent") or item.get("title") or ""))
+    if intents:
+        add("## What each side was for")
+        add("")
+        for slice_id, intent in intents:
+            role = "being merged" if slice_id == merge_state.get("conflicted") else "already merged"
+            add("- `{}` ({}): {}".format(slice_id, role, intent))
+        add("")
     add("## Method")
     add("")
     add("Resolve so **both** slices' intent survives, remove every conflict")
@@ -561,11 +597,26 @@ def verifier(run, package):
     _verifier_scope(add, package)
     _verifier_weak_assertions(add, package)
 
+    _verifier_flags(add, package)
+
     add("## Criteria to judge")
     add("")
     add("{} across {} slices. Every one needs a verdict and evidence.".format(
         len(package.get("criteria") or []), len({c["slice"] for c in package.get("criteria") or []})
     ))
+    criteria = package.get("criteria") or []
+    if criteria:
+        # The table is read back against the plan, so the rows owed are given
+        # rather than left to be dug out of tasks.yaml.
+        add("")
+        add("Your table needs exactly one row for each of these. The `verdict`")
+        add("command checks the rows against the plan and refuses a `PASS` with a")
+        add("row missing, unmet, or without evidence:")
+        add("")
+        add("| Slice | ID | Criterion |")
+        add("| --- | --- | --- |")
+        for criterion in criteria:
+            add("| {} | {} | {} |".format(criterion.get("slice"), criterion.get("id"), criterion.get("text")))
     assumptions = package.get("assumptions") or []
     if assumptions:
         add("")
@@ -588,6 +639,36 @@ def verifier(run, package):
     add("which reads that line back and moves the run on. Return only the")
     add("verdict line to the orchestrator.")
     return "\n".join(lines)
+
+
+def _verifier_flags(add, package):
+    """What executors and the repo guard put on the record for a judge to see.
+
+    A DONE_WITH_CONCERNS, a DONE forced past its checks and a refused write
+    outside the repository were all recorded, and none reached this prompt.
+    """
+    concerns = package.get("concerns") or []
+    if concerns:
+        add("## What the executors flagged")
+        add("")
+        add("Check each against the diff; a concern is a lead, not a finding:")
+        add("")
+        for entry in concerns:
+            if entry.get("forced"):
+                add("- {}: reported DONE with `--force`, so its report is unchecked".format(entry.get("slice")))
+            if entry.get("concerns"):
+                add("- {}: {}".format(entry.get("slice"), entry["concerns"]))
+        add("")
+    refused = package.get("guard_violations") or []
+    if refused:
+        add("## Writes refused outside the repository")
+        add("")
+        add("An agent tried these and was stopped. Say in your verdict whether")
+        add("the work depended on any of them:")
+        add("")
+        for entry in refused[:20]:
+            add("- {} `{}`: {}".format(entry.get("tool", "?"), entry.get("path", "?"), entry.get("reason", "")))
+        add("")
 
 
 def e2e(run, doc, package, profile=None):
@@ -624,6 +705,23 @@ def e2e(run, doc, package, profile=None):
     add("feature is wrong. Assert what was asked for; if the code does not do")
     add("it, that is the finding.")
     add("")
+
+    # Told not to read the diff, and given nothing else to find the way in.
+    published = [
+        (item.get("id"), interface)
+        for item in (doc or {}).get("slices") or []
+        if isinstance(item, dict)
+        for interface in item.get("interfaces") or []
+    ]
+    if published:
+        add("## Where to enter")
+        add("")
+        add("The plan fixed these signatures before any code was written. They")
+        add("are the way in; drive the feature through them:")
+        add("")
+        for slice_id, interface in published:
+            add("- `{}`  ({})".format(interface, slice_id))
+        add("")
 
     add("## How to write it")
     add("")
@@ -771,6 +869,22 @@ def replanner(run, previous_cycle):
     add("- What was actually built: `{}`".format(previous / "review.diff"))
     add("- The executors' own reports: `{}`".format(previous / "reports"))
     add("- The plan that produced it: `{}`".format(run.tasks_path))
+    # A failed cycle was diagnosed without the request it was meant to
+    # satisfy, the merge report, or any verdict older than the last.
+    add("- The request, with the user's answers under `## Clarifications`: `{}`".format(run.spec_path))
+    add("- What the merge did, and the synthesizer's edits: `{}`".format(previous / "merge-report.md"))
+    for cycle in range(previous_cycle - 1, 0, -1):
+        older = run.cycle_dir(cycle) / "verdict.md"
+        if older.exists():
+            add("- The verdict of cycle {}: `{}`".format(cycle, older))
+    standing = progress.constraints(run.repo)
+    if standing:
+        add("")
+        add("Standing rules from earlier runs. A remedy that breaks one is not a")
+        add("remedy; carry them in `global_constraints`:")
+        add("")
+        for rule in standing:
+            add("- {}".format(rule))
     add("")
     add("## Write")
     add("")
@@ -793,6 +907,28 @@ def replanner(run, previous_cycle):
         for row in unmet:
             add("- {}/{}: {}".format(row["slice"], row["id"], row["evidence"] or "(no reason given)"))
         add("")
+        before = {
+            (row["slice"], row["id"])
+            for row in report.parse_verdict(run, previous_cycle - 1)
+            if row["mark"] != "pass"
+        } if previous_cycle > 1 else set()
+        repeated = [row for row in unmet if (row["slice"], row["id"]) in before]
+        if repeated:
+            # Nothing compared verdicts across cycles, so the same criterion
+            # could fail every cycle until the cap, remedied the same way.
+            add("These failed in the cycle before as well, so the last remedy did")
+            add("not work. Do not repeat it: re-read the criterion and the earlier")
+            add("verdict, and change the approach or the criterion's wording:")
+            add("")
+            for row in repeated:
+                add("- {}/{}".format(row["slice"], row["id"]))
+            add("")
+    # The remedy went back to the tier that had just under-delivered.
+    add("Give each remedial slice `model: {}` unless it is a one-line change:".format(
+        run.config.get("models", {}).get("executor_escalated", "sonnet")
+    ))
+    add("the default executor has already had its attempt at this.")
+    add("")
     add("Validate before you return:")
     add("")
     add("    {}".format(command(run, "plan", "validate")))

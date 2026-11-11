@@ -16,7 +16,7 @@ import pathlib
 
 import sys
 
-from . import debuglog, diffpkg, dispatch, gates, ledger, merge, miniyaml, osenv, progress, report, run as runmod, schema, tasks, workflow as workflowmod
+from . import debuglog, diffpkg, dispatch, gates, guard, ledger, merge, miniyaml, osenv, progress, report, run as runmod, schema, tasks, workflow as workflowmod
 
 #: Actions the orchestrator knows how to perform.
 ACTIONS = ("run", "dispatch", "ask", "escalate", "stop")
@@ -850,6 +850,18 @@ def _verify(run, evidence, _stack):
         "assumptions": (evidence.doc or {}).get("assumptions") or [],
     }
     package["weak_assertions"] = (osenv.read_json(package_path) or {}).get("weak_assertions") or []
+    # On the record since they were reported, and until now shown to nobody
+    # who judges the run.
+    package["concerns"] = [
+        {
+            "slice": item.get("id"),
+            "concerns": (item.get("report") or {}).get("concerns"),
+            "forced": bool((item.get("report") or {}).get("forced")),
+        }
+        for item in tasks.slices(evidence.doc or {})
+        if (item.get("report") or {}).get("concerns") or (item.get("report") or {}).get("forced")
+    ]
+    package["guard_violations"] = guard.violations(run.root)
     package.update(diffpkg.previous_judgement(run, evidence.doc))
     text = dispatch.verifier(run, package)
     path = dispatch.write(run, "verifier", text)

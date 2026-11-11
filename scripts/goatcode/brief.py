@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pathlib
 
-from . import osenv, stack as stackmod, tasks
+from . import dispatch, osenv, progress, stack as stackmod, tasks
 
 _TDD_RULES = """\
 1. Write the failing test first. Run it. Watch it fail for the right reason.
@@ -90,10 +90,18 @@ def build(run, doc, slice_id, stack_profile=None):
         "not a layer waiting for another slice to become useful."
     )
     add("")
+    # One line of goal and one of intent was all an executor had. Why the
+    # feature exists, and what the user said when grilled, were in a file it
+    # was never pointed at.
+    add("The full request, with the user's answers under its `## Clarifications`")
+    add("headings, is here. Read it when the criteria below leave you choosing:")
+    add("")
+    add("    {}".format(run.spec_path))
+    add("")
 
     _section_stack(add, profile)
-    _section_constraints(add, doc)
-    _section_ownership(add, item)
+    _section_constraints(add, doc, progress.constraints(run.repo))
+    _section_ownership(add, item, doc)
     _section_interfaces(add, doc, item)
     _section_acceptance(add, item)
     _section_tests(add, item)
@@ -138,8 +146,11 @@ def _section_stack(add, profile):
     add("")
 
 
-def _section_constraints(add, doc):
-    constraints = doc.get("global_constraints") or []
+def _section_constraints(add, doc, standing=()):
+    constraints = [str(c) for c in doc.get("global_constraints") or []]
+    # Standing rules promoted by earlier runs reached an executor only if the
+    # planner copied them into the plan, which nothing checked.
+    constraints += [rule for rule in standing if rule not in constraints]
     assumptions = doc.get("assumptions") or []
     if not constraints and not assumptions:
         return
@@ -153,15 +164,28 @@ def _section_constraints(add, doc):
         add("")
         add("Recorded assumptions (the user did not specify; do not contradict them):")
         for assumption in assumptions:
-            add("- {}".format(assumption))
+            add("- {}".format(dispatch._assumption_text(assumption)))
     add("")
 
 
-def _section_ownership(add, item):
+def _section_ownership(add, item, doc=None):
     add("## Files you own")
     add("")
     for pattern in item.get("owns") or []:
         add("- `{}`".format(pattern))
+    add("")
+    add("The test files this brief names, and any other test file you add, are")
+    add("inside your boundary too.")
+    others = [
+        (other.get("id"), other.get("owns") or [])
+        for other in (doc or {}).get("slices") or []
+        if isinstance(other, dict) and other.get("id") != item.get("id") and other.get("owns")
+    ]
+    if others:
+        add("")
+        add("Owned by other slices, so not yours to create or edit:")
+        for other_id, patterns in others:
+            add("- {}: {}".format(other_id, ", ".join("`{}`".format(p) for p in patterns)))
     shared = item.get("touches_shared") or []
     if shared:
         add("")
@@ -306,9 +330,8 @@ def _section_report(add, run, slice_id, item=None):
         add("The path is resolved inside your worktree and the line must exist.")
         add("The exact command is in your dispatch.")
         add("")
-    add("Return to the orchestrator ONLY: a status line, the commit range, a")
-    add("one-line test summary, and any concerns. Everything else goes in the")
-    add("report file.")
+    add("Return to the orchestrator only the status line. The report file and")
+    add("the command carry everything else.")
     add("")
     add("Status is exactly one of:")
     add("")

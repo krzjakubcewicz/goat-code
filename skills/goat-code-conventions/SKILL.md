@@ -173,6 +173,8 @@ slices:
       - path: "tests/auth/tokens/store.test.ts"
         must_cover: ["single use", "expiry boundary"]
     out_of_scope: ["email delivery", "UI"]
+    notes: "Reuse the hasher in src/auth/hash.ts:12; tests follow tests/auth/session.test.ts."
+                             # what the planner found, by path:line; rendered into the executor's dispatch
     model: haiku             # opus | sonnet | haiku | fable | inherit
     status: pending          # pending | claimed | done | blocked | failed | carried
     branch: null             # filled in by `worktree create`
