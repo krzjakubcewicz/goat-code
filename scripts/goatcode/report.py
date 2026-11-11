@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import classify, diffpkg, gates, ledger, miniyaml, osenv, schema, stack as stackmod, tasks, tdd, workflow as workflowmod
+from . import classify, diffpkg, gates, ledger, merge, miniyaml, osenv, schema, stack as stackmod, tasks, tdd, workflow as workflowmod
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -607,7 +607,67 @@ NEEDS_DETAIL = {
 }
 
 
-def record_role(run, role, status, detail=None, tests=None):
+def role_findings(run, role, status, profile=None):
+    """Why a role agent's claim cannot stand. The counterpart of verify_done.
+
+    An executor's DONE was checked and these were taken as written, though
+    an e2e commit lands on the verified branch after the verifier and the
+    gates have both finished: nothing downstream would look at it.
+    """
+    state = merge.state_of(run)
+    if role == "synthesizer" and status == "CLEAN":
+        if state.get("status") == "conflict":
+            return [
+                "the merge of {} is still in conflict ({}); resolve it and run"
+                " `merge --continue` before reporting CLEAN".format(
+                    state.get("conflicted"), ", ".join(state.get("conflicts") or [])
+                )
+            ]
+        return []
+    if role != "e2e" or status != "PASS":
+        return []
+
+    worktree_path = pathlib.Path(state.get("worktree") or "")
+    gates_path = run.cycle_dir() / "gates.json"
+    if not state.get("worktree") or not worktree_path.exists() or not gates_path.exists():
+        return []
+    verified = (osenv.read_json(gates_path) or {}).get("ref")
+    if not verified:
+        return []
+
+    problems = []
+    tree = osenv.git(["status", "--porcelain", "--untracked-files=all"], cwd=worktree_path)
+    if tree.out:
+        problems.append(
+            "the integration worktree is not clean - commit or discard: {}".format(
+                ", ".join(line[3:] for line in tree.out.splitlines()[:5])
+            )
+        )
+    changed = diffpkg.changed_files(worktree_path, verified, "HEAD")
+    if not changed:
+        problems.append("no commit since the verified ref {}; a PASS needs the test it ran".format(verified[:8]))
+    beyond = [f for f in changed if not tdd.is_test_path(f) and not gates.is_test_path(f)]
+    if beyond:
+        problems.append(
+            "the end-to-end phase may only add tests, and these are not test files: {}."
+            " If the feature is broken, report FAILED and say how".format(", ".join(beyond[:8]))
+        )
+    if problems or not ((profile or {}).get("commands") or {}).get("test"):
+        return problems
+
+    # The suite is run once more on the new tip: the last gate run was
+    # before this commit existed.
+    rerun = gates.run_all(run, worktree_path, profile=profile, only=["test"])
+    gates.classify(rerun, gates.load_baseline(run))
+    if gates.blocking(rerun):
+        tail = (rerun["gates"]["test"].get("output_tail") or "").strip().splitlines()[-15:]
+        problems.append(
+            "the test gate fails with this commit in place:\n{}".format(_indent("\n".join(tail)))
+        )
+    return problems
+
+
+def record_role(run, role, status, detail=None, tests=None, profile=None):
     """Record a non-slice agent's outcome: the synthesizer or the e2e agent."""
     role = (role or "").strip().lower()
     status = (status or "").strip().upper()
@@ -620,6 +680,12 @@ def record_role(run, role, status, detail=None, tests=None):
         raise ReportError("{} status must be one of {}, not {!r}".format(role, ", ".join(allowed), status))
     if (role, status) in NEEDS_DETAIL and not detail:
         raise ReportError("{} {} needs --detail saying why".format(role, status))
+
+    problems = role_findings(run, role, status, profile)
+    if problems:
+        raise ReportError(
+            "cannot accept {} {}:\n  - ".format(role, status) + "\n  - ".join(problems)
+        )
 
     run.state[role] = {"status": status, "detail": detail, "tests": tests}
     run.save()

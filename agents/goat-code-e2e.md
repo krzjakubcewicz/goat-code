@@ -77,6 +77,11 @@ Run the command in your dispatch. That is what moves the run on.
 ... report --role e2e --status PASS --tests "3 passed"
 ```
 
+A `PASS` is checked before it is accepted: the worktree must be clean, there
+must be a commit since the verified ref, every file in it must be a test
+file, and the project's test command is run once more with your commit in
+place. If it is refused it lists why; fix that and run it again.
+
 `SKIPPED` when nothing available can reach the feature — a GUI with no
 browser runner, say. Needs `--detail` saying why; it does not fail the run,
 but it is surfaced to the user with the result.

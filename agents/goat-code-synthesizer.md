@@ -94,6 +94,9 @@ the run on:
 ... report --role synthesizer --status CLEAN
 ```
 
+`CLEAN` is refused while the merge is still in conflict: run
+`merge --continue` first, and report once it says the merge is clean.
+
 Use `ESCALATE` instead when the slices genuinely contradict each other, when
 making them work together would mean choosing which slice is right:
 

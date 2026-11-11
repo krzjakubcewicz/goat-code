@@ -933,7 +933,8 @@ def cmd_report(args):
     try:
         if args.role:
             result = reportmod.record_role(
-                run, args.role, args.status, detail=args.detail, tests=args.tests
+                run, args.role, args.status, detail=args.detail, tests=args.tests,
+                profile=load_stack(run),
             )
             text = "{} {}".format(args.role, result["status"].lower())
             if result.get("verdict"):

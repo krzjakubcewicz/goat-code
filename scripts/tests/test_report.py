@@ -783,3 +783,74 @@ def test_a_forced_report_needs_a_reason_and_is_marked(run, plan):
     recorded = tasks.get(tasks.load(run.tasks_path), "S1")["report"]
     assert recorded["forced"] is True
     assert any("forced" in entry for entry in ledger.entries(run))
+
+
+# -- the synthesizer and the e2e agent are checked too ---------------------
+#
+# An executor's DONE was verified; a synthesizer's CLEAN and an e2e PASS were
+# accepted as written, and the e2e commit landed after the last gate run.
+
+
+def test_clean_is_refused_while_the_merge_is_still_in_conflict(run, plan):
+    run.state["merge"] = {
+        "status": "conflict", "worktree": "w", "merged": ["S1"], "pending": ["S2"],
+        "conflicted": "S2", "conflicts": ["src/shared.js"],
+    }
+    run.save()
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "synthesizer", "CLEAN")
+    assert "merge --continue" in str(excinfo.value)
+    assert "src/shared.js" in str(excinfo.value)
+
+
+def _verified_integration(run):
+    """An integration worktree as the verify phase leaves it: gates recorded at its tip."""
+    path, _branch = worktree.create_integration(run)
+    run.state["merge"] = {"status": "clean", "worktree": str(path), "merged": [], "pending": []}
+    run.save()
+    tip = osenv.git(["rev-parse", "HEAD"], cwd=path).out
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": [], "ref": tip})
+    return path
+
+
+def test_e2e_pass_is_accepted_when_only_a_test_was_committed(run, plan):
+    path = _verified_integration(run)
+    _commit(path, {"e2e/journey.test.js": "// end to end\n"}, "test: journey")
+    assert report.record_role(run, "e2e", "PASS", tests="1 passed")["status"] == "PASS"
+
+
+def test_e2e_pass_is_refused_when_nothing_was_committed(run, plan):
+    _verified_integration(run)
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "e2e", "PASS", tests="1 passed")
+    assert "no commit" in str(excinfo.value)
+
+
+def test_e2e_pass_is_refused_when_it_changed_production_code(run, plan):
+    """The commit lands on the verified branch after the verifier and the
+    gates have both finished, so nothing downstream would ever look at it."""
+    path = _verified_integration(run)
+    _commit(path, {"e2e/journey.test.js": "// t\n", "src/auth/store.js": "// patched to make it pass\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "e2e", "PASS", tests="1 passed")
+    assert "src/auth/store.js" in str(excinfo.value)
+
+
+def test_e2e_pass_is_refused_with_uncommitted_work(run, plan):
+    path = _verified_integration(run)
+    _commit(path, {"e2e/journey.test.js": "// t\n"})
+    (path / "e2e" / "stray.test.js").write_text("// not committed\n", encoding="utf-8")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "e2e", "PASS", tests="1 passed")
+    assert "not clean" in str(excinfo.value)
+
+
+def test_e2e_pass_is_refused_when_the_test_gate_goes_red(run, plan):
+    import sys
+
+    path = _verified_integration(run)
+    _commit(path, {"e2e/journey.test.js": "// t\n"})
+    profile = {"commands": {"test": [sys.executable, "-c", "import sys; print('journey failed'); sys.exit(1)"]}}
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "e2e", "PASS", tests="1 passed", profile=profile)
+    assert "journey failed" in str(excinfo.value)
