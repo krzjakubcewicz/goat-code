@@ -331,6 +331,18 @@ def test_same_wave_ownership_collision_is_an_error():
     assert any("same wave and both own" in e for e in errors_of(doc))
 
 
+def test_a_remedial_slice_may_own_a_carried_slice_paths():
+    """A carried slice never runs again; its work is already merged. The
+    replanner is told a remedial slice should claim the paths it has to
+    change, and the collision rule used to refuse exactly that plan."""
+    doc = plan()
+    doc["slices"][0]["status"] = "carried"
+    doc["slices"][1]["depends_on"] = []
+    doc["slices"][1]["uses_interfaces"] = []
+    doc["slices"][1]["owns"] = ["src/auth/**"]
+    assert not any("both own" in e for e in errors_of(doc))
+
+
 def test_cross_wave_ownership_overlap_only_warns():
     doc = plan()
     doc["slices"][1]["owns"] = ["src/auth/**"]

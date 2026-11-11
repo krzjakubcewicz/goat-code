@@ -2,8 +2,11 @@
 
 Conversation memory does not survive compaction; this file does. The
 orchestrator writes one line per completed step, and on resume it trusts
-the ledger and ``git log`` over its own recollection. Never re-dispatch a
-slice the ledger already marks complete.
+the ledger and ``git log`` over its own recollection. Which slices are
+finished is not read from here: that is a status in tasks.yaml, which the
+checked ``report`` command writes. Parsing it back out of these lines went
+wrong once already - the parser looked for "complete" and the entries said
+"done", so the recovery list was always empty.
 """
 
 from __future__ import annotations
@@ -57,21 +60,3 @@ def entries(run):
         if line.startswith("- ["):
             out.append(line[2:])
     return out
-
-
-def completed_slices(run):
-    """Slice ids the ledger records as complete.
-
-    The orchestrator's recovery map: anything named here is done, whatever
-    the conversation appears to say.
-    """
-    done = set()
-    for entry in entries(run):
-        marker = "slice "
-        if marker not in entry or "complete" not in entry:
-            continue
-        tail = entry.split(marker, 1)[1]
-        slice_id = tail.split()[0].strip(":,")
-        if slice_id:
-            done.add(slice_id)
-    return done

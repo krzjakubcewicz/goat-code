@@ -12,7 +12,7 @@ import sys
 
 import pytest
 
-from goatcode import classify, dispatch, miniyaml
+from goatcode import classify, dispatch, miniyaml, osenv
 from goatcode.run import Run
 
 PLAN = {
@@ -278,6 +278,23 @@ def test_replanner_prompt_protects_carried_slices(run):
     text = dispatch.replanner(run, 1)
     assert "carried" in text
     assert "nothing re-executes them" in text
+
+
+def test_replanner_prompt_does_not_claim_carried_slices_passed(run, plan):
+    """Every merged slice is carried, including the ones the verifier failed.
+    The prompt used to say carried meant passed, which sent the replanner
+    away from the very slices it had to remedy."""
+    osenv.write_text(
+        run.cycle_dir() / "verdict.md",
+        "| Slice | ID | Criterion | Verdict | Evidence |\n| --- | --- | --- | --- | --- |\n"
+        "| S1 | A1 | consumable once | ✅ | tests/auth.test.ts:3 |\n"
+        "| S2 | A1 | one email | ❌ | no test for the duplicate request |\n\nVERDICT: FAIL\n",
+    )
+    run.advance_cycle()
+    text = dispatch.replanner(run, 1)
+    assert "passed and are merged" not in text
+    assert "S2/A1" in text and "no test for the duplicate request" in text
+    assert "S1/A1" not in text
 
 
 # -- persistence -----------------------------------------------------------

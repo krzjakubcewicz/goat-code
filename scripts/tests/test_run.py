@@ -314,18 +314,10 @@ def test_ledger_records_the_cycle(git_repo):
     assert "cycle 2" in entry
 
 
-def test_completed_slices_is_the_recovery_map(git_repo):
-    run = make_run(git_repo)
-    ledger.append(run, "slice S1 complete (commits abc..def)")
-    ledger.append(run, "slice S2 blocked, escalating model")
-    ledger.append(run, "slice S3 complete (commits 111..222)")
-    assert ledger.completed_slices(run) == {"S1", "S3"}
-
-
 def test_ledger_survives_a_reload(git_repo):
     run = make_run(git_repo)
-    ledger.append(run, "slice S1 complete")
-    assert ledger.completed_slices(Run.load(git_repo, run.run_id)) == {"S1"}
+    ledger.append(run, "slice S1 done")
+    assert any("slice S1 done" in entry for entry in ledger.entries(Run.load(git_repo, run.run_id)))
 
 
 # -- counters: caps live in code now, not in prose -------------------------

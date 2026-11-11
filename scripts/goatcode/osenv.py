@@ -421,8 +421,10 @@ class FileLock:
                 self._held = True
                 return self
             except FileExistsError:
-                if self._stale():
-                    rmtree_force(self.path)
+                # Retry at once only if the stale lock really went away. One
+                # that cannot be removed used to loop here forever, because
+                # the deadline below was never reached.
+                if self._stale() and rmtree_force(self.path):
                     continue
                 if time.time() > deadline:
                     raise TimeoutError("timed out waiting for lock {}".format(self.path))

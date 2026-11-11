@@ -235,6 +235,11 @@ def ready(doc):
     return out
 
 
+def finished(doc):
+    """Ids of slices whose work is in: done this cycle, or carried from an earlier one."""
+    return [item.get("id") for item in slices(doc) if item.get("status") in TERMINAL]
+
+
 def blocked_on(doc, slice_id):
     """Dependencies of ``slice_id`` that are not finished yet."""
     item = get(doc, slice_id)

@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import classify, ledger, miniyaml, osenv, tasks, tdd, workflow as workflowmod
+from . import classify, gates, ledger, miniyaml, osenv, tasks, tdd, workflow as workflowmod
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -25,6 +25,10 @@ STATUS_TO_SLICE = {
 }
 
 VERDICT_RE = re.compile(r"^VERDICT:\s*(PASS|FAIL)\s*$", re.MULTILINE)
+
+#: The three marks a verdict row can carry: met, unmet, unsure. Written as
+#: escapes so the file stays ASCII on every editor and code page.
+VERDICT_MARKS = (("✅", "pass"), ("❌", "fail"), ("⚠", "unsure"))
 
 
 class ReportError(RuntimeError):
@@ -209,6 +213,16 @@ def record_slice(
         item = tasks.get(doc, slice_id)
     except tasks.TaskError as exc:
         raise ReportError(str(exc))
+
+    if item.get("status") in tasks.TERMINAL and status not in FINISHED:
+        # The driver reports BLOCKED for any agent process that exits badly,
+        # including one that hit its budget after its DONE was accepted.
+        # That turned verified work into a retry, and then into a failure.
+        raise ReportError(
+            "{} is already {}; a finished slice cannot go back to {}".format(
+                slice_id, item.get("status"), status
+            )
+        )
 
     if status in FINISHED and not force:
         problems = verify_done(run, doc, slice_id, status=status, evidence=evidence, profile=profile)
@@ -576,22 +590,123 @@ def record_approval(run, decision, feedback=None):
     return {"approval": decision, "feedback": feedback}
 
 
-def read_verdict(run, cycle=None):
-    """The verdict the verifier wrote, or None if it has not written one."""
+def written_verdict(run, cycle=None):
+    """The line the verifier wrote, before anything checks it."""
     path = run.cycle_dir(cycle) / "verdict.md"
     if not path.exists():
         return None
-    matches = VERDICT_RE.findall(osenv.read_text(path))
-    return matches[-1] if matches else None
+    # The last non-blank line, not the last match: a verdict quoted in the
+    # body, or one followed by second thoughts, is not the ruling.
+    lines = [line for line in osenv.read_text(path).splitlines() if line.strip()]
+    match = VERDICT_RE.match(lines[-1].strip()) if lines else None
+    return match.group(1) if match else None
+
+
+def parse_verdict(run, cycle=None):
+    """The verifier's criteria table as rows, or [] when there is none.
+
+    Any table row whose fourth cell carries one of the three marks counts;
+    the header and the separator carry none, so they fall out on their own.
+    """
+    path = run.cycle_dir(cycle) / "verdict.md"
+    if not path.exists():
+        return []
+    rows = []
+    for line in osenv.read_text(path).splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) < 5:
+            continue
+        mark = next((name for sign, name in VERDICT_MARKS if sign in cells[3]), None)
+        if mark is None:
+            continue
+        # An evidence cell may itself hold a pipe; everything past the mark is evidence.
+        rows.append({"slice": cells[0], "id": cells[1], "mark": mark, "evidence": " | ".join(cells[4:]).strip()})
+    return rows
+
+
+def _table_problems(run, cycle):
+    """Where the verifier's own table contradicts the PASS written under it."""
+    try:
+        doc = tasks.load(run.tasks_path)
+    except (OSError, tasks.TaskError, miniyaml.YamlError):
+        # No readable plan, nothing to hold the table against.
+        return []
+    wanted = [
+        (item.get("id"), criterion.get("id"))
+        for item in tasks.slices(doc)
+        for criterion in item.get("acceptance") or []
+        if isinstance(criterion, dict)
+    ]
+    rows = parse_verdict(run, cycle)
+    ruled = {(row["slice"], row["id"]) for row in rows}
+    name = "{}/{}".format
+
+    problems = []
+    unmet = [name(row["slice"], row["id"]) for row in rows if row["mark"] != "pass"]
+    if unmet:
+        problems.append("criteria the table does not mark met: {}".format(", ".join(unmet)))
+    missing = [name(*key) for key in wanted if key not in ruled]
+    if missing:
+        problems.append("criteria with no row in the table: {}".format(", ".join(missing)))
+    unknown = sorted(name(*key) for key in ruled - set(wanted))
+    if unknown:
+        problems.append("rows for criteria the plan does not have: {}".format(", ".join(unknown)))
+    bare = [name(row["slice"], row["id"]) for row in rows if row["mark"] == "pass" and not row["evidence"]]
+    if bare:
+        problems.append("criteria marked met with no evidence: {}".format(", ".join(bare)))
+    return problems
+
+
+def verdict_problems(run, cycle=None):
+    """Why a PASS cannot stand, from evidence the verifier does not own.
+
+    The gates are the pipeline's own measurement, and the table is the
+    verifier's own ruling per criterion. A PASS written over a regression or
+    over an unmet row used to carry the run to done, because only the
+    verdict line was ever read.
+    """
+    problems = []
+    path = run.cycle_dir(cycle) / "gates.json"
+    if path.exists():
+        regressions = gates.blocking(osenv.read_json(path) or {})
+        if regressions:
+            problems.append("gates regressed in this run: {}".format(", ".join(regressions)))
+    return problems + _table_problems(run, cycle)
+
+
+def read_verdict(run, cycle=None):
+    """The verdict this cycle stands on, or None if none is written.
+
+    A PASS the evidence contradicts reads as FAIL, here rather than in each
+    caller, so the machine and the CLI cannot disagree about it.
+    """
+    result = written_verdict(run, cycle)
+    if result == "PASS" and verdict_problems(run, cycle):
+        return "FAIL"
+    return result
 
 
 def require_verdict(run):
     path = run.cycle_dir() / "verdict.md"
     if not path.exists():
         raise ReportError("no verdict at {}; write it before running this".format(path))
-    result = read_verdict(run)
+    result = written_verdict(run)
     if result is None:
         raise ReportError(
             "{} has no 'VERDICT: PASS' or 'VERDICT: FAIL' line; add one as the final line".format(path)
+        )
+    problems = verdict_problems(run) if result == "PASS" else []
+    if problems:
+        # Refused rather than quietly read as FAIL: the verifier is still in
+        # its session, and a FAIL it writes itself carries the "what must
+        # change" list the replanner works from. If it walks away instead,
+        # read_verdict already treats this file as a FAIL.
+        raise ReportError(
+            "VERDICT: PASS cannot stand:\n  - {}\n"
+            "correct the table if it is wrong, otherwise write VERDICT: FAIL "
+            "with what must change, then run this again".format("\n  - ".join(problems))
         )
     return result

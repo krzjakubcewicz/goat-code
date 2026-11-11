@@ -44,6 +44,11 @@ def start(run, doc, reset=False):
     if reset:
         osenv.git(["merge", "--abort"], cwd=path)
         osenv.git(["reset", "--hard", run.base_commit], cwd=path, check=True)
+    elif _merge_in_progress(path):
+        # Starting means no merge is recorded, so one still open in the
+        # worktree is a conflict the last cycle's synthesizer escalated.
+        # Merging into it blames the first slice queued for the old conflict.
+        osenv.git(["merge", "--abort"], cwd=path)
     state = {
         "status": "in-progress",
         "worktree": str(path),
@@ -235,11 +240,25 @@ def write_report(run, doc, path=None):
     add("")
     add("| File | Change | Why it was needed to make the merge work |")
     add("| --- | --- | --- |")
-    add("| _none_ | | |")
+    # This file is rewritten on every conflict and on the final clean merge.
+    # Rows the synthesizer already wrote are carried over, or only the edits
+    # of the last stretch would ever reach the verifier.
+    for row in _justifications(target) or ["| _none_ | | |"]:
+        add(row)
     add("")
 
     osenv.write_text(target, "\n".join(lines) + "\n")
     return target
+
+
+def _justifications(target):
+    """Rows the synthesizer added to an earlier version of the report."""
+    if not target.exists():
+        return []
+    _head, found, tail = osenv.read_text(target).partition("## Synthesizer edits")
+    rows = [line.strip() for line in tail.splitlines() if line.strip().startswith("|")] if found else []
+    # The first two are the header and its separator.
+    return [row for row in rows[2:] if "_none_" not in row]
 
 
 def _title(doc, slice_id):

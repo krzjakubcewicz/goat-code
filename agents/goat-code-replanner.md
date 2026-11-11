@@ -53,17 +53,20 @@ Write `tasks.yaml` for the new cycle at the path you were given.
 **Leave `kind` and `kind_reason` exactly as they are.** Whether this was a
 feature or a bugfix did not change because a cycle failed.
 
-**Carry forward everything that passed.** Slices whose criteria are all ✅
-appear with `status: carried`. They are never re-executed, and their
-branches are already merged. Do not delete them from the plan — the verifier
-still checks their criteria next cycle.
+**Leave carried slices alone.** Every slice that finished last cycle appears
+with `status: carried`, whether or not the verifier accepted it: carried
+means its branch is merged, not that it passed. Your dispatch lists the
+criteria that were not accepted. Carried slices are never re-executed. Do
+not delete them from the plan — the verifier still checks their criteria
+next cycle.
 
 **Add only remedial slices**, each `status: pending`. They must obey the
 same discipline as any plan:
 
-- disjoint `owns` globs within a wave — and remember the carried slices'
-  files already exist on the integration branch, so a remedial slice
-  *should* claim the paths it needs to change
+- disjoint `owns` globs within a wave. The carried slices' files already
+  exist on the integration branch, so a remedial slice *should* claim the
+  paths it needs to change; a carried slice's ownership does not collide
+  with it
 - at least one checkable acceptance criterion and one test path each
 - `depends_on` set where a fix needs an earlier fix in place
 

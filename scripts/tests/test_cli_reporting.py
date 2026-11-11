@@ -12,7 +12,7 @@ import pytest
 
 from goatcode import ledger, osenv, report, worktree
 from goatcode.run import Run
-from tests.conftest import make_run
+from tests.conftest import make_run, passing_verdict
 from tests.test_cli import cli, invoke, invoke_json, plan_for, slice_spec  # noqa: F401
 
 
@@ -239,10 +239,30 @@ def test_approve_requires_a_decision(capsys, node_repo):
 
 def test_verdict_pass_exits_zero(capsys, node_repo):
     run = start(capsys, node_repo)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    passing_verdict(run)
     code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "verdict")
     assert code == 0
     assert payload["verdict"] == "PASS"
+
+
+def test_verdict_pass_over_a_gate_regression_is_refused_with_the_reason(capsys, node_repo):
+    """Refused, not quietly flipped: the verifier is still in its session and
+    a FAIL it writes itself carries what must change."""
+    run = start(capsys, node_repo)
+    passing_verdict(run)
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "verdict")
+    assert code == cli.EXIT_USAGE
+    assert "gates regressed in this run: test" in err
+    assert "VERDICT: FAIL" in err
+
+
+def test_verdict_pass_that_skips_a_criterion_is_refused(capsys, node_repo):
+    run = start(capsys, node_repo, [slice_with_tests("S1", "src/a/**")])
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "verdict")
+    assert code == cli.EXIT_USAGE
+    assert "no row in the table" in err
 
 
 def test_verdict_fail_exits_one(capsys, node_repo):

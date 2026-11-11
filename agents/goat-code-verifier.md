@@ -156,6 +156,12 @@ It reads your final `VERDICT:` line back and moves the run on — to `DONE` on
 a pass, or into a replan cycle on a fail. If it tells you the line is
 missing, add it as the file's last line and run it again.
 
+A `PASS` is checked before it is accepted: against `gates.json`, and against
+your own table, which must hold one row per criterion in `tasks.yaml`, every
+row ✅ with evidence. If the command refuses the `PASS` it lists why. Correct
+the table if it was wrong; otherwise the verdict is `FAIL`, so write it with
+what must change and run the command again.
+
 Then return one line:
 
 ```

@@ -18,6 +18,7 @@ import pathlib
 import pytest
 
 from goatcode import agentcli, driver as drivermod, machine, miniyaml, osenv, tasks
+from tests import conftest
 from tests.test_cli import cli as cli_module  # noqa: F401
 from goatcode.run import Run
 
@@ -165,9 +166,8 @@ class FakeAgent:
     def verifier(self, run, _dispatch):
         verdict = "FAIL" if len(self.verdicts) < self.fail_verdicts else "PASS"
         self.verdicts.append(verdict)
-        (run.cycle_dir() / "verdict.md").write_text(
-            "# Verdict\n\nchecked everything\n\nVERDICT: {}\n".format(verdict), encoding="utf-8"
-        )
+        mark = "\u2705" if verdict == "PASS" else "\u274c"
+        conftest.passing_verdict(run, mark=mark, verdict=verdict)
         self.cli(run, "verdict", check=False)
 
     def e2e(self, run, _dispatch):
