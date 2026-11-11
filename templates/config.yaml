@@ -59,6 +59,12 @@ approval_gate: chat
 # alone, which goat-code writes either way.
 manage_gitignore: true
 
+# Written by `init --clone`; not a knob to turn by hand. true means this
+# repository is a throwaway shallow clone inside a sandbox directory, and the
+# run's worktrees and temp files live in that directory, next to the clone,
+# instead of the system temp dir.
+sandbox: false
+
 # Reject an executor's DONE when its commit history shows implementation
 # landing before it touched any test. Executors are told to work test-first
 # either way; this is what checks. Turn off for a project where that cannot

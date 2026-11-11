@@ -133,12 +133,59 @@ Requires **Python 3.9+** and **git**. No pip install — the script layer is
 stdlib-only, including its YAML reader. Works on Windows, macOS and Linux;
 CI runs the test suite on all three.
 
+## Run it in a sandbox
+
+The recommended way to run goat-code: start in an **empty directory** and
+hand it the repository and the spec.
+
+```
+mkdir C:\gc\auth && cd C:\gc\auth
+/goat-code --clone https://github.com/you/project.git --spec ../specs/auth.md
+```
+
+```bash
+python scripts/goatcode.py run --clone https://github.com/you/project.git --spec ../specs/auth.md
+```
+
+It shallow-clones the repository (`--depth 1`) and keeps everything the run
+makes inside that one directory - delete the directory and nothing is left
+anywhere else:
+
+```
+<sandbox>/
+  repo/               the shallow clone, with the run state in repo/.goatcode/
+  goatcode/<hash>/    one worktree per slice, plus the integration worktree
+  tmp/                TEMP, TMP and TMPDIR for gates, installs and headless agents
+```
+
+- `--spec` is a file on your machine, anywhere; it is read before the clone
+  and copied into the run. `--prompt "..."` works in its place.
+- `--base <branch>` clones that branch instead of the default one.
+- The directory has to be empty - dotfiles and the spec itself aside.
+  `--force` overrides.
+- The finished branch stays in `repo/`. goat-code still never pushes; the
+  final report prints the command: `git -C repo push -u origin <branch>`.
+- The repository guard widens to the sandbox and no further.
+- `/goat-code-resume`, `/goat-code-status` and `goatcode run --resume` work
+  from the sandbox directory.
+
+Two limits. Keep the sandbox path short on Windows: worktrees now sit under
+it rather than under the temp dir, and a deep `node_modules` still has 260
+characters to fit in. And under `/goat-code` the agents are spawned by your
+Claude Code session, not by goat-code, so their own scratch files follow that
+session's temp dir; gates, installs and everything `goatcode run` starts are
+redirected.
+
+Without `--clone`, everything below works as before inside an existing
+checkout.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `/goat-code "<request>"` | run the pipeline from a chat request |
 | `/goat-code --spec <file>` | run it from a markdown spec |
+| `/goat-code --clone <url> --spec <file>` | clone into this empty directory and run there |
 | `/goat-code-spec [name]` | scaffold a spec file to fill in |
 | `/goat-code-status [--all]` | phase, cycle, slice states, recent ledger |
 | `/goat-code-resume` | pick up an interrupted run from its ledger |
@@ -345,7 +392,8 @@ default; the environment variable wins over the config either way.
 
 Worktrees live outside the repo, at `<tempdir>/goatcode/<hash>/<slice>` — short
 paths, so a deep `node_modules` cannot hit the Windows path limit, and a
-failed cleanup cannot litter your project.
+failed cleanup cannot litter your project. A [sandboxed](#run-it-in-a-sandbox)
+run puts them at `<sandbox>/goatcode/<hash>/<slice>` instead.
 
 ## The script layer
 

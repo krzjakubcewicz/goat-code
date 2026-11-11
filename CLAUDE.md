@@ -37,6 +37,7 @@ Driving the pipeline itself (against a target repo):
 python scripts/goatcode.py init --prompt "..."   # or --spec FILE
 python scripts/goatcode.py next --json           # the state machine: one action
 python scripts/goatcode.py run --prompt "..."    # the same loop, driven by Python
+python scripts/goatcode.py run --clone URL --spec FILE  # sandboxed: from an empty directory
 python scripts/goatcode.py --help
 GOATCODE_DEBUG=1 python scripts/goatcode.py next # trace to runs/<id>/log.txt
 ```
@@ -125,7 +126,10 @@ Breaking one of these fails the suite, usually far from where you edited.
   in the same change.
 - **Cross-OS.** CI runs ubuntu/macos/windows × Python 3.9 and 3.13. Worktrees
   go to `<tempdir>/goatcode/<hash>/<slice>` to stay under the Windows path
-  limit; `.gitattributes` forces LF everywhere.
+  limit; `.gitattributes` forces LF everywhere. A sandboxed run (`init --clone`)
+  is the exception: `sandbox: true` in the clone's config makes
+  `goatcode.py::_enter_sandbox` point `GOATCODE_TEMP_ROOT` and the temp
+  variables at the clone's parent, so worktrees and scratch files stay there.
 - **Never touch the user's repo state.** No commits to their branch, no HEAD
   moves, no pushes. `init` writes a `.gitignore` entry and leaves it uncommitted.
 - **One version, two places.** `goatcode.__version__` and

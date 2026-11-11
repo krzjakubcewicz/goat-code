@@ -993,6 +993,9 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
             "branch: {}".format(run.integration_branch),
             "review: git diff {}..{}".format(run.base_commit[:12], run.integration_branch),
             "merge:  git merge {}".format(run.integration_branch),
+        ]
+        lines += push_hint(run)
+        lines += [
             "",
             "nothing was committed to your branch {}".format(run.state.get("base_branch")),
         ]
@@ -1018,6 +1021,17 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
         )
 
     return _action(run, "stop", reason or outcome, message, **payload)
+
+
+def push_hint(run):
+    """The one command that gets a sandboxed run's work out of its clone.
+
+    Printed, never run: goat-code does not push, and a throwaway clone is the
+    one place a finished branch is otherwise easy to lose.
+    """
+    if not run.config.get("sandbox"):
+        return []
+    return ["push:   git -C {} push -u origin {}".format(run.repo, run.integration_branch)]
 
 
 def _what_was_confirmed(run, evidence):

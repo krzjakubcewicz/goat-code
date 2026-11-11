@@ -31,7 +31,13 @@ The only step outside the loop:
 ```bash
 python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" init --prompt "<the user request>"
 python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" init --spec <path>
+python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" init --clone <url> --spec <path>
 ```
+
+`--clone` is a sandboxed run: `init` shallow-clones into `./repo` and keeps
+the run's worktrees and temp files in this directory. Stay where you are -
+every command, `next` included, finds the clone from here. It refuses a
+directory that is not empty; relay that rather than clearing anything.
 
 `init` refuses on a dirty tree, a detached HEAD, a repo with no commits, or
 a linked worktree. Relay the message; do not work around it. `--force`

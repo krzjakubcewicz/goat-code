@@ -71,6 +71,11 @@ def allowed_roots(repo, config=None, state=None):
         if exe and os.path.isabs(str(exe)):
             roots.append(os.path.dirname(str(exe)))
 
+    if config.get("sandbox"):
+        # The clone's parent is the sandbox: the redirected temp dir and the
+        # spec the run was started from both live there.
+        roots.append(pathlib.Path(repo).parent)
+
     if state:
         # One entry covers every worktree of the run, the integration one
         # included, because they are all created under it. The recorded
