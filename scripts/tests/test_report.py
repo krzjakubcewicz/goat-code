@@ -254,7 +254,7 @@ def test_done_with_concerns_records_the_missing_evidence(run, plan):
 
 def test_force_overrides_the_checks(run, plan):
     prepare(run, "S1", commit=False, tests=False)
-    result = report.record_slice(run, "S1", "DONE", force=True)
+    result = report.record_slice(run, "S1", "DONE", force=True, reason="checked by hand")
     assert result["slice_status"] == "done"
 
 
@@ -736,3 +736,50 @@ def test_a_test_runner_that_is_not_installed_does_not_block(run, plan):
     path = prepare(run, "S1")
     profile = {"commands": {"test_one": ["definitely-not-a-real-binary-xyz", "<path>"]}}
     assert report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"], profile=profile)
+
+
+# -- weak tests, misplaced evidence, forced reports ------------------------
+
+
+def test_done_is_rejected_when_a_changed_test_cannot_fail(run, plan):
+    """The scan ran only at verify, after the whole wave. Thirteen of
+    twenty-one recorded cycles failed there on assertion strength, each one
+    costing a replan instead of a line of feedback to the executor."""
+    path = prepare(run, "S1")
+    _commit(path, {DECLARED_TEST["S1"]: "test('stores a token', () => {\n  store.put('a');\n});\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    message = str(excinfo.value)
+    assert "{}:1".format(DECLARED_TEST["S1"]) in message
+    assert "no assertion" in message
+    assert "DONE_WITH_CONCERNS" in message
+
+
+def test_a_weak_test_goes_on_the_record_of_a_concern(run, plan):
+    path = prepare(run, "S1")
+    _commit(path, {DECLARED_TEST["S1"]: "test('stores a token', () => {\n  store.put('a');\n});\n"})
+    report.record_slice(run, "S1", "DONE_WITH_CONCERNS", concerns="scanner misreads this", evidence=EVIDENCE["S1"])
+    concerns = tasks.get(tasks.load(run.tasks_path), "S1")["report"]["concerns"]
+    assert "no assertion" in concerns
+
+
+def test_evidence_has_to_point_at_a_test(run, plan):
+    """`src/auth/store.js:12` exists and has that many lines, and proves
+    nothing: it is the code under test."""
+    path = prepare(run, "S1")
+    _commit(path, {"src/auth/store.js": "module.exports = 1;\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence={"A1": "src/auth/store.js:1"})
+    assert "not a test file" in str(excinfo.value)
+
+
+def test_a_forced_report_needs_a_reason_and_is_marked(run, plan):
+    prepare(run, "S1", commit=False, tests=False)
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", force=True)
+    assert "--reason" in str(excinfo.value)
+
+    report.record_slice(run, "S1", "DONE", force=True, reason="the runner is broken on this host")
+    recorded = tasks.get(tasks.load(run.tasks_path), "S1")["report"]
+    assert recorded["forced"] is True
+    assert any("forced" in entry for entry in ledger.entries(run))

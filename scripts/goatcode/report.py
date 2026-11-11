@@ -85,15 +85,21 @@ def evidence_findings(item, evidence, worktree_path):
                 "evidence for {} is {!r}; it must be <test path>:<line>".format(cid, raw)
             )
             continue
-        problems.extend(_evidence_target(cid, match, worktree_path))
+        problems.extend(_evidence_target(cid, match, worktree_path, item))
     return problems
 
 
-def _evidence_target(cid, match, worktree_path):
+def _evidence_target(cid, match, worktree_path, item=None):
     """The named file and line have to exist in the worktree being reported."""
     target = pathlib.Path(worktree_path) / match.group("path")
     if not target.is_file():
         return ["evidence for {} names {}, which does not exist".format(cid, match.group("path"))]
+    if not tdd.is_test_path(match.group("path"), item):
+        # A line of the code under test exists and proves nothing.
+        return [
+            "evidence for {} names {}, which is not a test file; name the test"
+            " line that would fail if the behaviour were wrong".format(cid, match.group("path"))
+        ]
     # ponytail: line-exists only. Whether that line holds a real assertion is
     # the verifier's judgement, not something a script should guess at.
     total = len(osenv.read_text(target).splitlines())
@@ -156,12 +162,37 @@ def verify_done(run, doc, slice_id, status="DONE", evidence=None, profile=None):
     if status == "DONE":
         problems.extend(evidence_findings(item, evidence, path))
         problems.extend(tdd_findings(run, item, path, profile))
+        weak = weak_findings(item, path)
+        if weak:
+            problems.extend(weak)
+            problems.append(
+                "the scan above is a heuristic. If it has misread a test that does"
+                " assert the behaviour, report DONE_WITH_CONCERNS and say so"
+            )
         # Last, and only on an otherwise sound report: it is the one check
         # here that costs real time.
         if not problems:
             problems.extend(test_findings(run, item, path, profile))
 
     return problems
+
+
+def weak_findings(item, worktree_path):
+    """Assertions in this slice's changed tests that pass while the behaviour is wrong.
+
+    The same scan the verify phase runs, moved to where it is cheap to act
+    on: assertion strength is what most recorded cycles failed on, and at
+    verify it costs a replan instead of a line back to the executor that
+    still holds the context.
+    """
+    base = (item.get("commits") or {}).get("base")
+    if not base:
+        return []
+    changed = diffpkg.changed_files(worktree_path, base, "HEAD")
+    return [
+        "{}:{}: {} ({})".format(f["path"], f["line"], f["reason"], f["source"])
+        for f in gates.weak_assertions(worktree_path, changed)
+    ]
 
 
 def test_findings(run, item, worktree_path, profile=None):
@@ -348,6 +379,10 @@ def record_slice(
         status = "BLOCKED"
         reason = "still missing context after an answer: {}".format(reason)
 
+    if force and not (reason or "").strip():
+        # Skipping every check is sometimes right and never anonymous.
+        raise ReportError("--force skips every check on this report; say why with --reason")
+
     if status in FINISHED and not force:
         problems = verify_done(run, doc, slice_id, status=status, evidence=evidence, profile=profile)
         if problems:
@@ -365,6 +400,7 @@ def record_slice(
         late = (
             evidence_findings(item, evidence, worktree_path)
             + tdd_findings(run, item, worktree_path, profile)
+            + weak_findings(item, worktree_path)
             + [finding.splitlines()[0] for finding in test_findings(run, item, worktree_path, profile)]
         )
         if late:
@@ -387,6 +423,9 @@ def record_slice(
             # which test proves which criterion, there to be checked.
             "evidence": dict(evidence) if evidence else None,
         }
+        if force:
+            # On the record, so the verifier can tell an unchecked DONE from a checked one.
+            target["report"]["forced"] = True
         if resolved_head:
             commits = target.setdefault("commits", {"base": None, "head": None})
             commits["head"] = resolved_head
@@ -395,7 +434,12 @@ def record_slice(
     slice_status = tasks.update(run.tasks_path, mutate)
 
     detail = tests or reason or concerns or ""
-    ledger.append(run, "slice {} {}{}".format(slice_id, status.lower(), " - " + detail if detail else ""))
+    ledger.append(
+        run,
+        "slice {} {}{}{}".format(
+            slice_id, status.lower(), " (forced, unchecked)" if force else "", " - " + detail if detail else ""
+        ),
+    )
 
     return {
         "slice": slice_id,

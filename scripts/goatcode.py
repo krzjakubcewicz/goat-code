@@ -1428,7 +1428,7 @@ def build_parser():
         metavar="AID=PATH:LINE",
         help="the test line proving one acceptance criterion; repeat for each (required for DONE)",
     )
-    p.add_argument("--force", action="store_true", help="skip the DONE checks (use only with a reason)")
+    p.add_argument("--force", action="store_true", help="skip the DONE checks; requires --reason, and is marked on the report")
     p.set_defaults(func=cmd_report)
 
     p = add(sub, "classify", help="record how this run was sized, and route it")

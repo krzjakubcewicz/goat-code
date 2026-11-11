@@ -293,7 +293,8 @@ def test_blocked_is_unaffected(run, plan, slice_worktree):
 def test_force_bypasses_the_check(run, plan, slice_worktree):
     commit(slice_worktree, {"src/auth/token.js": "x\n"}, "impl")
     commit(slice_worktree, {"tests/auth.test.js": "// t\n"}, "test")
-    assert report.record_slice(run, "S1", "DONE", force=True)["slice_status"] == "done"
+    forced = report.record_slice(run, "S1", "DONE", force=True, reason="history rewritten by hand")
+    assert forced["slice_status"] == "done"
 
 
 def test_enforcement_can_be_switched_off(git_repo):
