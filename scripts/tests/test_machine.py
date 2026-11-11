@@ -343,6 +343,21 @@ def test_the_final_grill_round_forces_a_plan(run):
     assert "must return `PLAN`" in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
 
 
+def test_questions_written_past_the_round_cap_are_not_asked(run):
+    """The cap only changed the wording of the prompt. A planner that wrote
+    questions anyway got another round, and another, with no limit."""
+    for _ in range(3):
+        run.bump_grill_round()
+    machine.dispatch.questions_path(run, 4).write_text(QUESTIONS, encoding="utf-8")
+    assert machine.derive_phase(run) == "grill"
+
+
+def test_a_direct_run_never_puts_questions_to_the_user(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    machine.dispatch.questions_path(run, 1).write_text(QUESTIONS, encoding="utf-8")
+    assert machine.derive_phase(run) == "grill"
+
+
 def test_revise_carries_the_feedback_and_clears_the_flag(run):
     write_plan(run)
     run.set_approval("revise")

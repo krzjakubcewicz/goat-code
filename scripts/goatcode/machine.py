@@ -104,8 +104,11 @@ def derive_phase(run, evidence=None):
 
     if not evidence.has_plan:
         # A direct run derives `grill` like any other; `_grill` is what
-        # suppresses the questions.
-        return "ask" if evidence.questions.exists() else "grill"
+        # suppresses the questions. A questions file only counts while the
+        # run is still owed a round: the cap used to live in the planner's
+        # prompt alone, so one that asked anyway was simply given another.
+        may_ask = workflowmod.wants_grill(run.workflow) and not run.grill_exhausted()
+        return "ask" if may_ask and evidence.questions.exists() else "grill"
 
     if not evidence.plan_valid:
         return "plan"
