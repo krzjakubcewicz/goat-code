@@ -626,6 +626,13 @@ def _approve(run, evidence, _stack):
                 dispatch.command(run, "approve", "--revise", "<their feedback>"),
                 dispatch.command(run, "approve", "--abort"),
             ),
+            # Keyed by the label the user picks, so nothing has to match a
+            # choice to one of three commands joined in a string.
+            "choices": {
+                "Approve": dispatch.command(run, "approve", "--yes"),
+                "Revise": dispatch.command(run, "approve", "--revise", "<their feedback>"),
+                "Abort": dispatch.command(run, "approve", "--abort"),
+            },
         },
     )
 
@@ -989,6 +996,7 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
             "",
             "nothing was committed to your branch {}".format(run.state.get("base_branch")),
         ]
+        lines += _what_was_confirmed(run, evidence)
         if workflowmod.wants_approval(run.workflow):
             classification = run.classification or {}
             reasons = list(classification.get("deterministic_overrides") or [])
@@ -1010,6 +1018,29 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
         )
 
     return _action(run, "stop", reason or outcome, message, **payload)
+
+
+def _what_was_confirmed(run, evidence):
+    """The closing facts, counted here rather than by whoever prints them.
+
+    The orchestrator was told to read verdict.md and gates.json and say
+    which criteria were confirmed, what was assumed and what was already
+    broken. That is counting rows, and it was left to the cheapest model.
+    """
+    lines = []
+    rows = report.parse_verdict(run)
+    if rows:
+        met = len([row for row in rows if row["mark"] == "pass"])
+        lines += ["", "{} of {} acceptance criteria confirmed by the verifier".format(met, len(rows))]
+    gates_path = run.cycle_dir() / "gates.json"
+    inherited = (osenv.read_json(gates_path) or {}).get("pre_existing") if gates_path.exists() else None
+    if inherited:
+        lines += ["", "failing before this run and still failing: {}".format(", ".join(inherited))]
+    assumptions = (evidence.doc or {}).get("assumptions") or []
+    if assumptions:
+        lines += ["", "decided on your behalf, because the request did not say:"]
+        lines += ["  - {}".format(dispatch._assumption_text(a)) for a in assumptions]
+    return lines
 
 
 # -- helpers ---------------------------------------------------------------

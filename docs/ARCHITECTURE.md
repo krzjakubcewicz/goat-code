@@ -11,7 +11,7 @@ questions.** Only the main Claude Code thread has the `Agent` tool and
 
 So the orchestrator is not an agent file — it is a skill the main thread
 follows. Everything that needs to fan out or talk to the user happens there.
-The five agents are leaves.
+The eight agents are leaves.
 
 This also explains the grill loop's shape. The planner is the one who knows
 what is ambiguous, but it cannot ask. So it *returns* questions, the
@@ -395,7 +395,10 @@ Two things do. The orchestrator skill is one, performed by the Claude Code
 main thread. `driver.Driver` is the other, performed by Python, spawning
 each agent as a headless `claude` process through `agentcli`. They share
 every decision, every prompt, every cap and every agent definition; they
-differ only in what executes a dispatch.
+differ in what executes a dispatch, and in two guards only the driver has:
+a step limit, and stopping when every agent in two rounds running fails
+to start. The caps that matter to both - on a repeated dispatch and on a
+`run` action that keeps coming back - live in the machine.
 
 That is why the end-to-end suite matters more than it looks. It drives
 `driver.Driver` with a fake backend, so the loop that ships standalone is

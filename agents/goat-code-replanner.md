@@ -94,8 +94,11 @@ remedial slice's `intent`, so the executor understands why it exists.
 Then validate:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" plan validate
+... plan validate
 ```
+
+Use the full command from your dispatch. It pins the interpreter, `--repo`
+and `--run`; the short form guesses them from the directory you are in.
 
 ## Return
 

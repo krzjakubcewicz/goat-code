@@ -55,7 +55,7 @@ Perform the action it returns, then run `next` again. Repeat until `stop`.
 
 | `action` | What you do |
 | --- | --- |
-| `run` | Execute each argv in `commands`, exactly as given. |
+| `run` | Execute each argv in `commands`, exactly as given. Exit 0 or 1 is an answer: carry on and call `next`. Anything else is a broken tool: show the error and stop. |
 | `dispatch` | Spawn every entry in `dispatches` **in a single message**, using its `agent` as the subagent type and its `model`. |
 | `ask` | Put `ask.questions` to the user with `AskUserQuestion`, then record the result with `ask.record`. |
 | `escalate` | Something needs a human. Show `message` and stop. |
@@ -105,8 +105,8 @@ Record the answers with `ask.record`, substituting what the user chose:
 Use the label they picked. Add `--note QID=text` for anything they typed.
 Omit a question they skipped - the planner records an assumption for it.
 
-For the approval gate, `ask.kind` is `approval` and `ask.record` lists all
-three commands; run the one matching their choice.
+For the approval gate, `ask.kind` is `approval`. Run `ask.choices[<the label
+they picked>]`; for `Revise`, put their feedback where the placeholder is.
 
 When `ask.kind` is `context`, a slice reported `NEEDS_CONTEXT` and the
 question is its executor's. Put it to the user as given. Record what they
@@ -127,10 +127,11 @@ without it.
 
 ### stop
 
-Print `message` verbatim. On a successful run, also execute the `finish`
-command in the action, then tell the user in one short paragraph what was
-built, which acceptance criteria the verifier confirmed, any assumptions it
-surfaced, and any pre-existing failures the run did not cause.
+Print `message` verbatim, and on a successful run execute the `finish`
+command in the action. The message already states how many criteria the
+verifier confirmed, what was decided on the user's behalf, and what was
+failing before the run started. Add nothing to it that you would have to
+read a run file to know.
 
 Never claim success when `outcome` is `failed`.
 
