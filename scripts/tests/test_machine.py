@@ -255,14 +255,14 @@ def test_a_clean_merge_moves_to_verify(run):
 def test_a_passing_verdict_on_a_feature_goes_to_e2e(run):
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     assert machine.derive_phase(run) == "e2e"
 
 
 def test_a_passing_verdict_is_done_once_e2e_has_reported(run):
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     finished(run)
     assert machine.derive_phase(run) == "done"
 
@@ -270,7 +270,7 @@ def test_a_passing_verdict_is_done_once_e2e_has_reported(run):
 def test_a_passing_verdict_over_a_gate_regression_replans(run):
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
     assert machine.derive_phase(run) == "replan"
 
@@ -701,7 +701,7 @@ def test_the_replanned_plan_resumes_executing(run):
 def test_done_reports_the_branch_and_leaves_the_user_branch_alone(run):
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     finished(run)
 
     action = machine.next_action(run)
@@ -716,7 +716,7 @@ def test_done_reports_the_branch_and_leaves_the_user_branch_alone(run):
 def test_stop_is_idempotent(run):
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     finished(run)
     machine.next_action(run)
     assert machine.next_action(run)["outcome"] == "done"
@@ -802,7 +802,7 @@ def test_the_branch_step_happens_once(run):
 def test_a_finished_run_is_written_up_before_it_is_done(run):
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     e2e_passed(run)
 
     assert machine.derive_phase(run) == "record"
@@ -814,7 +814,7 @@ def test_a_finished_run_is_written_up_before_it_is_done(run):
 def test_recording_can_be_switched_off(run):
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     e2e_passed(run)
     run.state["config"]["write_progress"] = False
     run.save()
@@ -825,14 +825,14 @@ def test_a_bugfix_is_still_written_up(run):
     """It skips the E2E phase, not the log - its learnings matter as much."""
     write_plan(run, dict(PLAN, kind="bugfix", kind_reason="restores behaviour"))
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     assert machine.derive_phase(run) == "record"
 
 
 def test_the_scribe_prompt_points_at_the_run_artifacts(run):
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     e2e_passed(run)
 
     prompt = open(machine.next_action(run)["dispatches"][0]["prompt"], encoding="utf-8").read()
@@ -1149,7 +1149,7 @@ def test_a_high_risk_run_asks_for_sign_off_when_it_stops(run):
     run.set_classification({"complexity": "COMPLEX", "risk": "HIGH"}, "HIGH_RISK_DEVELOPMENT")
     write_plan(run)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     finished(run)
 
     action = machine.next_action(run)
@@ -1167,7 +1167,7 @@ def test_an_ordinary_run_stops_without_asking_for_sign_off(run):
         item["owns"] = ["src/feature{}/**".format(index)]
     write_plan(run, doc)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     finished(run)
 
     action = machine.next_action(run)
@@ -1214,7 +1214,7 @@ def test_the_sign_off_names_a_rules_only_escalation(run):
         item["owns"] = ["src/feature{}/**".format(index)]
     write_plan(run, doc)
     approved(run)
-    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    conftest.passing_verdict(run)
     finished(run)
 
     action = machine.next_action(run)

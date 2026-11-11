@@ -479,6 +479,69 @@ def test_a_pass_over_inherited_breakage_stands(run):
     assert report.verdict_problems(run) == []
 
 
+def _verdict_with(run, rows, line="VERDICT: PASS"):
+    head = ["| Slice | ID | Criterion | Verdict | Evidence |", "| --- | --- | --- | --- | --- |"]
+    body = ["| {} | {} | text | {} | {} |".format(*row) for row in rows]
+    osenv.write_text(run.cycle_dir() / "verdict.md", "\n".join(["# Verdict", ""] + head + body + ["", line, ""]))
+
+
+OK, NO, UNSURE = "\u2705", "\u274c", "\u26a0\ufe0f"
+ROW_EVIDENCE = "tests/auth.test.js:3"
+
+
+def test_the_verdict_table_is_parsed_into_rows(run, plan):
+    _verdict_with(run, [("S1", "A1", OK, ROW_EVIDENCE), ("S2", "A1", NO, "no test")], line="VERDICT: FAIL")
+    assert report.parse_verdict(run) == [
+        {"slice": "S1", "id": "A1", "mark": "pass", "evidence": ROW_EVIDENCE},
+        {"slice": "S2", "id": "A1", "mark": "fail", "evidence": "no test"},
+    ]
+
+
+def test_a_pass_that_rules_on_every_criterion_stands(run, plan):
+    _verdict_with(run, [("S1", "A1", OK, ROW_EVIDENCE), ("S2", "A1", OK, ROW_EVIDENCE)])
+    assert report.verdict_problems(run) == []
+    assert report.read_verdict(run) == "PASS"
+
+
+@pytest.mark.parametrize("mark", [NO, UNSURE])
+def test_a_pass_with_an_unmet_row_reads_as_fail(run, plan, mark):
+    """`PASS requires every criterion met` was only a sentence in the
+    verifier's instructions; its own table was never read back."""
+    _verdict_with(run, [("S1", "A1", OK, ROW_EVIDENCE), ("S2", "A1", mark, "no test")])
+    assert report.read_verdict(run) == "FAIL"
+    assert "S2/A1" in report.verdict_problems(run)[0]
+
+
+def test_a_pass_that_skips_a_criterion_reads_as_fail(run, plan):
+    _verdict_with(run, [("S1", "A1", OK, ROW_EVIDENCE)])
+    assert report.read_verdict(run) == "FAIL"
+    assert "S2/A1" in report.verdict_problems(run)[0]
+
+
+def test_a_pass_with_no_table_at_all_reads_as_fail(run, plan):
+    osenv.write_text(run.cycle_dir() / "verdict.md", "VERDICT: PASS\n")
+    assert report.read_verdict(run) == "FAIL"
+
+
+def test_a_pass_ruling_on_a_criterion_the_plan_lacks_reads_as_fail(run, plan):
+    _verdict_with(run, [("S1", "A1", OK, ROW_EVIDENCE), ("S2", "A1", OK, ROW_EVIDENCE), ("S9", "A4", OK, ROW_EVIDENCE)])
+    assert report.read_verdict(run) == "FAIL"
+    assert "S9/A4" in report.verdict_problems(run)[0]
+
+
+def test_a_met_row_needs_evidence(run, plan):
+    _verdict_with(run, [("S1", "A1", OK, ROW_EVIDENCE), ("S2", "A1", OK, "")])
+    assert report.read_verdict(run) == "FAIL"
+    assert "evidence" in report.verdict_problems(run)[0]
+
+
+def test_a_verdict_line_that_is_not_the_last_line_does_not_count(run):
+    """An earlier line quoted in the body, or a verdict followed by second
+    thoughts, used to be read as the ruling."""
+    osenv.write_text(run.cycle_dir() / "verdict.md", "VERDICT: PASS\n\nexcept for the mailer, which fails.\n")
+    assert report.read_verdict(run) is None
+
+
 def test_no_verdict_file_reads_as_none(run):
     assert report.read_verdict(run) is None
 

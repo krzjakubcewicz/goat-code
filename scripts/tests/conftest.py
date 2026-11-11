@@ -166,3 +166,24 @@ def env_no_ci(monkeypatch):
     for key in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
         monkeypatch.delenv(key, raising=False)
     return os.environ
+
+
+def passing_verdict(run, mark="\u2705", verdict="PASS"):
+    """A verdict.md that rules on every criterion in the plan.
+
+    A bare `VERDICT: PASS` no longer stands once a plan exists: the table is
+    checked against the plan's criteria, so a fixture has to carry one.
+    """
+    from goatcode import tasks
+
+    lines = ["# Verdict", "", "| Slice | ID | Criterion | Verdict | Evidence |", "| --- | --- | --- | --- | --- |"]
+    doc = tasks.load(run.tasks_path) if pathlib.Path(run.tasks_path).exists() else {}
+    for item in tasks.slices(doc):
+        for criterion in item.get("acceptance") or []:
+            lines.append(
+                "| {} | {} | {} | {} | tests/x.test.js:1 |".format(
+                    item["id"], criterion["id"], criterion.get("text", ""), mark
+                )
+            )
+    lines += ["", "VERDICT: {}".format(verdict), ""]
+    osenv.write_text(run.cycle_dir() / "verdict.md", "\n".join(lines))
