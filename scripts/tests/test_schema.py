@@ -479,3 +479,73 @@ def test_a_contract_changed_by_a_slice_another_one_depends_on_is_a_warning():
     doc["slices"][1]["changes_contract"] = ["GET /api/health/"]
     report = schema.validate(doc)
     assert any("GET /api/health/" in w for w in report.warnings), report.warnings
+
+
+# -- a plan nobody has executed yet ------------------------------------------
+#
+# The validator accepted any status on a fresh plan, so one written with
+# `status: done` skipped execution, and one with a `worktree:` that happened
+# to exist skipped the worktree and the brief.
+
+
+def test_a_fresh_plan_is_all_pending():
+    doc = plan()
+    assert schema.fresh_plan_errors(doc) == []
+    doc["slices"][0]["status"] = "done"
+    assert any("S1" in e and "pending" in e for e in schema.fresh_plan_errors(doc))
+
+
+def test_a_fresh_plan_cannot_preset_what_the_pipeline_records():
+    doc = plan()
+    doc["slices"][0]["worktree"] = "/tmp/somewhere"
+    doc["slices"][0]["report"] = {"status": "DONE"}
+    errors = schema.fresh_plan_errors(doc)
+    assert any("worktree" in e for e in errors)
+    assert any("report" in e for e in errors)
+
+
+def test_the_placeholders_a_planner_copies_from_the_example_are_fine():
+    doc = plan()
+    doc["slices"][0].update({"branch": None, "worktree": None, "commits": {"base": None, "head": None}})
+    assert schema.fresh_plan_errors(doc) == []
+
+
+# -- a replan, held against the plan it replaces -----------------------------
+
+
+def _replanned():
+    before = plan()
+    before["slices"][0]["status"] = "done"
+    before["slices"][1]["status"] = "failed"
+    after = plan()
+    after["slices"][0]["status"] = "carried"
+    after["slices"][1]["status"] = "failed"
+    after["slices"].append(dict(after["slices"][1], id="R2", status="pending", depends_on=[], uses_interfaces=[]))
+    return before, after
+
+
+def test_a_sound_replan_passes():
+    before, after = _replanned()
+    assert schema.replan_errors(before, after) == []
+
+
+def test_a_replan_cannot_change_what_kind_of_work_this_is():
+    before, after = _replanned()
+    after["kind"] = "bugfix"
+    assert any("kind" in e for e in schema.replan_errors(before, after))
+
+
+def test_a_replan_cannot_drop_or_reopen_a_finished_slice():
+    before, after = _replanned()
+    after["slices"][0]["status"] = "pending"
+    assert any("S1" in e for e in schema.replan_errors(before, after))
+    del after["slices"][0]
+    assert any("S1" in e and "missing" in e for e in schema.replan_errors(before, after))
+
+
+def test_a_remedial_slice_needs_a_new_id():
+    """A reused id reuses the old branch and worktree, so the new attempt
+    starts on the failed one's commits and its HEAD has already moved."""
+    before, after = _replanned()
+    after["slices"][1]["status"] = "pending"
+    assert any("S2" in e and "new id" in e for e in schema.replan_errors(before, after))

@@ -254,7 +254,7 @@ def test_done_with_concerns_records_the_missing_evidence(run, plan):
 
 def test_force_overrides_the_checks(run, plan):
     prepare(run, "S1", commit=False, tests=False)
-    result = report.record_slice(run, "S1", "DONE", force=True)
+    result = report.record_slice(run, "S1", "DONE", force=True, reason="checked by hand")
     assert result["slice_status"] == "done"
 
 
@@ -339,6 +339,8 @@ questions:
     options:
       - label: "15-minute timer"
         detail: "Standard."
+      - label: "Next login"
+        detail: "Simpler."
     recommended: "15-minute timer"
   - id: Q2
     topic: edges
@@ -347,6 +349,8 @@ questions:
     options:
       - label: "404"
         detail: "Simple."
+      - label: "Redirect"
+        detail: "Friendlier."
     recommended: "404"
 """
 
@@ -612,3 +616,294 @@ def test_asking_for_context_a_second_time_blocks_the_slice(run, plan):
     result = report.record_slice(run, "S1", "NEEDS_CONTEXT", reason="which port?")
     assert result["slice_status"] == "blocked"
     assert "which port?" in tasks.get(tasks.load(run.tasks_path), "S1")["report"]["reason"]
+
+
+# -- ownership -------------------------------------------------------------
+#
+# "Create and edit files ONLY inside your owned paths" was validated in the
+# plan before dispatch and never looked at again afterwards.
+
+
+def _commit(path, files, message="more work"):
+    for relpath, text in files.items():
+        target = path / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    osenv.git(["add", "-A"], cwd=path, check=True)
+    osenv.git(["commit", "-qm", message], cwd=path, check=True)
+
+
+def test_done_is_rejected_when_the_slice_wrote_outside_what_it_owns(run, plan):
+    path = prepare(run, "S1")
+    _commit(path, {"src/mail/send.js": "// S2 owns this\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    assert "src/mail/send.js" in str(excinfo.value)
+    assert "outside" in str(excinfo.value)
+
+
+def test_owned_paths_and_test_files_are_inside_the_boundary(run, plan):
+    path = prepare(run, "S1")
+    _commit(path, {"src/auth/store.js": "// owned\n", "tests/helpers/fake.test.js": "// a test\n"})
+    assert report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])["slice_status"] == "done"
+
+
+def test_a_concern_does_not_excuse_writing_outside_the_boundary(run, plan):
+    """DONE_WITH_CONCERNS is the way past the evidence and TDD checks, which
+    judge how the work was done. Where it was done is not negotiable: another
+    slice is writing those paths at the same moment."""
+    path = prepare(run, "S1")
+    _commit(path, {"src/mail/send.js": "// S2 owns this\n"})
+    with pytest.raises(ReportError):
+        report.record_slice(run, "S1", "DONE_WITH_CONCERNS", concerns="touched the mailer")
+
+
+def _shared(run, git_repo):
+    """S1 may append to a registry that exists at the base commit."""
+    from tests import conftest
+
+    conftest.commit_file(git_repo, "src/registry.js", "one\ntwo\n", "registry")
+    run.state["base_commit"] = osenv.git(["rev-parse", "HEAD"], cwd=git_repo).out
+    run.save()
+    tasks.set_field(run.tasks_path, "S1", "touches_shared", ["src/registry.js"])
+    return prepare(run, "S1")
+
+
+def test_appending_to_a_shared_path_is_allowed(run, plan, git_repo):
+    path = _shared(run, git_repo)
+    _commit(path, {"src/registry.js": "one\ntwo\nthree\n"})
+    assert report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])["slice_status"] == "done"
+
+
+def test_rewriting_a_shared_path_is_rejected(run, plan, git_repo):
+    path = _shared(run, git_repo)
+    _commit(path, {"src/registry.js": "three\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    assert "src/registry.js" in str(excinfo.value)
+    assert "append-only" in str(excinfo.value)
+
+
+def test_done_is_rejected_when_another_branch_was_merged_in(run, plan):
+    path = prepare(run, "S1")
+    other = prepare(run, "S2")
+    branch = osenv.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=other).out
+    osenv.git(["merge", "--no-ff", "-qm", "pull in S2", branch], cwd=path, check=True)
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    assert "merge" in str(excinfo.value)
+
+
+# -- the declared tests are run --------------------------------------------
+#
+# `--tests "7 passed, 0 failed"` was stored as the executor wrote it. The
+# brief says not to report DONE on a red test; nothing ran one.
+
+
+def _runnable(path, slice_id, body):
+    """Make the slice's declared test a script the fixture stack can run."""
+    import sys
+
+    from goatcode import stack
+
+    _commit(path, {DECLARED_TEST[slice_id]: body}, "a real test")
+    return {"commands": {"test_one": [sys.executable, stack.PATH_TOKEN]}}
+
+
+def test_done_is_rejected_when_a_declared_test_fails(run, plan):
+    path = prepare(run, "S1")
+    profile = _runnable(path, "S1", "import sys\nprint('expected 1, got 2')\nsys.exit(1)\n")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", tests="1 passed", evidence=EVIDENCE["S1"], profile=profile)
+    assert DECLARED_TEST["S1"] in str(excinfo.value)
+    assert "expected 1, got 2" in str(excinfo.value)
+
+
+def test_done_is_accepted_when_the_declared_tests_pass(run, plan):
+    path = prepare(run, "S1")
+    profile = _runnable(path, "S1", "print('ok')\n")
+    result = report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"], profile=profile)
+    assert result["slice_status"] == "done"
+
+
+def test_a_failing_declared_test_goes_on_the_record_of_a_concern(run, plan):
+    path = prepare(run, "S1")
+    profile = _runnable(path, "S1", "import sys\nsys.exit(1)\n")
+    report.record_slice(run, "S1", "DONE_WITH_CONCERNS", concerns="flaky", profile=profile)
+    concerns = tasks.get(tasks.load(run.tasks_path), "S1")["report"]["concerns"]
+    assert DECLARED_TEST["S1"] in concerns
+
+
+def test_a_test_runner_that_is_not_installed_does_not_block(run, plan):
+    """A tool missing from this host often exists only in the project's
+    container. That is not the same as a failing test."""
+    path = prepare(run, "S1")
+    profile = {"commands": {"test_one": ["definitely-not-a-real-binary-xyz", "<path>"]}}
+    assert report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"], profile=profile)
+
+
+# -- weak tests, misplaced evidence, forced reports ------------------------
+
+
+def test_done_is_rejected_when_a_changed_test_cannot_fail(run, plan):
+    """The scan ran only at verify, after the whole wave. Thirteen of
+    twenty-one recorded cycles failed there on assertion strength, each one
+    costing a replan instead of a line of feedback to the executor."""
+    path = prepare(run, "S1")
+    _commit(path, {DECLARED_TEST["S1"]: "test('stores a token', () => {\n  store.put('a');\n});\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    message = str(excinfo.value)
+    assert "{}:1".format(DECLARED_TEST["S1"]) in message
+    assert "no assertion" in message
+    assert "DONE_WITH_CONCERNS" in message
+
+
+def test_a_weak_test_goes_on_the_record_of_a_concern(run, plan):
+    path = prepare(run, "S1")
+    _commit(path, {DECLARED_TEST["S1"]: "test('stores a token', () => {\n  store.put('a');\n});\n"})
+    report.record_slice(run, "S1", "DONE_WITH_CONCERNS", concerns="scanner misreads this", evidence=EVIDENCE["S1"])
+    concerns = tasks.get(tasks.load(run.tasks_path), "S1")["report"]["concerns"]
+    assert "no assertion" in concerns
+
+
+def test_evidence_has_to_point_at_a_test(run, plan):
+    """`src/auth/store.js:12` exists and has that many lines, and proves
+    nothing: it is the code under test."""
+    path = prepare(run, "S1")
+    _commit(path, {"src/auth/store.js": "module.exports = 1;\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence={"A1": "src/auth/store.js:1"})
+    assert "not a test file" in str(excinfo.value)
+
+
+def test_a_forced_report_needs_a_reason_and_is_marked(run, plan):
+    prepare(run, "S1", commit=False, tests=False)
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", force=True)
+    assert "--reason" in str(excinfo.value)
+
+    report.record_slice(run, "S1", "DONE", force=True, reason="the runner is broken on this host")
+    recorded = tasks.get(tasks.load(run.tasks_path), "S1")["report"]
+    assert recorded["forced"] is True
+    assert any("forced" in entry for entry in ledger.entries(run))
+
+
+# -- the synthesizer and the e2e agent are checked too ---------------------
+#
+# An executor's DONE was verified; a synthesizer's CLEAN and an e2e PASS were
+# accepted as written, and the e2e commit landed after the last gate run.
+
+
+def test_clean_is_refused_while_the_merge_is_still_in_conflict(run, plan):
+    run.state["merge"] = {
+        "status": "conflict", "worktree": "w", "merged": ["S1"], "pending": ["S2"],
+        "conflicted": "S2", "conflicts": ["src/shared.js"],
+    }
+    run.save()
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "synthesizer", "CLEAN")
+    assert "merge --continue" in str(excinfo.value)
+    assert "src/shared.js" in str(excinfo.value)
+
+
+def _verified_integration(run):
+    """An integration worktree as the verify phase leaves it: gates recorded at its tip."""
+    path, _branch = worktree.create_integration(run)
+    run.state["merge"] = {"status": "clean", "worktree": str(path), "merged": [], "pending": []}
+    run.save()
+    tip = osenv.git(["rev-parse", "HEAD"], cwd=path).out
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": [], "ref": tip})
+    return path
+
+
+def test_e2e_pass_is_accepted_when_only_a_test_was_committed(run, plan):
+    path = _verified_integration(run)
+    _commit(path, {"e2e/journey.test.js": "// end to end\n"}, "test: journey")
+    assert report.record_role(run, "e2e", "PASS", tests="1 passed")["status"] == "PASS"
+
+
+def test_e2e_pass_is_refused_when_nothing_was_committed(run, plan):
+    _verified_integration(run)
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "e2e", "PASS", tests="1 passed")
+    assert "no commit" in str(excinfo.value)
+
+
+def test_e2e_pass_is_refused_when_it_changed_production_code(run, plan):
+    """The commit lands on the verified branch after the verifier and the
+    gates have both finished, so nothing downstream would ever look at it."""
+    path = _verified_integration(run)
+    _commit(path, {"e2e/journey.test.js": "// t\n", "src/auth/store.js": "// patched to make it pass\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "e2e", "PASS", tests="1 passed")
+    assert "src/auth/store.js" in str(excinfo.value)
+
+
+def test_e2e_pass_is_refused_with_uncommitted_work(run, plan):
+    path = _verified_integration(run)
+    _commit(path, {"e2e/journey.test.js": "// t\n"})
+    (path / "e2e" / "stray.test.js").write_text("// not committed\n", encoding="utf-8")
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "e2e", "PASS", tests="1 passed")
+    assert "not clean" in str(excinfo.value)
+
+
+def test_e2e_pass_is_refused_when_the_test_gate_goes_red(run, plan):
+    import sys
+
+    path = _verified_integration(run)
+    _commit(path, {"e2e/journey.test.js": "// t\n"})
+    profile = {"commands": {"test": [sys.executable, "-c", "import sys; print('journey failed'); sys.exit(1)"]}}
+    with pytest.raises(ReportError) as excinfo:
+        report.record_role(run, "e2e", "PASS", tests="1 passed", profile=profile)
+    assert "journey failed" in str(excinfo.value)
+
+
+# -- the questions file is checked -----------------------------------------
+#
+# Only "is there a list" was checked. A `recommended` that matched no option
+# silently lost its mark, and under --yes the first option was taken instead.
+
+
+def _questions_file(run, body):
+    path = run.cycle_dir() / "questions-round-1.yaml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_a_recommendation_has_to_be_one_of_the_options(run):
+    path = _questions_file(run, QUESTIONS.replace('recommended: "404"', 'recommended: "Not found"'))
+    with pytest.raises(ReportError) as excinfo:
+        report.load_questions(path)
+    assert "Q2" in str(excinfo.value) and "Not found" in str(excinfo.value)
+
+
+def test_a_question_needs_at_least_two_options(run):
+    path = _questions_file(
+        run, QUESTIONS.replace('      - label: "Redirect"\n        detail: "Friendlier."\n', "")
+    )
+    with pytest.raises(ReportError) as excinfo:
+        report.load_questions(path)
+    assert "Q2" in str(excinfo.value) and "options" in str(excinfo.value)
+
+
+def test_question_ids_are_unique(run):
+    path = _questions_file(run, QUESTIONS.replace("id: Q2", "id: Q1"))
+    with pytest.raises(ReportError) as excinfo:
+        report.load_questions(path)
+    assert "Q1" in str(excinfo.value) and "twice" in str(excinfo.value)
+
+
+def test_the_recommended_mark_is_not_part_of_the_answer(run, questions):
+    """The ask marks the planner's pick "(Recommended)". The driver stripped
+    it before recording; the plugin's orchestrator was told to, in prose."""
+    report.record_answers(run, questions, {"Q1": "15-minute timer (Recommended)"})
+    body = run.spec_path.read_text(encoding="utf-8")
+    assert "**A:** 15-minute timer\n" in body
+
+
+def test_an_answer_to_a_question_that_was_not_asked_is_refused(run, questions):
+    with pytest.raises(ReportError) as excinfo:
+        report.record_answers(run, questions, {"Q7": "yes"})
+    assert "Q7" in str(excinfo.value)

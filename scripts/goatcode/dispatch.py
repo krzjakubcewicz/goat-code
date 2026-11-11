@@ -68,7 +68,7 @@ def write(run, name, text):
 # --------------------------------------------------------------------------
 
 
-def planner(run, round_no, forced=False, validator_errors=None, revision=None):
+def planner(run, round_no, forced=False, validator_errors=None, revision=None, questions_error=None):
     lines = []
     add = lines.append
 
@@ -99,6 +99,20 @@ def planner(run, round_no, forced=False, validator_errors=None, revision=None):
         add("Attempt {} of {}.".format(run.plan_fix_attempts + 1, run.config.get("max_plan_fix_attempts", 2)))
         add("")
         add("Return `PLAN` when the validator passes.")
+        return "\n".join(lines)
+
+    if questions_error:
+        add("## The questions you wrote cannot be put to the user")
+        add("")
+        add(questions_error)
+        add("")
+        add("Rewrite `{}` so it parses and obeys the format: unique ids, two".format(
+            questions_path(run, round_no)
+        ))
+        add("to four options each, `recommended` matching one option's `label`")
+        add("exactly. Change nothing else, then return `QUESTIONS`. If the")
+        add("questions no longer matter, delete the file, write the plan to")
+        add("`{}` and return `PLAN`.".format(run.tasks_path))
         return "\n".join(lines)
 
     if revision:
@@ -343,8 +357,11 @@ def executor(run, doc, slice_id, stack=None):
         add("")
     add("It refuses a `DONE` you have not earned: it checks your worktree is")
     add("clean, that HEAD has moved, that the test files the brief names")
-    add("exist, and that every evidence path and line really exist in your")
-    add("worktree. If it rejects you, fix what it names and run it again.")
+    add("exist and pass when it runs them, that every evidence path is a test")
+    add("file and its line exists, that your tests assert something that can")
+    add("fail, and that every file you changed is inside your owned paths")
+    add("(shared paths: appended to, never rewritten; no merge commits). If it")
+    add("rejects you, fix what it names and run it again.")
     add("")
     add("If you cannot finish, report the truth instead:")
     add("")

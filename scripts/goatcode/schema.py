@@ -560,3 +560,96 @@ def _clashing(left, right):
 
 def _nonempty_str(value):
     return isinstance(value, str) and bool(value.strip())
+
+
+# --------------------------------------------------------------------------
+# a plan nobody has executed yet
+# --------------------------------------------------------------------------
+
+#: What the pipeline writes onto a slice as it runs. A planner may copy the
+#: empty placeholders from the example; it may not fill them in.
+RECORDED_FIELDS = ("branch", "worktree", "commits", "report", "context")
+
+
+def _filled(value):
+    if isinstance(value, dict):
+        return any(_filled(v) for v in value.values())
+    return bool(value)
+
+
+def _preset_errors(item, label):
+    return [
+        "{}: '{}' is recorded by the pipeline as the slice runs; leave it out".format(label, field)
+        for field in RECORDED_FIELDS
+        if _filled(item.get(field))
+    ]
+
+
+def fresh_plan_errors(doc):
+    """What only a plan that has not started executing can get wrong.
+
+    ``validate`` sees a plan at every stage, so it accepts every status. On
+    a fresh plan that let `status: done` skip a slice's execution entirely,
+    and a `worktree:` that happened to exist skip its worktree and brief.
+    """
+    errors = []
+    for item in doc.get("slices") or []:
+        if not isinstance(item, dict):
+            continue
+        label = item.get("id") or "<unnamed>"
+        status = item.get("status", "pending")
+        if status != "pending":
+            errors.append(
+                "{}: status is {!r}; every slice of a new plan starts pending".format(label, status)
+            )
+        errors.extend(_preset_errors(item, label))
+    return errors
+
+
+def replan_errors(before, doc):
+    """A remedial plan, held against the plan it replaces.
+
+    ``before`` is the snapshot taken as the cycle advanced. The rules were
+    sentences in the replanner's instructions; the snapshot was written
+    every cycle and never read.
+    """
+    errors = []
+    if before.get("kind") != doc.get("kind") or before.get("kind_reason") != doc.get("kind_reason"):
+        errors.append(
+            "'kind' and 'kind_reason' changed; what kind of work this is does not"
+            " change because a cycle failed"
+        )
+
+    was = {s.get("id"): s for s in before.get("slices") or [] if isinstance(s, dict)}
+    now = {s.get("id"): s for s in doc.get("slices") or [] if isinstance(s, dict)}
+    for slice_id, old in was.items():
+        new = now.get(slice_id)
+        finished = old.get("status") in ("done", "carried")
+        if new is None:
+            if finished:
+                errors.append(
+                    "{}: missing; it is merged, and the verifier still checks its criteria".format(slice_id)
+                )
+            continue
+        status = new.get("status", "pending")
+        if finished and status != "carried":
+            errors.append(
+                "{}: is merged and must stay 'carried', not {!r}; fix it with a remedial"
+                " slice that owns its paths".format(slice_id, status)
+            )
+        elif not finished and status == "pending":
+            # The old branch and worktree would be reused, so the new attempt
+            # starts on the failed one's commits with HEAD already moved.
+            errors.append(
+                "{}: did not finish last cycle and cannot simply be reopened; give the"
+                " remedial slice a new id".format(slice_id)
+            )
+
+    for slice_id, new in now.items():
+        if slice_id in was:
+            continue
+        status = new.get("status", "pending")
+        if status != "pending":
+            errors.append("{}: a remedial slice starts pending, not {!r}".format(slice_id, status))
+        errors.extend(_preset_errors(new, slice_id))
+    return errors

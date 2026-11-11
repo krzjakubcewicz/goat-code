@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import classify, gates, ledger, miniyaml, osenv, tasks, tdd, workflow as workflowmod
+from . import classify, diffpkg, gates, ledger, merge, miniyaml, osenv, schema, stack as stackmod, tasks, tdd, workflow as workflowmod
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -85,15 +85,21 @@ def evidence_findings(item, evidence, worktree_path):
                 "evidence for {} is {!r}; it must be <test path>:<line>".format(cid, raw)
             )
             continue
-        problems.extend(_evidence_target(cid, match, worktree_path))
+        problems.extend(_evidence_target(cid, match, worktree_path, item))
     return problems
 
 
-def _evidence_target(cid, match, worktree_path):
+def _evidence_target(cid, match, worktree_path, item=None):
     """The named file and line have to exist in the worktree being reported."""
     target = pathlib.Path(worktree_path) / match.group("path")
     if not target.is_file():
         return ["evidence for {} names {}, which does not exist".format(cid, match.group("path"))]
+    if not tdd.is_test_path(match.group("path"), item):
+        # A line of the code under test exists and proves nothing.
+        return [
+            "evidence for {} names {}, which is not a test file; name the test"
+            " line that would fail if the behaviour were wrong".format(cid, match.group("path"))
+        ]
     # ponytail: line-exists only. Whether that line holds a real assertion is
     # the verifier's judgement, not something a script should guess at.
     total = len(osenv.read_text(target).splitlines())
@@ -148,10 +154,148 @@ def verify_done(run, doc, slice_id, status="DONE", evidence=None, profile=None):
         if not (path / relpath).exists():
             problems.append("the brief requires a test at {} and it does not exist".format(relpath))
 
+    # For both finished statuses: a concern explains how the work was done,
+    # it does not excuse where. Another slice is writing those paths now.
+    if base and head.ok:
+        problems.extend(boundary_findings(item, path, base, profile))
+
     if status == "DONE":
         problems.extend(evidence_findings(item, evidence, path))
         problems.extend(tdd_findings(run, item, path, profile))
+        weak = weak_findings(item, path)
+        if weak:
+            problems.extend(weak)
+            problems.append(
+                "the scan above is a heuristic. If it has misread a test that does"
+                " assert the behaviour, report DONE_WITH_CONCERNS and say so"
+            )
+        # Last, and only on an otherwise sound report: it is the one check
+        # here that costs real time.
+        if not problems:
+            problems.extend(test_findings(run, item, path, profile))
 
+    return problems
+
+
+def weak_findings(item, worktree_path):
+    """Assertions in this slice's changed tests that pass while the behaviour is wrong.
+
+    The same scan the verify phase runs, moved to where it is cheap to act
+    on: assertion strength is what most recorded cycles failed on, and at
+    verify it costs a replan instead of a line back to the executor that
+    still holds the context.
+    """
+    base = (item.get("commits") or {}).get("base")
+    if not base:
+        return []
+    changed = diffpkg.changed_files(worktree_path, base, "HEAD")
+    return [
+        "{}:{}: {} ({})".format(f["path"], f["line"], f["reason"], f["source"])
+        for f in gates.weak_assertions(worktree_path, changed)
+    ]
+
+
+def test_findings(run, item, worktree_path, profile=None):
+    """Run the test files the brief declares. Returns the ones that fail.
+
+    `--tests "7 passed"` is the executor's own sentence and was stored as
+    written. The stack already knows how to run one test file, so the claim
+    can be checked instead.
+    """
+    commands = (profile or {}).get("commands") or {}
+    template = commands.get("test_one")
+    if not template:
+        return []
+    # ponytail: only when commands run at the worktree root. with a
+    # project_dir one level down, the declared paths and the command's cwd
+    # disagree and a good slice would be refused; resolve the path against
+    # project_dir when a nested stack needs this check.
+    if (profile or {}).get("project_dir") or (profile or {}).get("commands_cwd"):
+        return []
+
+    problems = []
+    timeout = run.config.get("gate_timeout_seconds", 1800)
+    for entry in item.get("tests") or []:
+        relpath = entry.get("path") if isinstance(entry, dict) else entry
+        if not relpath or not (pathlib.Path(worktree_path) / relpath).exists():
+            continue
+        argv = [str(part).replace(stackmod.PATH_TOKEN, str(relpath)) for part in template]
+        try:
+            result = osenv.run(argv, cwd=worktree_path, timeout=timeout)
+        except osenv.CommandError:
+            # The runner is not on this host - it often lives only in the
+            # project's container. Not the same thing as a failing test.
+            return []
+        if result.ok or result.returncode == 124:
+            continue
+        tail = "\n".join((result.stdout + "\n" + result.stderr).strip().splitlines()[-15:])
+        problems.append(
+            "the declared test {} fails (`{}` exited {}):\n{}".format(
+                relpath, stackmod.command_text(argv), result.returncode, _indent(tail)
+            )
+        )
+    return problems
+
+
+def _indent(text):
+    return "\n".join("      " + line for line in text.splitlines())
+
+
+def boundary_findings(item, worktree_path, base, profile=None):
+    """Where the slice wrote, held against what the plan let it write.
+
+    The ownership rules were validated in the plan before dispatch and were
+    only a paragraph in the brief after it. Disjoint ownership is what makes
+    a wave safe to run in parallel, so it is checked on the commits.
+    """
+    problems = []
+    owns = [str(p) for p in item.get("owns") or []]
+    shared = [str(p) for p in item.get("touches_shared") or []]
+
+    def inside(relpath, patterns):
+        return any(schema.matches(pattern, relpath) for pattern in patterns)
+
+    changed = diffpkg.changed_files(worktree_path, base, "HEAD")
+    outside = [
+        relpath
+        for relpath in changed
+        if not inside(relpath, owns + shared) and not tdd.is_test_path(relpath, item, profile)
+    ]
+    if outside:
+        problems.append(
+            "these files are outside the paths this slice owns ({}): {}. Move the change"
+            " inside your paths, or report BLOCKED and say what you needed".format(
+                ", ".join(owns) or "none", ", ".join(outside[:8])
+            )
+        )
+
+    rewritten = []
+    for relpath in changed:
+        if inside(relpath, owns) or not inside(relpath, shared):
+            continue
+        stat = osenv.git(["diff", "--numstat", "{}..HEAD".format(base), "--", relpath], cwd=worktree_path)
+        removed = (stat.out.split() or ["0", "0"])[1]
+        if removed not in ("0", "-"):
+            rewritten.append(relpath)
+    if rewritten:
+        problems.append(
+            "shared paths are append-only, and these had lines removed or rewritten: {}".format(
+                ", ".join(rewritten)
+            )
+        )
+
+    merges = osenv.git(["rev-list", "--merges", "{}..HEAD".format(base)], cwd=worktree_path)
+    if merges.out:
+        problems.append(
+            "this branch contains a merge commit ({}); a slice never merges, rebases or"
+            " pulls in another branch".format(merges.out.split()[0][:8])
+        )
+
+    branch = osenv.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
+    if item.get("branch") and branch.ok and branch.out != item["branch"]:
+        problems.append(
+            "the worktree is on {}, not the slice's branch {}".format(branch.out, item["branch"])
+        )
     return problems
 
 
@@ -235,6 +379,10 @@ def record_slice(
         status = "BLOCKED"
         reason = "still missing context after an answer: {}".format(reason)
 
+    if force and not (reason or "").strip():
+        # Skipping every check is sometimes right and never anonymous.
+        raise ReportError("--force skips every check on this report; say why with --reason")
+
     if status in FINISHED and not force:
         problems = verify_done(run, doc, slice_id, status=status, evidence=evidence, profile=profile)
         if problems:
@@ -249,8 +397,11 @@ def record_slice(
     # hidden behind a vague concern string.
     if status == "DONE_WITH_CONCERNS" and not force and item.get("worktree"):
         worktree_path = pathlib.Path(item["worktree"])
-        late = evidence_findings(item, evidence, worktree_path) + tdd_findings(
-            run, item, worktree_path, profile
+        late = (
+            evidence_findings(item, evidence, worktree_path)
+            + tdd_findings(run, item, worktree_path, profile)
+            + weak_findings(item, worktree_path)
+            + [finding.splitlines()[0] for finding in test_findings(run, item, worktree_path, profile)]
         )
         if late:
             concerns = "; ".join([c for c in [concerns] if c] + late)
@@ -272,6 +423,9 @@ def record_slice(
             # which test proves which criterion, there to be checked.
             "evidence": dict(evidence) if evidence else None,
         }
+        if force:
+            # On the record, so the verifier can tell an unchecked DONE from a checked one.
+            target["report"]["forced"] = True
         if resolved_head:
             commits = target.setdefault("commits", {"base": None, "head": None})
             commits["head"] = resolved_head
@@ -280,7 +434,12 @@ def record_slice(
     slice_status = tasks.update(run.tasks_path, mutate)
 
     detail = tests or reason or concerns or ""
-    ledger.append(run, "slice {} {}{}".format(slice_id, status.lower(), " - " + detail if detail else ""))
+    ledger.append(
+        run,
+        "slice {} {}{}{}".format(
+            slice_id, status.lower(), " (forced, unchecked)" if force else "", " - " + detail if detail else ""
+        ),
+    )
 
     return {
         "slice": slice_id,
@@ -346,7 +505,17 @@ def reassess_classification(run, doc):
             if "spec-unreadable" not in overrides:
                 overrides.append("spec-unreadable")
             updated["deterministic_overrides"] = overrides
-    if updated["risk"] == current.get("risk"):
+    # The same floor for size. "This is small" was the cheapest model's call
+    # on the request alone, and it is what removes the verifier; a plan that
+    # needed several slices is evidence against it that nothing consulted.
+    count = len(tasks.slices(doc))
+    if count > 1 and updated.get("complexity") != "COMPLEX":
+        updated["complexity"] = "COMPLEX"
+        overrides = list(updated.get("deterministic_overrides") or [])
+        overrides.append("plan has {} slices".format(count))
+        updated["deterministic_overrides"] = overrides
+
+    if updated["risk"] == current.get("risk") and updated["complexity"] == current.get("complexity"):
         return None
 
     selected = workflowmod.select(updated)
@@ -448,7 +617,67 @@ NEEDS_DETAIL = {
 }
 
 
-def record_role(run, role, status, detail=None, tests=None):
+def role_findings(run, role, status, profile=None):
+    """Why a role agent's claim cannot stand. The counterpart of verify_done.
+
+    An executor's DONE was checked and these were taken as written, though
+    an e2e commit lands on the verified branch after the verifier and the
+    gates have both finished: nothing downstream would look at it.
+    """
+    state = merge.state_of(run)
+    if role == "synthesizer" and status == "CLEAN":
+        if state.get("status") == "conflict":
+            return [
+                "the merge of {} is still in conflict ({}); resolve it and run"
+                " `merge --continue` before reporting CLEAN".format(
+                    state.get("conflicted"), ", ".join(state.get("conflicts") or [])
+                )
+            ]
+        return []
+    if role != "e2e" or status != "PASS":
+        return []
+
+    worktree_path = pathlib.Path(state.get("worktree") or "")
+    gates_path = run.cycle_dir() / "gates.json"
+    if not state.get("worktree") or not worktree_path.exists() or not gates_path.exists():
+        return []
+    verified = (osenv.read_json(gates_path) or {}).get("ref")
+    if not verified:
+        return []
+
+    problems = []
+    tree = osenv.git(["status", "--porcelain", "--untracked-files=all"], cwd=worktree_path)
+    if tree.out:
+        problems.append(
+            "the integration worktree is not clean - commit or discard: {}".format(
+                ", ".join(line[3:] for line in tree.out.splitlines()[:5])
+            )
+        )
+    changed = diffpkg.changed_files(worktree_path, verified, "HEAD")
+    if not changed:
+        problems.append("no commit since the verified ref {}; a PASS needs the test it ran".format(verified[:8]))
+    beyond = [f for f in changed if not tdd.is_test_path(f) and not gates.is_test_path(f)]
+    if beyond:
+        problems.append(
+            "the end-to-end phase may only add tests, and these are not test files: {}."
+            " If the feature is broken, report FAILED and say how".format(", ".join(beyond[:8]))
+        )
+    if problems or not ((profile or {}).get("commands") or {}).get("test"):
+        return problems
+
+    # The suite is run once more on the new tip: the last gate run was
+    # before this commit existed.
+    rerun = gates.run_all(run, worktree_path, profile=profile, only=["test"])
+    gates.classify(rerun, gates.load_baseline(run))
+    if gates.blocking(rerun):
+        tail = (rerun["gates"]["test"].get("output_tail") or "").strip().splitlines()[-15:]
+        problems.append(
+            "the test gate fails with this commit in place:\n{}".format(_indent("\n".join(tail)))
+        )
+    return problems
+
+
+def record_role(run, role, status, detail=None, tests=None, profile=None):
     """Record a non-slice agent's outcome: the synthesizer or the e2e agent."""
     role = (role or "").strip().lower()
     status = (status or "").strip().upper()
@@ -461,6 +690,12 @@ def record_role(run, role, status, detail=None, tests=None):
         raise ReportError("{} status must be one of {}, not {!r}".format(role, ", ".join(allowed), status))
     if (role, status) in NEEDS_DETAIL and not detail:
         raise ReportError("{} {} needs --detail saying why".format(role, status))
+
+    problems = role_findings(run, role, status, profile)
+    if problems:
+        raise ReportError(
+            "cannot accept {} {}:\n  - ".format(role, status) + "\n  - ".join(problems)
+        )
 
     run.state[role] = {"status": status, "detail": detail, "tests": tests}
     run.save()
@@ -517,7 +752,53 @@ def load_questions(path):
     doc = miniyaml.load(path)
     if not isinstance(doc, dict) or not isinstance(doc.get("questions"), list):
         raise ReportError("{} must be a mapping with a 'questions' list".format(path))
+    problems = _question_problems(doc["questions"])
+    if problems:
+        raise ReportError("{} is not a usable questions file:\n  - {}".format(path, "\n  - ".join(problems)))
     return doc
+
+
+#: Appended to the planner's pick when an `ask` is shaped for the user.
+RECOMMENDED_MARK = " (Recommended)"
+
+#: `AskUserQuestion` takes at most four per call and the planner is told
+#: eight; past that it is a survey, not a grill.
+MAX_QUESTIONS = 8
+
+
+def _question_problems(questions):
+    """What makes a questions file unaskable, found before a user sees it."""
+    problems = []
+    if len(questions) > MAX_QUESTIONS:
+        problems.append("{} questions; at most {} a round".format(len(questions), MAX_QUESTIONS))
+    seen = set()
+    for index, question in enumerate(questions):
+        if not isinstance(question, dict):
+            problems.append("question {} is not a mapping".format(index + 1))
+            continue
+        qid = str(question.get("id") or "").strip()
+        label = qid or "question {}".format(index + 1)
+        if not qid:
+            problems.append("{}: needs an 'id'".format(label))
+        elif qid in seen:
+            problems.append("{}: id used twice; answers are recorded by id".format(qid))
+        seen.add(qid)
+        if not str(question.get("question") or "").strip():
+            problems.append("{}: needs the 'question' text".format(label))
+        options = [o for o in question.get("options") or [] if isinstance(o, dict)]
+        labels = [str(o.get("label") or "").strip() for o in options]
+        if not 2 <= len([l for l in labels if l]) <= 4:
+            problems.append("{}: needs two to four options, each with a 'label'".format(label))
+        recommended = str(question.get("recommended") or "").strip()
+        if recommended and recommended not in labels:
+            # Unmatched, it silently lost its mark, and an unattended run
+            # then took the first option as if it were the planner's pick.
+            problems.append(
+                "{}: 'recommended' is {!r}, which is not one of its option labels ({})".format(
+                    label, recommended, ", ".join(repr(l) for l in labels)
+                )
+            )
+    return problems
 
 
 def record_answers(run, questions_path, answers, notes=None, free_text=None):
@@ -529,6 +810,22 @@ def record_answers(run, questions_path, answers, notes=None, free_text=None):
     doc = load_questions(questions_path)
     round_no = doc.get("round", run.grill_rounds + 1)
     notes = notes or {}
+
+    known = {str(q.get("id", "?")) for q in doc["questions"] if isinstance(q, dict)}
+    stray = sorted(set(answers or {}) - known)
+    if stray:
+        # Dropped silently, the user's answer vanished and the question was
+        # recorded as skipped.
+        raise ReportError(
+            "no question {} in this round; its questions are {}".format(
+                ", ".join(stray), ", ".join(sorted(known))
+            )
+        )
+    # The ask marks the planner's pick; the mark is not part of the label.
+    answers = {
+        qid: (answer[: -len(RECOMMENDED_MARK)] if str(answer).endswith(RECOMMENDED_MARK) else answer)
+        for qid, answer in (answers or {}).items()
+    }
 
     lines = ["## Clarifications (round {})".format(round_no), ""]
     unanswered = []

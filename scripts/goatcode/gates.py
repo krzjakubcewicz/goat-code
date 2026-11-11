@@ -266,6 +266,12 @@ def blocking(report):
     return list(report.get("regressions") or [])
 
 
+def nothing_ran(report):
+    """Whether no gate produced a result: none detected, or none runnable."""
+    statuses = [gate.get("status") for gate in (report.get("gates") or {}).values()]
+    return not any(status in ("pass", "fail") for status in statuses)
+
+
 def passed(report):
     return not blocking(report)
 

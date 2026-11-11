@@ -39,6 +39,9 @@ class Evidence:
                 self.parse_error = str(exc)
             else:
                 self.validation = schema.validate(self.doc)
+                if self.validation.ok:
+                    for error in _unstarted_plan_errors(run, self.doc):
+                        self.validation.error(error)
 
         self.round = run.grill_rounds + 1
         self.questions = dispatch.questions_path(run, self.round)
@@ -115,6 +118,28 @@ class Evidence:
         return tasks.remaining(self.doc) if self.doc else []
 
 
+def _unstarted_plan_errors(run, doc):
+    """The extra rules for a plan no executor has touched yet.
+
+    Whether a plan is unstarted is read from state that already exists: in
+    cycle 1 the feature branch is named just before the first dispatch, and
+    in a later cycle `awaiting_replan` is cleared at the same point.
+    """
+    if run.cycle <= 1:
+        return [] if run.feature_branch else schema.fresh_plan_errors(doc)
+    if not run.state.get("awaiting_replan") or not tasks.ready(doc):
+        # Either execution is under way, or the replanner has not delivered:
+        # the plan on disk is still last cycle's.
+        return []
+    snapshot = run.cycle_dir(run.cycle - 1) / "tasks-snapshot.yaml"
+    if not snapshot.exists():
+        return []
+    try:
+        return schema.replan_errors(miniyaml.load(snapshot) or {}, doc)
+    except miniyaml.YamlError:
+        return []
+
+
 # --------------------------------------------------------------------------
 # phase
 # --------------------------------------------------------------------------
@@ -160,8 +185,13 @@ def derive_phase(run, evidence=None):
     if not workflowmod.wants_verifier(run.workflow):
         if evidence.merge_state.get("status") in ("clean", "empty"):
             report_path = run.cycle_dir() / "gates.json"
-            if report_path.exists():
-                blocking = gates.blocking(osenv.read_json(report_path) or {})
+            gate_report = osenv.read_json(report_path) if report_path.exists() else None
+            # Gates stand in for the verifier on a direct run. Where none
+            # ran - a repo with no detectable commands - nothing stood in for
+            # it and the run finished unchecked, so it falls through to the
+            # verifier after all.
+            if gate_report is not None and not gates.nothing_ran(gate_report):
+                blocking = gates.blocking(gate_report)
                 if blocking:
                     # No replan on a direct run: it was routed here because it
                     # was small, and grinding a cycle budget on it is the cost
@@ -484,7 +514,18 @@ def _ask(run, evidence, _stack):
     try:
         questions = report.load_questions(evidence.questions)
     except report.ReportError as exc:
-        return _action(run, "escalate", "unreadable questions file", str(exc))
+        # Back to the planner with what is wrong, the way an invalid plan
+        # goes back. This was an `escalate` that every later `next` repeated
+        # with no way out: the orchestrator may not edit a run's files.
+        text = dispatch.planner(run, evidence.round, questions_error=str(exc))
+        path = dispatch.write(run, "planner-questions-fix-{}".format(evidence.round), text)
+        return _action(
+            run,
+            "dispatch",
+            "the questions file cannot be put to the user",
+            "dispatch goat-code-planner to fix its questions",
+            dispatches=[_entry("goat-code-planner", _model(run, "planner"), path)],
+        )
 
     payload = []
     for question in questions.get("questions") or []:
@@ -496,7 +537,7 @@ def _ask(run, evidence, _stack):
                 continue
             label = str(option.get("label", "")).strip()
             if label and label == str(question.get("recommended", "")).strip():
-                label = "{} (Recommended)".format(label)
+                label = label + report.RECOMMENDED_MARK
             options.append({"label": label, "description": str(option.get("detail", ""))})
         payload.append(
             {

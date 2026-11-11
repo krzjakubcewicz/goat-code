@@ -140,7 +140,9 @@ def finish_slice(run, slice_id):
     target = path / "tests" / "{}.test.js".format(slice_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("// test\n", encoding="utf-8")
-    src = path / "src" / slice_id.lower() / "index.js"
+    # Inside the slice's own glob: a DONE that wrote anywhere else is refused.
+    owned = tasks.get(tasks.load(run.tasks_path), slice_id)["owns"][0]
+    src = path / owned.replace("**", "index.js")
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("module.exports = 1;\n", encoding="utf-8")
     osenv.git(["add", "-A"], cwd=path, check=True)
@@ -393,10 +395,12 @@ def test_ask_tells_the_orchestrator_how_to_record(run):
     assert "QID=answer" in action["ask"]["record_note"]
 
 
-def test_an_unreadable_questions_file_escalates(run):
+def test_an_unreadable_questions_file_is_sent_back_and_the_retries_are_capped(run):
     (run.cycle_dir() / "questions-round-1.yaml").write_text("nope: true\n", encoding="utf-8")
-    action = machine.next_action(run)
-    assert action["action"] == "escalate"
+    for _ in range(3):
+        action = machine.next_action(run)
+        assert action["dispatches"][0]["agent"] == "goat-code-planner"
+    assert machine.next_action(run)["action"] == "stop"
 
 
 # -- plan actions ----------------------------------------------------------
@@ -1022,11 +1026,13 @@ def test_classification_switched_off_behaves_exactly_as_before(git_repo):
 def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
     run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
     write_plan(run)
+    # Slices only finish after the branch is named; without it the plan reads as unstarted.
+    run.adopt_branch("feature/magic-link")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
-    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {"test": {"status": "pass"}}, "regressions": []})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
     finished(run)
 
@@ -1036,11 +1042,13 @@ def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
 def test_a_direct_workflow_fails_on_a_failed_end_to_end_test(run):
     run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
     write_plan(run)
+    # Slices only finish after the branch is named; without it the plan reads as unstarted.
+    run.adopt_branch("feature/magic-link")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
-    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {"test": {"status": "pass"}}, "regressions": []})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
     run.state["e2e"] = {"status": "FAILED", "detail": "boom", "tests": None}
     run.save()
@@ -1051,11 +1059,13 @@ def test_a_direct_workflow_fails_on_a_failed_end_to_end_test(run):
 def test_a_direct_workflow_fails_rather_than_replanning_on_a_red_gate(run):
     run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
     write_plan(run)
+    # Slices only finish after the branch is named; without it the plan reads as unstarted.
+    run.adopt_branch("feature/magic-link")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
-    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {"test": {"status": "fail"}}, "regressions": ["test"]})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
 
     assert machine.derive_phase(run) == "failed"
@@ -1169,6 +1179,8 @@ def test_an_escalation_is_not_lost_when_the_run_would_otherwise_be_done(run, git
         item["status"] = "done"
     doc["slices"][0]["owns"] = ["src/auth/**"]
     write_plan(run, doc)
+    # Slices only finish after the branch is named; without it the plan reads as unstarted.
+    run.adopt_branch("feature/magic-link")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.state["scribe"] = {"status": "WRITTEN"}
     run.save()
@@ -1476,3 +1488,109 @@ def test_a_dispatch_in_between_clears_the_repeat_count(run):
         tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
     assert machine.next_action(run)["action"] == "dispatch"
     assert "repeated_run" not in Run.load(run.repo, run.run_id).state
+
+
+# -- a plan is checked once more before anything executes ---------------------
+
+
+def test_a_fresh_plan_with_a_finished_slice_goes_back_to_the_planner(run):
+    doc = copy.deepcopy(PLAN)
+    doc["slices"][0]["status"] = "done"
+    write_plan(run, doc)
+    assert machine.derive_phase(run) == "plan"
+    action = machine.next_action(run)
+    assert "pending" in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+
+
+def test_statuses_move_freely_once_execution_has_started(run):
+    write_plan(run)
+    approved(run)
+    tasks.set_status(run.tasks_path, "S1", "done")
+    assert machine.derive_phase(run) != "plan"
+
+
+def test_a_replan_that_reopens_a_failed_slice_goes_back(run):
+    write_plan(run)
+    approved(run)
+    tasks.set_status(run.tasks_path, "S1", "done")
+    tasks.set_status(run.tasks_path, "S2", "failed")
+    tasks.set_status(run.tasks_path, "S3", "failed")
+    miniyaml.dump(tasks.load(run.tasks_path), run.cycle_dir() / "tasks-snapshot.yaml")
+    run.advance_cycle()
+    run.state["awaiting_replan"] = True
+    run.save()
+    tasks.set_status(run.tasks_path, "S1", "carried")
+    tasks.set_status(run.tasks_path, "S2", "pending")
+
+    assert machine.derive_phase(run) == "plan"
+    action = machine.next_action(run)
+    assert "new id" in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+
+
+def test_a_broken_questions_file_goes_back_to_the_planner(run):
+    """It used to be an `escalate` that every later `next` repeated, with no
+    sanctioned way out: the orchestrator may not edit a run's files."""
+    broken = QUESTIONS.replace('recommended: "15-minute timer"', 'recommended: "Something else"')
+    machine.dispatch.questions_path(run, 1).write_text(broken, encoding="utf-8")
+
+    action = machine.next_action(run)
+    assert action["action"] == "dispatch"
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "Something else" in prompt
+    assert str(machine.dispatch.questions_path(run, 1)) in prompt
+
+
+# -- the direct path has a floor ---------------------------------------------
+#
+# The cheapest model's call that a task is small is what removes the verifier.
+# Nothing held that call against the plan it led to, and a direct run in a
+# repo with no detectable gate commands finished with nothing checked at all.
+
+
+def _direct(run, slices):
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []}, "DIRECT_DEVELOPMENT"
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["slices"] = [s for s in doc["slices"] if s["id"] in slices]
+    for item in doc["slices"]:
+        item["depends_on"] = []
+        item["owns"] = ["src/{}/**".format(item["id"].lower())]
+    write_plan(run, doc)
+
+
+def test_a_plan_with_several_slices_leaves_the_direct_path(run):
+    _direct(run, ("S1", "S2"))
+    machine.next_action(run)
+    reloaded = Run.load(run.repo, run.run_id)
+    assert reloaded.workflow == "PLANNED_DEVELOPMENT"
+    assert reloaded.classification["complexity"] == "COMPLEX"
+    assert any("2 slices" in entry for entry in ledger.entries(run))
+
+
+def test_a_one_slice_plan_stays_direct(run):
+    _direct(run, ("S1",))
+    machine.next_action(run)
+    assert Run.load(run.repo, run.run_id).workflow == "DIRECT_DEVELOPMENT"
+
+
+def _direct_and_merged(run, gate_report):
+    _direct(run, ("S1",))
+    run.adopt_branch("feature/magic-link")
+    tasks.set_status(run.tasks_path, "S1", "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1"], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", gate_report)
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+    finished(run)
+
+
+def test_a_direct_run_with_no_gates_at_all_gets_the_verifier(run):
+    _direct_and_merged(run, {"gates": {"test": {"status": "missing"}}, "regressions": []})
+    assert machine.derive_phase(run) == "verify"
+
+
+def test_a_direct_run_with_a_gate_that_ran_is_judged_by_it(run):
+    _direct_and_merged(run, {"gates": {"test": {"status": "pass"}, "lint": {"status": "missing"}}, "regressions": []})
+    assert machine.derive_phase(run) == "done"

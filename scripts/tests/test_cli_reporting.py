@@ -139,6 +139,8 @@ QUESTION_FILE = "\n".join(
         "    options:",
         '      - label: "15-minute timer"',
         '        detail: "Standard."',
+        '      - label: "Next login"',
+        '        detail: "Simpler."',
         '    recommended: "15-minute timer"',
         "",
     ]

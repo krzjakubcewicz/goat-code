@@ -933,7 +933,8 @@ def cmd_report(args):
     try:
         if args.role:
             result = reportmod.record_role(
-                run, args.role, args.status, detail=args.detail, tests=args.tests
+                run, args.role, args.status, detail=args.detail, tests=args.tests,
+                profile=load_stack(run),
             )
             text = "{} {}".format(args.role, result["status"].lower())
             if result.get("verdict"):
@@ -1428,7 +1429,7 @@ def build_parser():
         metavar="AID=PATH:LINE",
         help="the test line proving one acceptance criterion; repeat for each (required for DONE)",
     )
-    p.add_argument("--force", action="store_true", help="skip the DONE checks (use only with a reason)")
+    p.add_argument("--force", action="store_true", help="skip the DONE checks; requires --reason, and is marked on the report")
     p.set_defaults(func=cmd_report)
 
     p = add(sub, "classify", help="record how this run was sized, and route it")
