@@ -51,6 +51,7 @@ guessed from where you happen to be standing.
 | `progress promote "<rule>"` | promote a learning that has now recurred into a standing constraint every future plan carries |
 | `init --prompt "..."` / `init --spec FILE` | preflight, run dir, stack detection, baseline gates |
 | `init --base BRANCH` | answer the base-branch question, and record it for every later run |
+| `init --clone URL --spec FILE` | sandboxed run: shallow-clone into `./repo` of an empty directory; worktrees go to `./goatcode/<hash>/`, temp files to `./tmp/` |
 | `classify --file F` / `classify --fallback "why"` | record how a run was sized, and route it |
 | `plan validate` / `plan show` / `plan waves` | gate and inspect tasks.yaml |
 | `wave next` | slice ids dispatchable right now, capped at the parallel limit |

@@ -36,6 +36,11 @@
 # the run rather than falling back to PATH, which would hide the mistake.
 dir=${GOATCODE_REPO:-$PWD}
 while [ -n "$dir" ] && [ ! -f "$dir/.goatcode/config.yaml" ]; do
+  # A sandboxed run keeps its clone one level down from where the session stands.
+  if [ -f "$dir/repo/.goatcode/config.yaml" ]; then
+    dir=$dir/repo
+    break
+  fi
   parent=$(dirname "$dir")
   [ "$parent" = "$dir" ] && dir= || dir=$parent
 done

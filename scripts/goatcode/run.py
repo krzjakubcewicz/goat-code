@@ -80,6 +80,10 @@ DEFAULT_CONFIG = {
     # The change is left uncommitted for you to review. Turn off to rely on
     # .git/info/exclude alone, which goat-code always writes either way.
     "manage_gitignore": True,
+    # Set by `init --clone`, not by hand. The repository is a throwaway clone
+    # inside a sandbox directory, and the run's worktrees and temp files go
+    # in that directory instead of the system temp dir.
+    "sandbox": False,
     # Reject a DONE whose git history shows implementation landing before any
     # test. Off leaves TDD as instruction only.
     "enforce_tdd": True,

@@ -48,6 +48,10 @@ def find_repo(cwd):
     for candidate in [here] + list(here.parents):
         if (candidate / ".goatcode" / "runs").is_dir():
             return candidate
+        # A sandboxed run: the session stands in the sandbox and the clone
+        # holding the run is one level down.
+        if (candidate / "repo" / ".goatcode" / "runs").is_dir():
+            return candidate / "repo"
     return None
 
 

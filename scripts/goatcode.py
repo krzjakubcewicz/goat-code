@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 
@@ -101,10 +102,95 @@ def resolve_repo(args):
     linked worktree, and every command they issue must still reach the run
     state in the main repository.
     """
-    root = osenv.main_repo_root(getattr(args, "repo", None) or pathlib.Path.cwd())
+    start = pathlib.Path(getattr(args, "repo", None) or pathlib.Path.cwd())
+    # Asked before git is: a sandbox made inside some other checkout would
+    # otherwise resolve to that checkout, and the session stands in the
+    # sandbox, one level above the clone it is driving.
+    if (start / SANDBOX_REPO / runmod.GOATCODE_DIR).is_dir():
+        start = start / SANDBOX_REPO
+    root = osenv.main_repo_root(start)
     if root is None:
         raise CliError("not inside a git repository (run 'git init' first)")
+    _enter_sandbox(root)
     return root
+
+
+#: The clone's directory name inside a sandbox. Fixed, because every later
+#: command has to find the repository from the sandbox with nothing to go on.
+SANDBOX_REPO = "repo"
+
+
+def _enter_sandbox(repo):
+    """Keep a sandboxed run's worktrees and temp files next to its clone.
+
+    Set on ``os.environ`` rather than threaded through as arguments because
+    ``osenv`` already hands the environment to every subprocess - gates,
+    dependency installs, headless agents - and ``osenv.temp_root`` already
+    honours ``GOATCODE_TEMP_ROOT``. Re-derived on every invocation from the
+    config, since nothing else survives from one command to the next.
+    """
+    try:
+        sandboxed = runmod.load_config(repo).get("sandbox")
+    except (RunError, miniyaml.YamlError):
+        # A broken config is reported by whichever command needs it.
+        return
+    if not sandboxed:
+        return
+    sandbox = pathlib.Path(repo).parent
+    tmp = sandbox / "tmp"
+    tmp.mkdir(exist_ok=True)
+    os.environ["GOATCODE_TEMP_ROOT"] = str(sandbox)
+    for name in ("TEMP", "TMP", "TMPDIR"):
+        os.environ[name] = str(tmp)
+
+
+def _clone_sandbox(args):
+    """Shallow-clone ``args.clone`` into ``./repo`` and mark it a sandbox.
+
+    Returns the clone's path. Depth 1 because a run only ever forks from the
+    tip it was given; history is download time and disk for nothing.
+    """
+    sandbox = pathlib.Path.cwd()
+    spec = pathlib.Path(args.spec).resolve() if args.spec else None
+    # Before the clone, not after: a typo in the spec path should not cost a
+    # download and leave a directory that is no longer empty.
+    if spec is not None and not spec.exists():
+        raise CliError("no spec file at {}".format(args.spec))
+    if spec is None and not args.prompt:
+        raise CliError('pass --prompt "..." or --spec <file>')
+
+    strays = sorted(
+        entry.name
+        for entry in sandbox.iterdir()
+        if not entry.name.startswith(".") and entry.resolve() != spec
+    )
+    if strays and not args.force:
+        raise CliError(
+            "--clone wants an empty directory, and this one holds: {}{}\n"
+            "Start from an empty one, or pass --force.".format(
+                ", ".join(strays[:5]), "" if len(strays) <= 5 else " (+{} more)".format(len(strays) - 5)
+            )
+        )
+
+    repo = sandbox / SANDBOX_REPO
+    argv = ["clone", "--depth", "1"]
+    if args.base:
+        argv += ["--branch", args.base]
+    result = osenv.git(argv + [args.clone, str(repo)], cwd=sandbox)
+    if not result.ok:
+        raise CliError("could not clone {}: {}".format(args.clone, result.stderr.strip()))
+
+    # manage_gitignore off: the clone exists only for this run, and an
+    # uncommitted .gitignore edit in it is noise in the one tree the user
+    # will push from. .git/info/exclude hides .goatcode/ either way.
+    osenv.write_text(
+        runmod.goatcode_dir(repo) / "config.yaml",
+        "# written by `init --clone`: worktrees and temp files stay in the parent directory\n"
+        "sandbox: true\n"
+        "manage_gitignore: false\n",
+    )
+    _enter_sandbox(repo)
+    return repo
 
 
 def resolve_run(args, repo=None):
@@ -241,6 +327,11 @@ def _pin_base_branch(args, repo):
 
 
 def cmd_init(args):
+    if getattr(args, "clone", None):
+        args.repo = str(_clone_sandbox(args))
+        # `run` calls init a second time after a base-branch question; the
+        # clone is already there by then.
+        args.clone = None
     repo, problems = runmod.preflight(getattr(args, "repo", None))
     if repo is None:
         raise CliError(problems[0])
@@ -1184,6 +1275,9 @@ def cmd_finish(args):
         "branch: {}".format(run.integration_branch),
         "review: {}".format(payload["review_command"]),
         "merge:  git merge {}".format(run.integration_branch),
+    ]
+    lines += machinemod.push_hint(run)
+    lines += [
         "",
         "nothing was committed to your branch {}".format(run.state["base_branch"]),
     ]
@@ -1275,6 +1369,11 @@ def build_parser():
     p.add_argument("--spec", help="path to a markdown spec file")
     p.add_argument("--base", help="the branch every run forks from; recorded for later runs")
     p.add_argument(
+        "--clone",
+        metavar="URL",
+        help="shallow-clone URL into ./repo first and keep worktrees and temp files in this directory",
+    )
+    p.add_argument(
         "--kind",
         choices=runmod.KINDS,
         help="override the planner's classification; a bugfix skips the end-to-end phase",
@@ -1287,6 +1386,11 @@ def build_parser():
     p.add_argument("--prompt", help="feature request, for chat mode")
     p.add_argument("--spec", help="path to a markdown spec file")
     p.add_argument("--base", help="the branch every run forks from; recorded for later runs")
+    p.add_argument(
+        "--clone",
+        metavar="URL",
+        help="shallow-clone URL into ./repo first and keep worktrees and temp files in this directory",
+    )
     p.add_argument("--resume", action="store_true", help="continue the existing run instead of starting one")
     p.add_argument("--yes", action="store_true", help="take every recommended answer and approve the plan")
     p.add_argument(

@@ -52,6 +52,11 @@ Everything below applies unchanged to both.
   file if absent. The `.gitignore` change is left uncommitted for you to
   review; goat-code does not commit to your branch. Preflight recognises its
   own block, so a later run is not blocked by it.
+- With `--clone <url>`, all of the above happens to a clone it makes first:
+  `git clone --depth 1` into `./repo` of the empty directory it was started
+  in, marked `sandbox: true` in its config. From then on every command
+  re-reads that mark and points worktrees and `TEMP`/`TMP`/`TMPDIR` at the
+  directory, so the run leaves nothing outside it.
 - Prunes orphan worktrees left by an earlier crashed run.
 - Creates `.goatcode/runs/<run-id>/` and records the base commit and branch.
 - Detects the stack into `stack.json`.
