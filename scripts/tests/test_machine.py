@@ -1032,7 +1032,7 @@ def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
-    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {"test": {"status": "pass"}}, "regressions": []})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
     finished(run)
 
@@ -1048,7 +1048,7 @@ def test_a_direct_workflow_fails_on_a_failed_end_to_end_test(run):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
-    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {"test": {"status": "pass"}}, "regressions": []})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
     run.state["e2e"] = {"status": "FAILED", "detail": "boom", "tests": None}
     run.save()
@@ -1065,7 +1065,7 @@ def test_a_direct_workflow_fails_rather_than_replanning_on_a_red_gate(run):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
-    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {"test": {"status": "fail"}}, "regressions": ["test"]})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
 
     assert machine.derive_phase(run) == "failed"
@@ -1539,3 +1539,58 @@ def test_a_broken_questions_file_goes_back_to_the_planner(run):
     prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
     assert "Something else" in prompt
     assert str(machine.dispatch.questions_path(run, 1)) in prompt
+
+
+# -- the direct path has a floor ---------------------------------------------
+#
+# The cheapest model's call that a task is small is what removes the verifier.
+# Nothing held that call against the plan it led to, and a direct run in a
+# repo with no detectable gate commands finished with nothing checked at all.
+
+
+def _direct(run, slices):
+    run.set_classification(
+        {"complexity": "SIMPLE", "risk": "LOW", "deterministic_overrides": []}, "DIRECT_DEVELOPMENT"
+    )
+    doc = copy.deepcopy(PLAN)
+    doc["slices"] = [s for s in doc["slices"] if s["id"] in slices]
+    for item in doc["slices"]:
+        item["depends_on"] = []
+        item["owns"] = ["src/{}/**".format(item["id"].lower())]
+    write_plan(run, doc)
+
+
+def test_a_plan_with_several_slices_leaves_the_direct_path(run):
+    _direct(run, ("S1", "S2"))
+    machine.next_action(run)
+    reloaded = Run.load(run.repo, run.run_id)
+    assert reloaded.workflow == "PLANNED_DEVELOPMENT"
+    assert reloaded.classification["complexity"] == "COMPLEX"
+    assert any("2 slices" in entry for entry in ledger.entries(run))
+
+
+def test_a_one_slice_plan_stays_direct(run):
+    _direct(run, ("S1",))
+    machine.next_action(run)
+    assert Run.load(run.repo, run.run_id).workflow == "DIRECT_DEVELOPMENT"
+
+
+def _direct_and_merged(run, gate_report):
+    _direct(run, ("S1",))
+    run.adopt_branch("feature/magic-link")
+    tasks.set_status(run.tasks_path, "S1", "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1"], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", gate_report)
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+    finished(run)
+
+
+def test_a_direct_run_with_no_gates_at_all_gets_the_verifier(run):
+    _direct_and_merged(run, {"gates": {"test": {"status": "missing"}}, "regressions": []})
+    assert machine.derive_phase(run) == "verify"
+
+
+def test_a_direct_run_with_a_gate_that_ran_is_judged_by_it(run):
+    _direct_and_merged(run, {"gates": {"test": {"status": "pass"}, "lint": {"status": "missing"}}, "regressions": []})
+    assert machine.derive_phase(run) == "done"

@@ -89,6 +89,14 @@ gate, and a red gate fails it rather than opening a replan cycle.
 `DIRECT_DEVELOPMENT` needs **LOW** risk specifically: `MEDIUM` or above
 always earns at least `PLANNED_DEVELOPMENT`.
 
+The direct path has two floors, both raise-only. "This is small" is the
+classifier's call on the request alone, so once a plan exists it is held
+against it: a plan with more than one slice is `COMPLEX`, which moves the
+run to `PLANNED_DEVELOPMENT`. And the gates are what stand in for the
+verifier on a direct run, so a direct run where no gate produced a result -
+a repo with no detectable build, lint or test command - is sent to the
+verifier instead of finishing unchecked.
+
 Invalid JSON, an unknown enum, a timeout or no answer at all all take the
 same conservative fallback: `NORMAL`/`MEDIUM`, which routes to
 `PLANNED_DEVELOPMENT` rather than the cheap path. The deterministic rules

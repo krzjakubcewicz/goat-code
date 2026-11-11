@@ -505,7 +505,17 @@ def reassess_classification(run, doc):
             if "spec-unreadable" not in overrides:
                 overrides.append("spec-unreadable")
             updated["deterministic_overrides"] = overrides
-    if updated["risk"] == current.get("risk"):
+    # The same floor for size. "This is small" was the cheapest model's call
+    # on the request alone, and it is what removes the verifier; a plan that
+    # needed several slices is evidence against it that nothing consulted.
+    count = len(tasks.slices(doc))
+    if count > 1 and updated.get("complexity") != "COMPLEX":
+        updated["complexity"] = "COMPLEX"
+        overrides = list(updated.get("deterministic_overrides") or [])
+        overrides.append("plan has {} slices".format(count))
+        updated["deterministic_overrides"] = overrides
+
+    if updated["risk"] == current.get("risk") and updated["complexity"] == current.get("complexity"):
         return None
 
     selected = workflowmod.select(updated)

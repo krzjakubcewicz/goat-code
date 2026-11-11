@@ -185,8 +185,13 @@ def derive_phase(run, evidence=None):
     if not workflowmod.wants_verifier(run.workflow):
         if evidence.merge_state.get("status") in ("clean", "empty"):
             report_path = run.cycle_dir() / "gates.json"
-            if report_path.exists():
-                blocking = gates.blocking(osenv.read_json(report_path) or {})
+            gate_report = osenv.read_json(report_path) if report_path.exists() else None
+            # Gates stand in for the verifier on a direct run. Where none
+            # ran - a repo with no detectable commands - nothing stood in for
+            # it and the run finished unchecked, so it falls through to the
+            # verifier after all.
+            if gate_report is not None and not gates.nothing_ran(gate_report):
+                blocking = gates.blocking(gate_report)
                 if blocking:
                     # No replan on a direct run: it was routed here because it
                     # was small, and grinding a cycle budget on it is the cost
