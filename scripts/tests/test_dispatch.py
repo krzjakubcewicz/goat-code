@@ -490,3 +490,102 @@ def test_a_retried_slice_is_told_why_the_last_attempt_stopped(run, plan):
 
 def test_a_first_attempt_has_no_retry_section(run, plan):
     assert "last attempt" not in dispatch.executor(run, plan, "S1")
+
+
+# -- what the other agents were missing --------------------------------------
+
+
+def test_the_verifier_is_given_the_criteria_not_a_count_of_them(run):
+    """Its table is now checked row by row against the plan, so the rows it
+    owes are spelled out rather than left for it to dig out of tasks.yaml."""
+    text = dispatch.verifier(run, package_for(run))
+    assert "| S1 | A1 |" in text and "| S2 | A1 |" in text
+    assert "one row" in text
+
+
+def test_the_verifier_sees_what_executors_flagged(run):
+    """A DONE_WITH_CONCERNS, or a DONE forced past its checks, was recorded
+    and then shown to nobody who judges the run."""
+    package = package_for(run)
+    package["concerns"] = [
+        {"slice": "S2", "concerns": "tests were written after the implementation", "forced": False},
+        {"slice": "S1", "concerns": None, "forced": True},
+    ]
+    text = dispatch.verifier(run, package)
+    assert "tests were written after the implementation" in text
+    assert "S1" in text and "unchecked" in text
+
+
+def test_the_verifier_sees_refused_writes_outside_the_repository(run):
+    """The docs said the verifier is shown guard.jsonl. The payload had it;
+    the prompt never did."""
+    package = package_for(run)
+    package["guard_violations"] = [{"tool": "Write", "path": "/etc/hosts", "reason": "outside the repository"}]
+    text = dispatch.verifier(run, package)
+    assert "/etc/hosts" in text
+
+
+def test_a_clean_verifier_prompt_has_neither_section(run):
+    text = dispatch.verifier(run, package_for(run))
+    assert "flagged" not in text and "outside the repository" not in text
+
+
+def test_the_synthesizer_is_told_what_each_side_was_for(run, plan):
+    """It was told to keep both slices' intent and given neither."""
+    state = {"worktree": "w", "merged": ["S1"], "pending": ["S2"], "conflicted": "S2", "conflicts": ["a"]}
+    text = dispatch.synthesizer(run, plan, state)
+    assert "Persist single-use tokens." in text
+    assert "Send the link." in text
+
+
+def test_the_e2e_agent_is_given_the_published_entry_points(run, plan):
+    """Told not to read the diff, and given nothing else to find the way in."""
+    package = {"worktree": "w", "criteria": []}
+    text = dispatch.e2e(run, plan, package)
+    assert "createToken(email): Token" in text
+
+
+def test_the_classifier_is_told_what_calling_it_small_costs(run):
+    """It was told an inflated risk costs the run a slower pipeline, and not
+    that a deflated one costs it the verifier."""
+    text = dispatch.classifier(run)
+    assert "verifier" in text
+    assert "buys nothing" not in text
+
+
+def _failed_cycle(run, cycle, rows):
+    body = "| Slice | ID | Criterion | Verdict | Evidence |\n| --- | --- | --- | --- | --- |\n"
+    body += "".join("| {} | {} | text | {} | {} |\n".format(*row) for row in rows)
+    osenv.write_text(run.cycle_dir(cycle) / "verdict.md", body + "\nVERDICT: FAIL\n")
+
+
+def test_the_replanner_is_given_the_request_and_the_history(run, plan):
+    """It diagnosed a failed cycle without the spec, the standing rules, the
+    merge report, or any verdict older than the last."""
+    _failed_cycle(run, 1, [("S2", "A1", "❌", "no duplicate-request test")])
+    run.advance_cycle()
+    _failed_cycle(run, 2, [("S2", "A1", "❌", "asserts count >= 1")])
+    run.advance_cycle()
+    text = dispatch.replanner(run, 2)
+    assert str(run.spec_path) in text
+    assert str(run.cycle_dir(2) / "merge-report.md") in text
+    assert str(run.cycle_dir(1) / "verdict.md") in text
+
+
+def test_the_replanner_is_told_when_the_same_criterion_failed_twice(run, plan):
+    _failed_cycle(run, 1, [("S2", "A1", "❌", "no duplicate-request test")])
+    run.advance_cycle()
+    _failed_cycle(run, 2, [("S2", "A1", "❌", "asserts count >= 1"), ("S1", "A1", "❌", "new")])
+    run.advance_cycle()
+    text = dispatch.replanner(run, 2)
+    repeated = text.split("failed in the cycle before as well")[1]
+    assert "S2/A1" in repeated and "S1/A1" not in repeated.split("\n\n")[1]
+
+
+def test_remedial_slices_go_to_the_stronger_executor(run, plan):
+    """The replanner was told to use haiku for remedies: the tier that had
+    just under-delivered."""
+    _failed_cycle(run, 1, [("S2", "A1", "❌", "x")])
+    run.advance_cycle()
+    text = dispatch.replanner(run, 1)
+    assert "model: {}".format(run.config["models"]["executor_escalated"]) in text

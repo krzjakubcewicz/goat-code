@@ -1594,3 +1594,18 @@ def test_a_direct_run_with_no_gates_at_all_gets_the_verifier(run):
 def test_a_direct_run_with_a_gate_that_ran_is_judged_by_it(run):
     _direct_and_merged(run, {"gates": {"test": {"status": "pass"}, "lint": {"status": "missing"}}, "regressions": []})
     assert machine.derive_phase(run) == "done"
+
+
+def test_the_verifier_dispatch_carries_what_executors_flagged(run):
+    _verify_ready(run)
+    tasks.set_field(
+        run.tasks_path, "S2", "report",
+        {"status": "DONE_WITH_CONCERNS", "concerns": "the mailer test was written afterwards"},
+    )
+    (run.root / "guard.jsonl").write_text(
+        '{"tool": "Write", "path": "/etc/hosts", "reason": "outside the repository"}\n', encoding="utf-8"
+    )
+    action = machine.next_action(run)
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "the mailer test was written afterwards" in prompt
+    assert "/etc/hosts" in prompt
