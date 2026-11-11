@@ -1369,3 +1369,48 @@ def test_the_answer_reaches_the_executor_through_its_prompt(run):
     prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
     assert "which TTL should a token have?" in prompt
     assert "15 minutes, same as the session cookie" in prompt
+
+
+# -- a command that keeps coming back ----------------------------------------
+
+
+def test_a_run_action_that_changes_nothing_stops_the_run(run):
+    """`worktree create`, `merge` and `branch` exit 1 on their own errors,
+    which both front-ends treat as an answer. Nothing on disk changes, the
+    same command comes back, and no dispatch is involved, so neither the
+    dispatch cap nor the driver's dead-round guard ever saw it."""
+    write_plan(run)
+    approved(run, branched=False)
+    for _ in range(3):
+        action = machine.next_action(run)
+        assert action["action"] == "run" and "branch" in action["commands"][0]
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert action["outcome"] == "failed"
+    assert "branch" in action["reason"]
+
+
+def test_a_run_action_between_other_actions_is_not_a_repeat(run):
+    """Only the same command, back to back, means nothing moved."""
+    write_plan(run)
+    approved(run, branched=False)
+    for _ in range(2):
+        machine.next_action(run)
+    run.adopt_branch("feature/magic-link")
+    assert machine.next_action(run)["action"] == "run"  # worktrees, a different command
+    assert run.state["repeated_run"]["count"] == 1
+
+
+def test_a_dispatch_in_between_clears_the_repeat_count(run):
+    write_plan(run)
+    approved(run, branched=False)
+    machine.next_action(run)
+    assert run.state["repeated_run"]["count"] == 1
+    run.adopt_branch("feature/magic-link")
+    for slice_id in ("S1", "S2"):
+        path = run.root / "wt-{}".format(slice_id)
+        path.mkdir()
+        tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
+    assert machine.next_action(run)["action"] == "dispatch"
+    assert "repeated_run" not in Run.load(run.repo, run.run_id).state

@@ -318,6 +318,12 @@ stronger model each count as a fresh attempt. Past the cap:
 Each `next` call that returns a dispatch counts as one attempt, whether or
 not the dispatch is then performed.
 
+The same cap covers a `run` action. `worktree create`, `merge` and `branch`
+exit 1 on their own errors, and both front-ends take 1 as an answer, so a
+command that fails without changing anything is returned again. When the
+same commands come back more than `max_dispatch_attempts` times with no
+other action in between, the run stops as `failed` and names them.
+
 ## Resuming
 
 Just run `next`. The phase is derived from what is on disk, so it is correct

@@ -228,6 +228,10 @@ def next_action(run, stack_profile=None):
         return _log_action(run, _stop(run, evidence))
 
     action = handler(run, evidence, stack_profile)
+    if action["action"] == "run":
+        return _log_action(run, _unless_stuck(run, evidence, action))
+    if run.state.pop("repeated_run", None):
+        run.save()
     spent = [entry for entry in action.get("dispatches") or [] if _spent(run, entry)]
     if spent:
         return _give_up_on(run, evidence, spent, stack_profile)
@@ -263,6 +267,33 @@ def _dispatch_cap(run):
 
 def _spent(run, entry):
     return run.dispatch_attempts(_dispatch_key(run, entry)) >= _dispatch_cap(run)
+
+
+def _unless_stuck(run, evidence, action):
+    """Stop when the same commands come back with nothing in between.
+
+    `worktree create`, `merge` and `branch` exit 1 on their own errors, and
+    1 is an answer to both front-ends. The disk is unchanged, so the same
+    `run` action returned, and since no agent was involved neither the
+    dispatch cap nor the driver's dead-round guard could see it. Only back
+    to back counts: the same command after anything else is progress.
+    """
+    commands = [[str(part) for part in command] for command in action.get("commands") or []]
+    last = run.state.get("repeated_run") or {}
+    count = last.get("count", 0) + 1 if last.get("commands") == commands else 1
+    run.state["repeated_run"] = {"commands": commands, "count": count}
+    run.save()
+    if count <= _dispatch_cap(run):
+        return action
+    # The subcommand and its arguments, without the interpreter, script path
+    # and the --repo/--run pins every command carries.
+    shown = "; ".join(" ".join(command[6:]) for command in commands)
+    return _stop(
+        run,
+        evidence,
+        outcome="failed",
+        reason="`{}` was run {} times in a row and the run did not move".format(shown, count - 1),
+    )
 
 
 def _give_up_on(run, evidence, spent, stack_profile):
