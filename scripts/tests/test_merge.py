@@ -255,6 +255,29 @@ def test_clean_report_lists_what_landed(run, plan):
     assert "Auth" in text and "Mail" in text and "Route" in text
 
 
+def test_rewriting_the_report_keeps_the_synthesizer_justifications(run, plan):
+    """The report is rewritten on every conflict and on the final clean
+    merge. Each rewrite used to reset the table to `_none_`, so whatever the
+    synthesizer listed before its last `merge --continue` never reached the
+    verifier, who treats an unlisted edit as a scope violation."""
+    work_in(run, "S1", {"src/auth/token.ts": "auth\n"})
+    work_in(run, "S2", {"src/mail/send.ts": "mail\n"})
+    work_in(run, "S3", {"src/routes/login.ts": "route\n"})
+    merge.run_merge(run, plan)
+
+    target = run.cycle_dir() / "merge-report.md"
+    row = "| src/index.ts | re-export createToken | S3 imports it from the package root |"
+    target.write_text(
+        target.read_text(encoding="utf-8").replace("| _none_ | | |", row), encoding="utf-8"
+    )
+
+    merge.write_report(run, plan)
+    text = target.read_text(encoding="utf-8")
+    assert row in text
+    assert "_none_" not in text
+    assert text.count(row) == 1
+
+
 def test_integration_head_is_reported(run, plan):
     work_in(run, "S1", {"src/auth/token.ts": "auth\n"})
     tasks.set_status(run.tasks_path, "S2", "pending")
