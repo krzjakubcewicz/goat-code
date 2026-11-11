@@ -115,6 +115,11 @@ def planner(run, round_no, forced=False, validator_errors=None, revision=None):
         add("**This is the final round. You must return `PLAN`.** Record anything")
         add("still unresolved in the plan's `assumptions:` list with the value you")
         add("chose, rather than asking about it.")
+        add("")
+        # No questions block: this prompt used to demand a plan and then
+        # explain, path included, how to ask instead. The machine no longer
+        # reads a questions file at this point either.
+        return "\n".join(lines + _ready_to_plan(run, "### Write the plan"))
     else:
         add("Grill first. If anything material is ambiguous, return `QUESTIONS`;")
         add("otherwise write the plan and return `PLAN`. Rounds used so far: {} of {}.".format(
@@ -150,14 +155,19 @@ def planner(run, round_no, forced=False, validator_errors=None, revision=None):
     add("`recommended` must match one option's `label` exactly. Two to four")
     add("options per question.")
     add("")
-    add("### If you are ready to plan")
-    add("")
-    add("Write the plan to `{}` and return the single line `PLAN`.".format(run.tasks_path))
-    add("")
-    add("Check it yourself first:")
-    add("")
-    add("    {}".format(command(run, "plan", "validate")))
-    return "\n".join(lines)
+    return "\n".join(lines + _ready_to_plan(run, "### If you are ready to plan"))
+
+
+def _ready_to_plan(run, heading):
+    return [
+        heading,
+        "",
+        "Write the plan to `{}` and return the single line `PLAN`.".format(run.tasks_path),
+        "",
+        "Check it yourself first:",
+        "",
+        "    {}".format(command(run, "plan", "validate")),
+    ]
 
 
 def questions_path(run, round_no):
@@ -291,6 +301,22 @@ def executor(run, doc, slice_id, stack=None):
         add("## Notes from the planner")
         add("")
         add(str(notes))
+        add("")
+
+    answered = [c for c in item.get("context") or [] if isinstance(c, dict)]
+    if answered:
+        add("## What you asked, and the answer")
+        add("")
+        add("An earlier attempt at this slice stopped to ask. Work already")
+        add("committed in the worktree is yours to keep or change.")
+        add("")
+        for exchange in answered:
+            add("- You asked: {}".format(exchange.get("question")))
+            add("  Answer: {}".format(exchange.get("answer")))
+        add("")
+        add("That was the one question this slice gets. If something is still")
+        add("missing, choose the most reasonable reading and report it with")
+        add("`DONE_WITH_CONCERNS`, or report `BLOCKED`.")
         add("")
 
     add("## Report")

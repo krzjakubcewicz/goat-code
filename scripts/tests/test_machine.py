@@ -343,6 +343,21 @@ def test_the_final_grill_round_forces_a_plan(run):
     assert "must return `PLAN`" in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
 
 
+def test_questions_written_past_the_round_cap_are_not_asked(run):
+    """The cap only changed the wording of the prompt. A planner that wrote
+    questions anyway got another round, and another, with no limit."""
+    for _ in range(3):
+        run.bump_grill_round()
+    machine.dispatch.questions_path(run, 4).write_text(QUESTIONS, encoding="utf-8")
+    assert machine.derive_phase(run) == "grill"
+
+
+def test_a_direct_run_never_puts_questions_to_the_user(run):
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    machine.dispatch.questions_path(run, 1).write_text(QUESTIONS, encoding="utf-8")
+    assert machine.derive_phase(run) == "grill"
+
+
 def test_revise_carries_the_feedback_and_clears_the_flag(run):
     write_plan(run)
     run.set_approval("revise")
@@ -1231,3 +1246,171 @@ def test_next_commands_default_to_the_running_python(run):
     import sys
 
     assert machine.cli_argv(run, "merge")[0] == sys.executable
+
+
+# -- every dispatch is capped ------------------------------------------------
+#
+# The machine moves on only when an agent runs its reporting command. One that
+# exits without doing so used to be handed the identical prompt again, with no
+# limit in the plugin and a 400-step limit in the driver.
+
+
+def _verify_ready(run):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+
+def test_a_role_agent_that_never_reports_stops_the_run(run):
+    _verify_ready(run)
+    for _ in range(3):
+        assert machine.next_action(run)["dispatches"][0]["agent"] == "goat-code-verifier"
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert action["outcome"] == "failed"
+    assert "goat-code-verifier" in action["reason"]
+    assert machine.next_action(run)["action"] == "stop"
+
+
+def test_the_dispatch_cap_is_configurable(run):
+    _verify_ready(run)
+    run.state["config"]["max_dispatch_attempts"] = 1
+    run.save()
+    assert machine.next_action(run)["action"] == "dispatch"
+    assert machine.next_action(run)["action"] == "stop"
+
+
+def test_a_silent_classifier_falls_back_instead_of_failing(unclassified_run):
+    """Sizing the task is advisory. The docs always promised NORMAL/MEDIUM
+    when the classifier gives no answer; nothing ever recorded it."""
+    run = unclassified_run
+    for _ in range(3):
+        assert machine.next_action(run)["dispatches"][0]["agent"] == "goat-code-classifier"
+
+    action = machine.next_action(run)
+    assert action["action"] == "run"
+    assert "classify" in action["commands"][0] and "--fallback" in action["commands"][0]
+
+
+def test_a_slice_that_never_reports_is_blocked_then_retried_stronger(run):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2"):
+        path = run.root / "wt-{}".format(slice_id)
+        path.mkdir()
+        tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
+    tasks.set_status(run.tasks_path, "S2", "done")
+
+    for _ in range(3):
+        action = machine.next_action(run)
+        assert [d["slice"] for d in action["dispatches"]] == ["S1"]
+        assert action["dispatches"][0]["model"] == "haiku"
+
+    action = machine.next_action(run)
+    assert [d["slice"] for d in action["dispatches"]] == ["S1"]
+    assert action["dispatches"][0]["model"] == "sonnet"
+    reason = tasks.get(tasks.load(run.tasks_path), "S1")["report"]["reason"]
+    assert "3" in reason and "without reporting" in reason
+
+
+def test_a_dispatch_whose_prompt_changed_is_a_new_attempt(run):
+    """The cap is on handing an agent the same thing again, not on how often
+    an agent runs: a planner answering round 2 is not a repeat of round 1."""
+    for _ in range(3):
+        assert machine.next_action(run)["action"] == "dispatch"
+    run.bump_grill_round()
+    action = machine.next_action(run)
+    assert action["action"] == "dispatch"
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"
+
+
+# -- a slice that needs context ----------------------------------------------
+#
+# NEEDS_CONTEXT put the slice back to pending and nothing else: the next
+# dispatch was the identical prompt, the question never reached a human
+# through the machine, and an answer given in one front-end was not kept.
+
+
+def _waiting_on_context(run, question="which TTL should a token have?"):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2"):
+        path = run.root / "wt-{}".format(slice_id)
+        path.mkdir()
+        tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
+    tasks.set_status(run.tasks_path, "S2", "done")
+    report.record_slice(run, "S1", "NEEDS_CONTEXT", reason=question)
+
+
+def test_a_slice_that_needs_context_becomes_a_question_for_the_user(run):
+    _waiting_on_context(run)
+    action = machine.next_action(run)
+
+    assert action["action"] == "ask"
+    assert action["dispatches"] == []
+    assert action["ask"]["kind"] == "context"
+    assert action["ask"]["slice"] == "S1"
+    assert "which TTL should a token have?" in action["ask"]["questions"][0]["question"]
+    assert "context --slice S1" in action["ask"]["record"]
+
+
+def test_the_answer_reaches_the_executor_through_its_prompt(run):
+    _waiting_on_context(run)
+    report.record_context(run, "S1", "15 minutes, same as the session cookie")
+
+    action = machine.next_action(run)
+    assert [d["slice"] for d in action["dispatches"]] == ["S1"]
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "which TTL should a token have?" in prompt
+    assert "15 minutes, same as the session cookie" in prompt
+
+
+# -- a command that keeps coming back ----------------------------------------
+
+
+def test_a_run_action_that_changes_nothing_stops_the_run(run):
+    """`worktree create`, `merge` and `branch` exit 1 on their own errors,
+    which both front-ends treat as an answer. Nothing on disk changes, the
+    same command comes back, and no dispatch is involved, so neither the
+    dispatch cap nor the driver's dead-round guard ever saw it."""
+    write_plan(run)
+    approved(run, branched=False)
+    for _ in range(3):
+        action = machine.next_action(run)
+        assert action["action"] == "run" and "branch" in action["commands"][0]
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert action["outcome"] == "failed"
+    assert "branch" in action["reason"]
+
+
+def test_a_run_action_between_other_actions_is_not_a_repeat(run):
+    """Only the same command, back to back, means nothing moved."""
+    write_plan(run)
+    approved(run, branched=False)
+    for _ in range(2):
+        machine.next_action(run)
+    run.adopt_branch("feature/magic-link")
+    assert machine.next_action(run)["action"] == "run"  # worktrees, a different command
+    assert run.state["repeated_run"]["count"] == 1
+
+
+def test_a_dispatch_in_between_clears_the_repeat_count(run):
+    write_plan(run)
+    approved(run, branched=False)
+    machine.next_action(run)
+    assert run.state["repeated_run"]["count"] == 1
+    run.adopt_branch("feature/magic-link")
+    for slice_id in ("S1", "S2"):
+        path = run.root / "wt-{}".format(slice_id)
+        path.mkdir()
+        tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
+    assert machine.next_action(run)["action"] == "dispatch"
+    assert "repeated_run" not in Run.load(run.repo, run.run_id).state

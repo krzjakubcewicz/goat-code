@@ -271,7 +271,7 @@ Executors return exactly one:
 | --- | --- | --- |
 | `DONE` | criteria met, tests green, work committed | verify and mark done |
 | `DONE_WITH_CONCERNS` | finished, but something needs a human's eye | read the concerns, then proceed |
-| `NEEDS_CONTEXT` | missing information, named precisely | supply it, re-dispatch |
+| `NEEDS_CONTEXT` | missing information, named precisely | ask the user, record the answer, re-dispatch; a second one blocks the slice |
 | `BLOCKED` | cannot finish, reason named precisely | escalate the model once, then re-plan |
 
 Never re-dispatch an unchanged `BLOCKED` task to the same model. Something

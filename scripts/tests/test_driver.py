@@ -341,23 +341,32 @@ def test_a_partly_failed_wave_keeps_going(no_repo):
     assert driver._dead_rounds == 0
 
 
-def test_needs_context_is_answered_and_the_agent_runs_again():
-    backend = Backend(receipt(ok=False, text="NEEDS_CONTEXT which port?"), receipt())
-    driver = driver_with(backend, prompter=prompter("port 5000\n"))
-    result = driver.agent({"agent": "goat-code-executor", "model": "haiku", "slice": "S1", "prompt": "p"})
-    assert result.ok is True
-    assert len(backend.calls) == 2
-    assert backend.calls[1]["context"] == "port 5000"
-    assert backend.calls[1]["prompt"] == "p", "the same brief, not a new one"
+def context_ask(slice_id="S1"):
+    return {
+        "action": "ask",
+        "ask": {
+            "kind": "context",
+            "slice": slice_id,
+            "questions": [{"id": slice_id, "question": "which port?", "options": []}],
+        },
+    }
 
 
-def test_needs_context_with_nobody_to_ask_lets_the_dispatch_fail():
-    """The machine already retries a BLOCKED slice on a stronger model."""
-    backend = Backend(receipt(ok=False, text="NEEDS_CONTEXT which port?"))
-    driver = driver_with(backend, prompter=prompter(yes=True))
-    result = driver.agent({"agent": "goat-code-executor", "model": "haiku", "slice": "S1", "prompt": "p"})
-    assert result.ok is False
-    assert len(backend.calls) == 1
+def test_a_context_question_is_answered_through_the_cli(no_repo):
+    """The answer goes on the run's record, so a re-dispatch after a crash
+    still carries it. It used to ride along with one process invocation."""
+    driver = driver_with(Backend(), prompter=prompter("port 5000\n"))
+    driver.do_ask(None, context_ask())
+    assert no_repo == [["py", "goatcode.py", "context", "--slice", "S1", "--answer", "port 5000"]]
+
+
+def test_a_context_question_nobody_can_answer_blocks_the_slice(no_repo):
+    """Under --yes the slice was re-dispatched unchanged until the step cap."""
+    driver = driver_with(Backend(), prompter=prompter(yes=True))
+    driver.do_ask(None, context_ask())
+    assert no_repo[0][:6] == ["py", "goatcode.py", "report", "--slice", "S1", "--status"]
+    assert no_repo[0][6] == "BLOCKED"
+    assert "which port?" in no_repo[0][-1]
 
 
 def test_the_loop_gives_up_rather_than_spinning(monkeypatch):

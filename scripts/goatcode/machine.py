@@ -11,6 +11,7 @@ test with no model involved.
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 
 import sys
@@ -103,8 +104,11 @@ def derive_phase(run, evidence=None):
 
     if not evidence.has_plan:
         # A direct run derives `grill` like any other; `_grill` is what
-        # suppresses the questions.
-        return "ask" if evidence.questions.exists() else "grill"
+        # suppresses the questions. A questions file only counts while the
+        # run is still owed a round: the cap used to live in the planner's
+        # prompt alone, so one that asked anyway was simply given another.
+        may_ask = workflowmod.wants_grill(run.workflow) and not run.grill_exhausted()
+        return "ask" if may_ask and evidence.questions.exists() else "grill"
 
     if not evidence.plan_valid:
         return "plan"
@@ -222,7 +226,117 @@ def next_action(run, stack_profile=None):
 
     if handler is None:
         return _log_action(run, _stop(run, evidence))
-    return _log_action(run, handler(run, evidence, stack_profile))
+
+    action = handler(run, evidence, stack_profile)
+    if action["action"] == "run":
+        return _log_action(run, _unless_stuck(run, evidence, action))
+    if run.state.pop("repeated_run", None):
+        run.save()
+    spent = [entry for entry in action.get("dispatches") or [] if _spent(run, entry)]
+    if spent:
+        return _give_up_on(run, evidence, spent, stack_profile)
+    for entry in action.get("dispatches") or []:
+        run.bump_dispatch(_dispatch_key(run, entry))
+    return _log_action(run, action)
+
+
+# -- the dispatch cap --------------------------------------------------------
+#
+# The machine only moves when an agent runs its reporting command. An agent
+# that exits without doing so leaves the disk unchanged, so the same action
+# came back with the same prompt, for as long as anyone kept calling `next`.
+# The cap is on handing an agent the *same thing* again: the key includes the
+# prompt's text, so a new grill round, a new conflict or a stronger model is a
+# fresh attempt rather than a repeat.
+
+
+def _dispatch_key(run, entry):
+    try:
+        text = osenv.read_text(entry["prompt"])
+    except OSError:
+        text = str(entry.get("prompt"))
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+    return "{}:{}:{}:{}:{}".format(
+        run.cycle, entry.get("agent"), entry.get("slice") or "-", entry.get("model"), digest
+    )
+
+
+def _dispatch_cap(run):
+    return run.config.get("max_dispatch_attempts", 3)
+
+
+def _spent(run, entry):
+    return run.dispatch_attempts(_dispatch_key(run, entry)) >= _dispatch_cap(run)
+
+
+def _unless_stuck(run, evidence, action):
+    """Stop when the same commands come back with nothing in between.
+
+    `worktree create`, `merge` and `branch` exit 1 on their own errors, and
+    1 is an answer to both front-ends. The disk is unchanged, so the same
+    `run` action returned, and since no agent was involved neither the
+    dispatch cap nor the driver's dead-round guard could see it. Only back
+    to back counts: the same command after anything else is progress.
+    """
+    commands = [[str(part) for part in command] for command in action.get("commands") or []]
+    last = run.state.get("repeated_run") or {}
+    count = last.get("count", 0) + 1 if last.get("commands") == commands else 1
+    run.state["repeated_run"] = {"commands": commands, "count": count}
+    run.save()
+    if count <= _dispatch_cap(run):
+        return action
+    # The subcommand and its arguments, without the interpreter, script path
+    # and the --repo/--run pins every command carries.
+    shown = "; ".join(" ".join(command[6:]) for command in commands)
+    return _stop(
+        run,
+        evidence,
+        outcome="failed",
+        reason="`{}` was run {} times in a row and the run did not move".format(shown, count - 1),
+    )
+
+
+def _give_up_on(run, evidence, spent, stack_profile):
+    """What happens instead of dispatching an agent that has had its goes."""
+    cap = _dispatch_cap(run)
+    slices = [entry["slice"] for entry in spent if entry.get("slice")]
+    if slices:
+        # Blocked, which the machine already knows how to retry once on a
+        # stronger model and then move past.
+        for slice_id in slices:
+            report.record_slice(
+                run,
+                slice_id,
+                "BLOCKED",
+                reason="dispatched {} times without reporting a result".format(cap),
+            )
+        return next_action(run, stack_profile)
+
+    agent = spent[0].get("agent")
+    if agent == "goat-code-classifier":
+        # Sizing is advisory, so a silent classifier costs the run the safe
+        # middle workflow rather than the run itself.
+        why = "the classifier was dispatched {} times and recorded nothing".format(cap)
+        return _log_action(
+            run,
+            _action(
+                run,
+                "run",
+                why,
+                "record the fallback classification",
+                commands=[cli_argv(run, "classify", "--fallback", why)],
+            ),
+        )
+
+    return _log_action(
+        run,
+        _stop(
+            run,
+            evidence,
+            outcome="failed",
+            reason="{} was dispatched {} times and never recorded a result".format(agent, cap),
+        ),
+    )
 
 
 def _entry(agent, model, prompt, slice_id=None, cwd=None):
@@ -463,6 +577,10 @@ def _execute(run, evidence, stack_profile):
     limit = run.config.get("parallel", 3)
     batch = ready[:limit]
 
+    waiting = [s for s in batch if report.awaits_context(tasks.get(evidence.doc, s))]
+    if waiting:
+        return _ask_context(run, evidence, waiting[0])
+
     missing = [s for s in batch if not _worktree_ready(evidence.doc, s)]
     if missing:
         return _action(
@@ -494,6 +612,58 @@ def _execute(run, evidence, stack_profile):
             len(batch), ", ".join("{} ({})".format(d["slice"], d["model"]) for d in dispatches)
         ),
         dispatches=dispatches,
+    )
+
+
+def _ask_context(run, evidence, slice_id):
+    """Put a slice's question to the user before it is dispatched again.
+
+    NEEDS_CONTEXT used to set the slice back to pending and nothing more, so
+    the next dispatch was the same prompt and the same question. One slice
+    at a time: the answer to the first often settles the second.
+    """
+    item = tasks.get(evidence.doc, slice_id)
+    question = (item.get("report") or {}).get("reason") or "(no question recorded)"
+    return _action(
+        run,
+        "ask",
+        "slice {} cannot continue without an answer".format(slice_id),
+        "put the executor's question to the user, then record the answer",
+        ask={
+            "kind": "context",
+            "slice": slice_id,
+            "questions": [
+                {
+                    "id": slice_id,
+                    "header": "Context",
+                    "question": "Slice {} ({}) asks: {}".format(
+                        slice_id, item.get("title", ""), question
+                    ),
+                    "options": [
+                        {
+                            "label": "Use your judgement",
+                            "description": "The executor picks the most reasonable reading and reports it as a concern.",
+                        },
+                        {
+                            "label": "Skip this slice",
+                            "description": "Record the slice as blocked and carry on without it.",
+                        },
+                    ],
+                    "blocking": True,
+                }
+            ],
+            "record": dispatch.command(
+                run, "context", "--slice", slice_id, "--answer", "<what the user said>"
+            ),
+            "give_up": dispatch.command(
+                run, "report", "--slice", slice_id, "--status", "BLOCKED",
+                "--reason", "the user chose to skip this slice",
+            ),
+            "record_note": (
+                "Pass what the user typed, or the label they picked, as --answer. "
+                "For 'Skip this slice' run `give_up` instead."
+            ),
+        },
     )
 
 

@@ -224,6 +224,17 @@ def record_slice(
             )
         )
 
+    if status in ("BLOCKED", "NEEDS_CONTEXT") and not (reason or "").strip():
+        # The reason is the whole content of these two reports: it is what
+        # the user is asked, and what the retry is told.
+        raise ReportError("{} needs --reason: say what is missing or what stopped you".format(status))
+
+    if status == "NEEDS_CONTEXT" and item.get("context"):
+        # One question, one answer. Blocked has an end - a single retry on a
+        # stronger model, then the run moves on - and asking again did not.
+        status = "BLOCKED"
+        reason = "still missing context after an answer: {}".format(reason)
+
     if status in FINISHED and not force:
         problems = verify_done(run, doc, slice_id, status=status, evidence=evidence, profile=profile)
         if problems:
@@ -572,6 +583,46 @@ def parse_pairs(items):
             raise ReportError("empty question id in {!r}".format(item))
         out[key] = value.strip()
     return out
+
+
+# --------------------------------------------------------------------------
+# context
+# --------------------------------------------------------------------------
+
+
+def awaits_context(item):
+    """Whether this slice asked a question nobody has answered yet."""
+    reported = item.get("report") or {}
+    return reported.get("status") == "NEEDS_CONTEXT" and not reported.get("answered")
+
+
+def record_context(run, slice_id, answer):
+    """Keep the user's answer to a slice's question, on the slice.
+
+    On the run's record rather than in one dispatch's command line, so it
+    survives a crash and reaches the executor through its prompt like
+    everything else it is told.
+    """
+    answer = (answer or "").strip()
+    if not answer:
+        raise ReportError("--answer is empty; report the slice BLOCKED if there is nothing to tell it")
+
+    def mutate(document):
+        target = tasks.get(document, slice_id)
+        if not awaits_context(target):
+            raise ReportError("{} has no unanswered question".format(slice_id))
+        target["report"]["answered"] = True
+        target.setdefault("context", []).append(
+            {"question": target["report"].get("reason"), "answer": answer}
+        )
+        return list(target["context"])
+
+    try:
+        recorded = tasks.update(run.tasks_path, mutate)
+    except tasks.TaskError as exc:
+        raise ReportError(str(exc))
+    ledger.append(run, "slice {} context answered".format(slice_id))
+    return {"slice": slice_id, "context": recorded}
 
 
 # --------------------------------------------------------------------------

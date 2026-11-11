@@ -311,6 +311,8 @@ class Driver:
             self.cli(command)
         if action["ask"].get("kind") == "approval":
             return self.do_approval(run, action)
+        if action["ask"].get("kind") == "context":
+            return self.do_context(run, action)
 
         answers = self.prompter.answers(action["ask"]["questions"])
         args = ["answer"] + ["{}={}".format(qid, answer) for qid, answer, _ in answers]
@@ -318,6 +320,23 @@ class Driver:
             if note:
                 args += ["--note", "{}={}".format(qid, note)]
         self.cli(machine.cli_argv(run, *args))
+
+    def do_context(self, run, action):
+        """Put a slice's question to the user, or block the slice.
+
+        With nobody to ask (--yes, or no terminal) the slice used to go back
+        out unchanged, to ask the same thing again until the step cap.
+        """
+        slice_id = action["ask"]["slice"]
+        question = action["ask"]["questions"][0]["question"]
+        answer = self.prompter.context("slice {}".format(slice_id), question)
+        if answer:
+            self.cli(machine.cli_argv(run, "context", "--slice", slice_id, "--answer", answer))
+            return
+        self.cli(machine.cli_argv(
+            run, "report", "--slice", slice_id, "--status", "BLOCKED",
+            "--reason", "needs context and nobody could be asked: {}".format(question)[:300],
+        ))
 
     def do_approval(self, run, action):
         choice, text = self.prompter.approval()
@@ -341,14 +360,10 @@ class Driver:
     # -- the two things a driver actually does -----------------------------
 
     def agent(self, entry):
-        """One dispatch, with a retry when the agent asks for context."""
-        receipt = self.backend(entry, on_event=self.console.tool)
-        if "NEEDS_CONTEXT" not in (receipt.text or ""):
-            return receipt
-        answer = self.prompter.context(receipt.label, receipt.text)
-        if not answer:
-            return receipt
-        return self.backend(dict(entry, context=answer), on_event=self.console.tool)
+        """One dispatch. A slice that needs context reports it through the
+        CLI, and the machine turns that into an `ask`; nothing is read out
+        of what the agent printed."""
+        return self.backend(entry, on_event=self.console.tool)
 
     def cli(self, command):
         """Run one rendered goatcode command in this process.

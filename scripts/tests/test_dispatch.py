@@ -173,6 +173,15 @@ def test_forced_final_round_demands_a_plan(run):
     assert "assumptions:" in text
 
 
+def test_forced_final_round_offers_no_way_to_ask(run):
+    """It said "you must return PLAN" and then explained, with the path, how
+    to write questions instead."""
+    text = dispatch.planner(run, 4, forced=True)
+    assert str(dispatch.questions_path(run, 4)) not in text
+    assert "QUESTIONS" not in text
+    assert str(run.tasks_path) in text
+
+
 def test_planner_fix_prompt_lists_only_the_validator_errors(run):
     text = dispatch.planner(run, 1, validator_errors=["S1 and S2 both own src/a/**"])
     assert "S1 and S2 both own src/a/**" in text

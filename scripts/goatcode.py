@@ -965,6 +965,17 @@ def cmd_report(args):
     return EXIT_OK
 
 
+def cmd_context(args):
+    """Record the user's answer to a slice that reported NEEDS_CONTEXT."""
+    run = resolve_run(args)
+    try:
+        result = reportmod.record_context(run, args.slice, args.answer)
+    except reportmod.ReportError as exc:
+        raise CliError(str(exc))
+    emit(args, result, "{}: answer recorded".format(args.slice))
+    return EXIT_OK
+
+
 def cmd_classify(args):
     """Record how this run was sized. Never fails the run."""
     run = resolve_run(args)
@@ -1431,6 +1442,11 @@ def build_parser():
     p.add_argument("--file", help="YAML mapping of QID to answer, instead of pairs")
     p.add_argument("--questions", help="questions file (default: the current round's)")
     p.set_defaults(func=cmd_answer)
+
+    p = add(sub, "context", help="record the answer to a slice that needs context")
+    p.add_argument("--slice", required=True, help="the slice that asked")
+    p.add_argument("--answer", required=True, help="what the user said")
+    p.set_defaults(func=cmd_context)
 
     p = add(sub, "approve", help="record the plan approval gate")
     group = p.add_mutually_exclusive_group(required=True)

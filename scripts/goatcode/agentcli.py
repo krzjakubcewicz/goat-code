@@ -104,10 +104,6 @@ def build_argv(entry, repo, config=None):
     fields, body = definition(entry["agent"])
 
     instruction = INSTRUCTION.format(entry["prompt"])
-    if entry.get("context"):
-        # A re-dispatch after NEEDS_CONTEXT: same prompt file, plus the
-        # answer to whatever the agent said it was missing.
-        instruction += "\n\nYou asked for context. Here it is:\n{}".format(entry["context"])
 
     argv = [
         config.get("claude_bin") or "claude",
@@ -179,6 +175,7 @@ def dispatch(entry, repo, config=None, on_event=None):
             # guard cannot find the run by walking up from there. Name it.
             env={"GOATCODE_REPO": str(repo)},
             on_line=consume,
+            timeout=_timeout_seconds(config),
         )
     except osenv.CommandError:
         raise AgentError(
@@ -237,6 +234,15 @@ def _target(payload):
         if isinstance(value, str) and value.strip():
             return value.strip().splitlines()[0][:100]
     return ""
+
+
+def _timeout_seconds(config):
+    """The wall-clock limit on one agent process, or None for no limit."""
+    minutes = (config or {}).get("agent_timeout_minutes")
+    try:
+        return float(minutes) * 60 if minutes else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _receipt(entry, result, returncode, stderr, elapsed):

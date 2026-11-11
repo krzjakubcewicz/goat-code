@@ -108,12 +108,22 @@ Omit a question they skipped - the planner records an assumption for it.
 For the approval gate, `ask.kind` is `approval` and `ask.record` lists all
 three commands; run the one matching their choice.
 
-### NEEDS_CONTEXT
+When `ask.kind` is `context`, a slice reported `NEEDS_CONTEXT` and the
+question is its executor's. Put it to the user as given. Record what they
+typed, or the label they picked, with `ask.record`:
 
-If an agent says it needs context, give it what it asked for and dispatch it
-again with the same prompt file plus your answer. Everything else is already
-handled: a `BLOCKED` slice is retried once on a stronger model, then the run
-moves on without it.
+```bash
+... context --slice S1 --answer "15 minutes, same as the session cookie"
+```
+
+If they pick "Skip this slice", run `ask.give_up` instead. Never answer the
+question yourself: you have not read the code, and an answer you make up
+reaches the executor looking like the user's.
+
+Everything else is already handled. The answer is rendered into the slice's
+next prompt, a second `NEEDS_CONTEXT` from the same slice blocks it, and a
+`BLOCKED` slice is retried once on a stronger model before the run moves on
+without it.
 
 ### stop
 

@@ -574,3 +574,41 @@ def test_verdicts_are_per_cycle(run):
     run.advance_cycle()
     assert report.read_verdict(run) is None
     assert report.read_verdict(run, cycle=1) == "FAIL"
+
+
+# -- context ---------------------------------------------------------------
+
+
+def test_needs_context_must_say_what_is_missing(run, plan):
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "NEEDS_CONTEXT")
+    assert "--reason" in str(excinfo.value)
+
+
+def test_blocked_must_say_why(run, plan):
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "BLOCKED")
+    assert "--reason" in str(excinfo.value)
+
+
+def test_an_answer_is_kept_on_the_slice(run, plan):
+    report.record_slice(run, "S1", "NEEDS_CONTEXT", reason="which mail transport?")
+    report.record_context(run, "S1", "SMTP")
+    item = tasks.get(tasks.load(run.tasks_path), "S1")
+    assert item["context"] == [{"question": "which mail transport?", "answer": "SMTP"}]
+    assert item["status"] == "pending"
+
+
+def test_context_cannot_be_given_to_a_slice_that_did_not_ask(run, plan):
+    with pytest.raises(ReportError):
+        report.record_context(run, "S1", "SMTP")
+
+
+def test_asking_for_context_a_second_time_blocks_the_slice(run, plan):
+    """One question, one answer. A slice that still cannot proceed is
+    blocked, which is a path with an end; asking again was not."""
+    report.record_slice(run, "S1", "NEEDS_CONTEXT", reason="which mail transport?")
+    report.record_context(run, "S1", "SMTP")
+    result = report.record_slice(run, "S1", "NEEDS_CONTEXT", reason="which port?")
+    assert result["slice_status"] == "blocked"
+    assert "which port?" in tasks.get(tasks.load(run.tasks_path), "S1")["report"]["reason"]
