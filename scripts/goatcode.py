@@ -612,7 +612,8 @@ def _stack_for_briefs(run, doc, slice_ids):
     On the first run of a new project the build system does not exist at init,
     so wave 1's executors are told "not detected" and left to guess. By wave 2
     it does exist - in each slice's own worktree, which starts at the
-    integration tip - so the guessing can stop there rather than at the end of
+    integration tip, and the first wave is merged into that before the second
+    is dispatched - so the guessing can stop there rather than at the end of
     the run.
     """
     profile = load_stack(run)

@@ -142,6 +142,11 @@ class FakeAgent:
 
         doc = tasks.load(run.tasks_path)
         path = tasks.get(doc, slice_id)["worktree"]
+        # What a real executor relies on: the code its dependencies built is
+        # in the tree it was handed.
+        for dependency in tasks.get(doc, slice_id).get("depends_on") or []:
+            built = pathlib.Path(path) / "src" / dependency.lower() / "index.js"
+            assert self.conflict or built.exists(), "{} cannot see {}".format(slice_id, dependency)
         _write(path, "tests/{}.test.js".format(slice_id), "// test\n")
         body = "shared\n" if self.conflict else "module.exports = '{}';\n".format(slice_id)
         target = "shared.js" if self.conflict else "src/{}/index.js".format(slice_id.lower())
@@ -328,6 +333,8 @@ def test_a_whole_run_reaches_done_with_no_model(started):
         "ask",
         "grill",
         "approve",
+        "execute",
+        "synthesize",
         "execute",
         "synthesize",
         "verify",

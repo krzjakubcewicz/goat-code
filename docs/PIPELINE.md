@@ -204,6 +204,15 @@ python scripts/goatcode.py merge
 Creates `goatcode/<run-id>/integration` from the base commit and merges each
 finished slice branch in dependency order.
 
+This runs after every wave, not once at the end. A slice is dispatched only
+when the slices it depends on are *merged*, and its worktree starts at the
+integration tip, so a second-wave executor stands in a tree that holds the
+code it was told to build on. A run with three waves therefore goes
+`execute`, `synthesize`, `execute`, `synthesize`, `execute`, `synthesize`,
+`verify`. Each merge takes whatever has finished since the last one; branches
+already merged are a no-op. A conflict in one wave holds the next until it is
+resolved.
+
 - **clean** — no agent is dispatched at all.
 - **conflict** — `goat-code-synthesizer` is dispatched on `sonnet` with the
   conflicted files. It resolves, runs `merge --continue`, repeats, then
