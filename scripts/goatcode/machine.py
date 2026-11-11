@@ -11,6 +11,7 @@ test with no model involved.
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 
 import sys
@@ -222,7 +223,86 @@ def next_action(run, stack_profile=None):
 
     if handler is None:
         return _log_action(run, _stop(run, evidence))
-    return _log_action(run, handler(run, evidence, stack_profile))
+
+    action = handler(run, evidence, stack_profile)
+    spent = [entry for entry in action.get("dispatches") or [] if _spent(run, entry)]
+    if spent:
+        return _give_up_on(run, evidence, spent, stack_profile)
+    for entry in action.get("dispatches") or []:
+        run.bump_dispatch(_dispatch_key(run, entry))
+    return _log_action(run, action)
+
+
+# -- the dispatch cap --------------------------------------------------------
+#
+# The machine only moves when an agent runs its reporting command. An agent
+# that exits without doing so leaves the disk unchanged, so the same action
+# came back with the same prompt, for as long as anyone kept calling `next`.
+# The cap is on handing an agent the *same thing* again: the key includes the
+# prompt's text, so a new grill round, a new conflict or a stronger model is a
+# fresh attempt rather than a repeat.
+
+
+def _dispatch_key(run, entry):
+    try:
+        text = osenv.read_text(entry["prompt"])
+    except OSError:
+        text = str(entry.get("prompt"))
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+    return "{}:{}:{}:{}:{}".format(
+        run.cycle, entry.get("agent"), entry.get("slice") or "-", entry.get("model"), digest
+    )
+
+
+def _dispatch_cap(run):
+    return run.config.get("max_dispatch_attempts", 3)
+
+
+def _spent(run, entry):
+    return run.dispatch_attempts(_dispatch_key(run, entry)) >= _dispatch_cap(run)
+
+
+def _give_up_on(run, evidence, spent, stack_profile):
+    """What happens instead of dispatching an agent that has had its goes."""
+    cap = _dispatch_cap(run)
+    slices = [entry["slice"] for entry in spent if entry.get("slice")]
+    if slices:
+        # Blocked, which the machine already knows how to retry once on a
+        # stronger model and then move past.
+        for slice_id in slices:
+            report.record_slice(
+                run,
+                slice_id,
+                "BLOCKED",
+                reason="dispatched {} times without reporting a result".format(cap),
+            )
+        return next_action(run, stack_profile)
+
+    agent = spent[0].get("agent")
+    if agent == "goat-code-classifier":
+        # Sizing is advisory, so a silent classifier costs the run the safe
+        # middle workflow rather than the run itself.
+        why = "the classifier was dispatched {} times and recorded nothing".format(cap)
+        return _log_action(
+            run,
+            _action(
+                run,
+                "run",
+                why,
+                "record the fallback classification",
+                commands=[cli_argv(run, "classify", "--fallback", why)],
+            ),
+        )
+
+    return _log_action(
+        run,
+        _stop(
+            run,
+            evidence,
+            outcome="failed",
+            reason="{} was dispatched {} times and never recorded a result".format(agent, cap),
+        ),
+    )
 
 
 def _entry(agent, model, prompt, slice_id=None, cwd=None):

@@ -1231,3 +1231,85 @@ def test_next_commands_default_to_the_running_python(run):
     import sys
 
     assert machine.cli_argv(run, "merge")[0] == sys.executable
+
+
+# -- every dispatch is capped ------------------------------------------------
+#
+# The machine moves on only when an agent runs its reporting command. One that
+# exits without doing so used to be handed the identical prompt again, with no
+# limit in the plugin and a 400-step limit in the driver.
+
+
+def _verify_ready(run):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+
+
+def test_a_role_agent_that_never_reports_stops_the_run(run):
+    _verify_ready(run)
+    for _ in range(3):
+        assert machine.next_action(run)["dispatches"][0]["agent"] == "goat-code-verifier"
+
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert action["outcome"] == "failed"
+    assert "goat-code-verifier" in action["reason"]
+    assert machine.next_action(run)["action"] == "stop"
+
+
+def test_the_dispatch_cap_is_configurable(run):
+    _verify_ready(run)
+    run.state["config"]["max_dispatch_attempts"] = 1
+    run.save()
+    assert machine.next_action(run)["action"] == "dispatch"
+    assert machine.next_action(run)["action"] == "stop"
+
+
+def test_a_silent_classifier_falls_back_instead_of_failing(unclassified_run):
+    """Sizing the task is advisory. The docs always promised NORMAL/MEDIUM
+    when the classifier gives no answer; nothing ever recorded it."""
+    run = unclassified_run
+    for _ in range(3):
+        assert machine.next_action(run)["dispatches"][0]["agent"] == "goat-code-classifier"
+
+    action = machine.next_action(run)
+    assert action["action"] == "run"
+    assert "classify" in action["commands"][0] and "--fallback" in action["commands"][0]
+
+
+def test_a_slice_that_never_reports_is_blocked_then_retried_stronger(run):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2"):
+        path = run.root / "wt-{}".format(slice_id)
+        path.mkdir()
+        tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
+    tasks.set_status(run.tasks_path, "S2", "done")
+
+    for _ in range(3):
+        action = machine.next_action(run)
+        assert [d["slice"] for d in action["dispatches"]] == ["S1"]
+        assert action["dispatches"][0]["model"] == "haiku"
+
+    action = machine.next_action(run)
+    assert [d["slice"] for d in action["dispatches"]] == ["S1"]
+    assert action["dispatches"][0]["model"] == "sonnet"
+    reason = tasks.get(tasks.load(run.tasks_path), "S1")["report"]["reason"]
+    assert "3" in reason and "without reporting" in reason
+
+
+def test_a_dispatch_whose_prompt_changed_is_a_new_attempt(run):
+    """The cap is on handing an agent the same thing again, not on how often
+    an agent runs: a planner answering round 2 is not a repeat of round 1."""
+    for _ in range(3):
+        assert machine.next_action(run)["action"] == "dispatch"
+    run.bump_grill_round()
+    action = machine.next_action(run)
+    assert action["action"] == "dispatch"
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"

@@ -64,6 +64,9 @@ DEFAULT_CONFIG = {
     "max_cycles": 3,
     "max_grill_rounds": 3,
     "max_plan_fix_attempts": 2,
+    # How often one agent may be handed the identical prompt before the
+    # machine stops waiting for it to report.
+    "max_dispatch_attempts": 3,
     # chat: gate only a chat-mode run's first cycle. always: gate every
     # cycle. never: fully autonomous once the plan validates.
     "approval_gate": "chat",
@@ -788,6 +791,16 @@ class Run:
 
     def plan_fixes_exhausted(self):
         return self.plan_fix_attempts >= self.config.get("max_plan_fix_attempts", 2)
+
+    def dispatch_attempts(self, key):
+        """How often the dispatch ``key`` names has been handed to an agent."""
+        return self.state.get("dispatch_attempts", {}).get(key, 0)
+
+    def bump_dispatch(self, key):
+        recorded = self.state.setdefault("dispatch_attempts", {})
+        recorded[key] = recorded.get(key, 0) + 1
+        self.save()
+        return recorded[key]
 
     def escalations(self, slice_id=None):
         recorded = self.state.setdefault("escalations", {})

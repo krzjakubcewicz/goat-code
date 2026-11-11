@@ -715,3 +715,48 @@ def test_the_rendered_report_command_runs_verbatim(started):
     stored = tasks.get(tasks.load(run.tasks_path), "S1")
     assert stored["status"] == "done"
     assert stored["report"]["evidence"] == {"A1": "tests/S1.test.js:1"}
+
+
+# -- agents that exit without reporting ------------------------------------
+#
+# The machine moves only when an agent runs its reporting command. These are
+# the runs that used to spin: a clean exit, nothing on disk, the same prompt
+# handed over again until the driver's step limit.
+
+
+def _silent(*roles):
+    class Silent(FakeAgent):
+        pass
+
+    for role in roles:
+        setattr(Silent, role, lambda self, run, entry: None)
+    return Silent
+
+
+def test_a_classifier_that_never_answers_falls_back_and_the_run_finishes(started):
+    agent = _silent("classifier")([slice_doc("S1", "src/s1/**")])
+    final = make_driver(started, agent).loop()
+
+    assert final["outcome"] == "done"
+    assert [d[0] for d in agent.dispatched].count("goat-code-classifier") == 3
+    assert Run.load(started).workflow == "PLANNED_DEVELOPMENT"
+
+
+def test_a_verifier_that_never_rules_stops_the_run(started):
+    agent = _silent("verifier")([slice_doc("S1", "src/s1/**")])
+    final = make_driver(started, agent).loop()
+
+    assert final["outcome"] == "failed"
+    assert "goat-code-verifier" in final["reason"]
+    assert [d[0] for d in agent.dispatched].count("goat-code-verifier") == 3
+
+
+def test_an_executor_that_never_reports_is_retried_stronger_then_given_up_on(started):
+    agent = _silent("executor")([slice_doc("S1", "src/s1/**"), slice_doc("S2", "src/s2/**")])
+    driver = make_driver(started, agent)
+    driver.loop()
+
+    models = [model for name, slice_id, model in agent.dispatched if slice_id == "S1"]
+    assert models == ["haiku"] * 3 + ["sonnet"] * 3
+    assert tasks.get(tasks.load(Run.load(started).tasks_path), "S1")["status"] == "failed"
+    assert len(driver.phases) < 60

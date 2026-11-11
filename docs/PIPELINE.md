@@ -301,6 +301,23 @@ slices. Back to `execute`, skipping the grill and the gate.
 Past `max_cycles` the run stops and reports what is still unmet. It does not
 loop forever and it does not claim success.
 
+## An agent that never reports
+
+The machine moves on only when an agent runs its reporting command. One that
+exits without doing so leaves the disk as it was, so `next` returns the same
+dispatch. `max_dispatch_attempts` (default 3) caps how often one agent is
+handed the identical prompt - identical meaning the same agent, slice, model
+and prompt text, so a new grill round, a new conflict or a retry on the
+stronger model each count as a fresh attempt. Past the cap:
+
+- an executor's slice is recorded `BLOCKED`, which earns it the usual single
+  retry on `executor_escalated` and then `failed`;
+- the classifier is given its documented fallback, `NORMAL`/`MEDIUM`;
+- any other agent stops the run as `failed`, naming the agent.
+
+Each `next` call that returns a dispatch counts as one attempt, whether or
+not the dispatch is then performed.
+
 ## Resuming
 
 Just run `next`. The phase is derived from what is on disk, so it is correct

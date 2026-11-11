@@ -23,6 +23,13 @@ max_grill_rounds: 3
 # How many times the planner may be sent back to fix validator errors.
 max_plan_fix_attempts: 2
 
+# How many times one agent may be handed the identical prompt. An agent moves
+# the run on only by running its reporting command; one that exits without
+# doing so is dispatched again. Past this, a slice is blocked (and retried
+# once on the stronger model), a silent classifier falls back to the middle
+# workflow, and any other agent stops the run.
+max_dispatch_attempts: 3
+
 # The branch every run forks from. The baseline gates, each slice branch and
 # the feature branch all start here, so the final diff is exactly
 # base..feature.
