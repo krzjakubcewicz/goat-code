@@ -10,12 +10,8 @@ Resume a goat-code run.
 2. **Trust that output and `git log` over anything you remember.** Slices
    it lists as completed are complete. Re-dispatching finished work is the
    most expensive mistake in this pipeline.
-3. Invoke the `goat-code:goat-code-orchestrator` skill and pick up at the phase
-   the resume output reports:
-   - `grill` or `plan` -> step 2
-   - `execute` -> step 5, dispatching only the slices `wave next` returns
-   - `synthesize` -> step 6 (check the merge state first; it may be
-     mid-conflict)
-   - `verify` -> step 7
-4. Tell the user where you are picking up and what is already done, before
+3. Tell the user where you are picking up and what is already done, before
    you dispatch anything.
+4. Invoke the `goat-code:goat-code-orchestrator` skill and run its loop from
+   `next`. Do not choose a phase or a slice yourself: `next` derives both
+   from what is on disk, including a merge left mid-conflict.

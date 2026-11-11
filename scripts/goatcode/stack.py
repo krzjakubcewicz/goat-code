@@ -2,8 +2,9 @@
 
 This is how goat-code's agents become specialists in whatever the target repo
 uses. Detection is deterministic and cheap; the resulting ``stack.json`` is
-injected into every agent prompt, so no agent has to rediscover that the
-project uses pnpm and vitest.
+rendered into every executor's brief and named by path to the classifier
+and the planner, so no agent has to rediscover that the project uses pnpm
+and vitest.
 
 Commands are stored as argv lists, never shell strings - see the cross-OS
 contract in ``osenv``.

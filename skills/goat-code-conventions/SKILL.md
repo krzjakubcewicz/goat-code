@@ -21,8 +21,9 @@ goes straight to DONE, because its slices already had to be written
 test-first.
 
 The **orchestrator is the main Claude Code thread**, not an agent: only the
-main thread can spawn subagents and ask the user questions. Planner,
-executor, synthesizer, verifier and replanner are subagents.
+main thread can spawn subagents and ask the user questions. Classifier,
+planner, executor, synthesizer, verifier, end-to-end tester, scribe and
+replanner are subagents.
 
 The orchestrator does not decide the order. `goatcode next` reads the run state
 off disk and returns the one action to take; the orchestrator performs it and
@@ -36,6 +37,10 @@ Everything mechanical is a script. Never do by hand what the CLI does.
 ```bash
 python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" <command> [--json]
 ```
+
+When your dispatch gives you a command, run that one exactly: it pins the
+interpreter, `--repo` and `--run`, which this short form leaves to be
+guessed from where you happen to be standing.
 
 | Command | Purpose |
 | --- | --- |
@@ -108,9 +113,11 @@ first run (`manage_gitignore`, default on). goat-code writes that entry but
 never commits it.
 
 ```
-.goatcode/runs/<run-id>/
+.goatcode/
   progress.txt         cross-run log: what each run did and what it learnt
-  constraints.md       rules promoted out of that log, shown to every planner
+  constraints.md       rules promoted out of that log; rendered into every brief
+
+.goatcode/runs/<run-id>/
   spec.md              the spec, plus appended "## Clarifications (round N)"
   stack.json           detected languages, frameworks, commands, specialists
   classification.json  the classifier's advisory complexity/risk, merged with the rules

@@ -122,9 +122,10 @@ questions:
 ```
 
 After each round the orchestrator appends the answers to the spec and
-re-dispatches you. **Maximum three rounds.** On round three you must return
-PLAN, recording anything still unresolved in the plan's `assumptions:` list
-with the value you chose.
+re-dispatches you. The number of rounds is capped, and your dispatch says
+how many are left. On the round it calls final you must return PLAN,
+recording anything still unresolved in the plan's `assumptions:` list with
+the value you chose. Questions written on that round are not asked.
 
 If the spec is already precise, return PLAN on round one. Do not manufacture
 questions to look thorough.
@@ -173,8 +174,11 @@ capability. Prefer fewer, well-separated slices over many entangled ones.
 Then run the validator yourself and fix anything it reports:
 
 ```bash
-python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" plan validate
+... plan validate
 ```
+
+Use the full command from your dispatch. It pins the interpreter, `--repo`
+and `--run`; the short form guesses them from the directory you are in.
 
 ## Return format
 

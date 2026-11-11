@@ -49,11 +49,13 @@ def is_test_path(path):
 def weak_assertions(root, paths):
     """Assertions that pass while the behaviour is wrong, in changed tests.
 
-    Advisory, never blocking. The gates caught a real regression in 1 of 21
-    recorded cycles; the verifier failed 13 of 21, essentially all of them on
-    assertion strength. This points the cheap deterministic pass at the
-    failure that actually happens, and hands the same lead to the executor,
-    the replanner and the verifier, who all read gates.json.
+    Never a gate: it does not enter ``blocking``. The gates caught a real
+    regression in 1 of 21 recorded cycles; the verifier failed 13 of 21,
+    essentially all of them on assertion strength. This points the cheap
+    deterministic pass at the failure that actually happens. The verifier
+    is shown the findings as leads, and ``report`` runs the same scan over
+    a slice's own tests when it reports DONE, where a finding does refuse
+    the report and DONE_WITH_CONCERNS is the way past a misreading.
 
     Heuristic on purpose: it reports suspicion, it does not rule. Judging
     whether an assertion really proves its criterion stays the verifier's job.

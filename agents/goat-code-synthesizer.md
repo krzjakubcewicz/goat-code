@@ -58,8 +58,9 @@ replan cycle.
 3. Remove every conflict marker. Do not leave `<<<<<<<` anywhere.
 4. Continue the merge:
    ```bash
-   python "${CLAUDE_PLUGIN_ROOT}/scripts/goatcode.py" merge --continue
+   ... merge --continue
    ```
+   Use the full command from your dispatch: it pins `--repo` and `--run`.
    This stages, commits and merges the next branch, stopping at the next
    conflict. Repeat until it reports `clean`.
 5. Once every branch has landed, run the project's build, typecheck and

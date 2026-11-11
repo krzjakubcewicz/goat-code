@@ -1609,3 +1609,37 @@ def test_the_verifier_dispatch_carries_what_executors_flagged(run):
     prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
     assert "the mailer test was written afterwards" in prompt
     assert "/etc/hosts" in prompt
+
+
+# -- what the orchestrator no longer has to work out -------------------------
+
+
+def test_the_approval_gate_names_the_command_for_each_choice(run):
+    """The three commands came joined in one string, and a haiku orchestrator
+    picked the right one out of it. The driver mapped the choice in code."""
+    write_plan(run)
+    choices = machine.next_action(run)["ask"]["choices"]
+    assert set(choices) == {"Approve", "Revise", "Abort"}
+    assert choices["Approve"].endswith("approve --yes")
+    assert "--revise" in choices["Revise"]
+    assert choices["Abort"].endswith("approve --abort")
+
+
+def test_the_closing_message_says_what_was_confirmed(run):
+    """The orchestrator was told to read verdict.md and gates.json and
+    summarise them itself: counting rows, on the cheapest model."""
+    doc = copy.deepcopy(PLAN)
+    doc["assumptions"] = ["Token TTL assumed 15 min."]
+    write_plan(run, doc)
+    approved(run)
+    conftest.passing_verdict(run)
+    osenv.write_json(
+        run.cycle_dir() / "gates.json",
+        {"gates": {"lint": {"status": "fail"}}, "regressions": [], "pre_existing": ["lint"]},
+    )
+    finished(run)
+
+    message = machine.next_action(run)["message"]
+    assert "3 of 3 acceptance criteria confirmed" in message
+    assert "lint" in message and "before this run" in message
+    assert "Token TTL assumed 15 min." in message
