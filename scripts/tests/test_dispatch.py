@@ -477,3 +477,16 @@ def test_the_classifier_is_told_not_to_quote_file_contents(run):
     """Its reasoning lands in state.json, so a quoted secret would persist."""
     text = dispatch.classifier(run)
     assert "Never quote a file's contents" in text
+
+
+def test_a_retried_slice_is_told_why_the_last_attempt_stopped(run, plan):
+    """A slice blocked on haiku was sent to sonnet with the identical prompt:
+    no reason, no word that the worktree already holds commits."""
+    plan["slices"][0]["report"] = {"status": "BLOCKED", "reason": "the mail API has no sandbox mode"}
+    text = dispatch.executor(run, plan, "S1")
+    assert "the mail API has no sandbox mode" in text
+    assert "already" in text and "worktree" in text
+
+
+def test_a_first_attempt_has_no_retry_section(run, plan):
+    assert "last attempt" not in dispatch.executor(run, plan, "S1")

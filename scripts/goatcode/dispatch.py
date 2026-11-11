@@ -317,6 +317,21 @@ def executor(run, doc, slice_id, stack=None):
         add(str(notes))
         add("")
 
+    last = item.get("report") or {}
+    if last.get("status") == "BLOCKED" and last.get("reason"):
+        # A blocked slice was sent to the stronger model with the identical
+        # prompt: no reason, and no word that the worktree holds commits.
+        add("## The last attempt at this slice stopped")
+        add("")
+        add("It reported:")
+        add("")
+        add("    {}".format(str(last["reason"]).strip()))
+        add("")
+        add("Whatever it committed is already in the worktree. Read `git log`")
+        add("there before you start, keep what is sound, and deal with what")
+        add("stopped it rather than starting again from nothing.")
+        add("")
+
     answered = [c for c in item.get("context") or [] if isinstance(c, dict)]
     if answered:
         add("## What you asked, and the answer")
