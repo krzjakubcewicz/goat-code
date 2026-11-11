@@ -460,6 +460,25 @@ def test_the_last_verdict_line_wins(run):
     assert report.read_verdict(run) == "PASS"
 
 
+def test_a_pass_over_a_gate_regression_reads_as_fail(run):
+    """The verifier's word does not outrank the gates: `gates.json` is the
+    pipeline's own measurement, and a PASS written over a regression used to
+    carry the run to done."""
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
+    assert report.read_verdict(run) == "FAIL"
+    assert "test" in report.verdict_problems(run)[0]
+
+
+def test_a_pass_over_inherited_breakage_stands(run):
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    osenv.write_json(
+        run.cycle_dir() / "gates.json", {"gates": {}, "regressions": [], "pre_existing": ["lint"]}
+    )
+    assert report.read_verdict(run) == "PASS"
+    assert report.verdict_problems(run) == []
+
+
 def test_no_verdict_file_reads_as_none(run):
     assert report.read_verdict(run) is None
 

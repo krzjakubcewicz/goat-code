@@ -245,6 +245,16 @@ def test_verdict_pass_exits_zero(capsys, node_repo):
     assert payload["verdict"] == "PASS"
 
 
+def test_verdict_pass_over_a_gate_regression_is_overruled(capsys, node_repo):
+    run = start(capsys, node_repo)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
+    code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "verdict")
+    assert code == cli.EXIT_FAIL
+    assert payload["verdict"] == "FAIL"
+    assert "test" in payload["overruled"][0]
+
+
 def test_verdict_fail_exits_one(capsys, node_repo):
     run = start(capsys, node_repo)
     (run.cycle_dir() / "verdict.md").write_text("VERDICT: FAIL\n", encoding="utf-8")

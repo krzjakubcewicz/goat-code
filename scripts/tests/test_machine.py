@@ -267,6 +267,14 @@ def test_a_passing_verdict_is_done_once_e2e_has_reported(run):
     assert machine.derive_phase(run) == "done"
 
 
+def test_a_passing_verdict_over_a_gate_regression_replans(run):
+    write_plan(run)
+    approved(run)
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: PASS\n", encoding="utf-8")
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
+    assert machine.derive_phase(run) == "replan"
+
+
 def test_a_failing_verdict_replans(run):
     write_plan(run)
     approved(run)

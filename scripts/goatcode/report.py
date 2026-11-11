@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import classify, ledger, miniyaml, osenv, tasks, tdd, workflow as workflowmod
+from . import classify, gates, ledger, miniyaml, osenv, tasks, tdd, workflow as workflowmod
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -576,13 +576,41 @@ def record_approval(run, decision, feedback=None):
     return {"approval": decision, "feedback": feedback}
 
 
-def read_verdict(run, cycle=None):
-    """The verdict the verifier wrote, or None if it has not written one."""
+def written_verdict(run, cycle=None):
+    """The line the verifier wrote, before anything checks it."""
     path = run.cycle_dir(cycle) / "verdict.md"
     if not path.exists():
         return None
     matches = VERDICT_RE.findall(osenv.read_text(path))
     return matches[-1] if matches else None
+
+
+def verdict_problems(run, cycle=None):
+    """Why a PASS cannot stand, from evidence the verifier does not own.
+
+    The gates are the pipeline's own measurement. A PASS written over a
+    regression used to carry the run to done, because only the verdict line
+    was ever read.
+    """
+    problems = []
+    path = run.cycle_dir(cycle) / "gates.json"
+    if path.exists():
+        regressions = gates.blocking(osenv.read_json(path) or {})
+        if regressions:
+            problems.append("gates regressed in this run: {}".format(", ".join(regressions)))
+    return problems
+
+
+def read_verdict(run, cycle=None):
+    """The verdict this cycle stands on, or None if none is written.
+
+    A PASS the evidence contradicts reads as FAIL, here rather than in each
+    caller, so the machine and the CLI cannot disagree about it.
+    """
+    result = written_verdict(run, cycle)
+    if result == "PASS" and verdict_problems(run, cycle):
+        return "FAIL"
+    return result
 
 
 def require_verdict(run):

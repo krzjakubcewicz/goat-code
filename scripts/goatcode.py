@@ -1054,7 +1054,13 @@ def cmd_verdict(args):
         "cycle": run.cycle,
         "path": str(run.cycle_dir() / "verdict.md"),
     }
-    emit(args, payload, "VERDICT: {}".format(result))
+    text = "VERDICT: {}".format(result)
+    if reportmod.written_verdict(run) == "PASS" and result == "FAIL":
+        # Said out loud, so the verifier that wrote PASS learns why it did
+        # not stand instead of seeing its own line contradicted.
+        payload["overruled"] = reportmod.verdict_problems(run)
+        text += "  (PASS overruled: {})".format("; ".join(payload["overruled"]))
+    emit(args, payload, text)
     return EXIT_OK if result == "PASS" else EXIT_FAIL
 
 
