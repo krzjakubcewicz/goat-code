@@ -509,7 +509,18 @@ def _ask(run, evidence, _stack):
     try:
         questions = report.load_questions(evidence.questions)
     except report.ReportError as exc:
-        return _action(run, "escalate", "unreadable questions file", str(exc))
+        # Back to the planner with what is wrong, the way an invalid plan
+        # goes back. This was an `escalate` that every later `next` repeated
+        # with no way out: the orchestrator may not edit a run's files.
+        text = dispatch.planner(run, evidence.round, questions_error=str(exc))
+        path = dispatch.write(run, "planner-questions-fix-{}".format(evidence.round), text)
+        return _action(
+            run,
+            "dispatch",
+            "the questions file cannot be put to the user",
+            "dispatch goat-code-planner to fix its questions",
+            dispatches=[_entry("goat-code-planner", _model(run, "planner"), path)],
+        )
 
     payload = []
     for question in questions.get("questions") or []:
@@ -521,7 +532,7 @@ def _ask(run, evidence, _stack):
                 continue
             label = str(option.get("label", "")).strip()
             if label and label == str(question.get("recommended", "")).strip():
-                label = "{} (Recommended)".format(label)
+                label = label + report.RECOMMENDED_MARK
             options.append({"label": label, "description": str(option.get("detail", ""))})
         payload.append(
             {

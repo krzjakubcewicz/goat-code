@@ -339,6 +339,8 @@ questions:
     options:
       - label: "15-minute timer"
         detail: "Standard."
+      - label: "Next login"
+        detail: "Simpler."
     recommended: "15-minute timer"
   - id: Q2
     topic: edges
@@ -347,6 +349,8 @@ questions:
     options:
       - label: "404"
         detail: "Simple."
+      - label: "Redirect"
+        detail: "Friendlier."
     recommended: "404"
 """
 
@@ -854,3 +858,52 @@ def test_e2e_pass_is_refused_when_the_test_gate_goes_red(run, plan):
     with pytest.raises(ReportError) as excinfo:
         report.record_role(run, "e2e", "PASS", tests="1 passed", profile=profile)
     assert "journey failed" in str(excinfo.value)
+
+
+# -- the questions file is checked -----------------------------------------
+#
+# Only "is there a list" was checked. A `recommended` that matched no option
+# silently lost its mark, and under --yes the first option was taken instead.
+
+
+def _questions_file(run, body):
+    path = run.cycle_dir() / "questions-round-1.yaml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_a_recommendation_has_to_be_one_of_the_options(run):
+    path = _questions_file(run, QUESTIONS.replace('recommended: "404"', 'recommended: "Not found"'))
+    with pytest.raises(ReportError) as excinfo:
+        report.load_questions(path)
+    assert "Q2" in str(excinfo.value) and "Not found" in str(excinfo.value)
+
+
+def test_a_question_needs_at_least_two_options(run):
+    path = _questions_file(
+        run, QUESTIONS.replace('      - label: "Redirect"\n        detail: "Friendlier."\n', "")
+    )
+    with pytest.raises(ReportError) as excinfo:
+        report.load_questions(path)
+    assert "Q2" in str(excinfo.value) and "options" in str(excinfo.value)
+
+
+def test_question_ids_are_unique(run):
+    path = _questions_file(run, QUESTIONS.replace("id: Q2", "id: Q1"))
+    with pytest.raises(ReportError) as excinfo:
+        report.load_questions(path)
+    assert "Q1" in str(excinfo.value) and "twice" in str(excinfo.value)
+
+
+def test_the_recommended_mark_is_not_part_of_the_answer(run, questions):
+    """The ask marks the planner's pick "(Recommended)". The driver stripped
+    it before recording; the plugin's orchestrator was told to, in prose."""
+    report.record_answers(run, questions, {"Q1": "15-minute timer (Recommended)"})
+    body = run.spec_path.read_text(encoding="utf-8")
+    assert "**A:** 15-minute timer\n" in body
+
+
+def test_an_answer_to_a_question_that_was_not_asked_is_refused(run, questions):
+    with pytest.raises(ReportError) as excinfo:
+        report.record_answers(run, questions, {"Q7": "yes"})
+    assert "Q7" in str(excinfo.value)

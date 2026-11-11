@@ -68,7 +68,7 @@ def write(run, name, text):
 # --------------------------------------------------------------------------
 
 
-def planner(run, round_no, forced=False, validator_errors=None, revision=None):
+def planner(run, round_no, forced=False, validator_errors=None, revision=None, questions_error=None):
     lines = []
     add = lines.append
 
@@ -99,6 +99,20 @@ def planner(run, round_no, forced=False, validator_errors=None, revision=None):
         add("Attempt {} of {}.".format(run.plan_fix_attempts + 1, run.config.get("max_plan_fix_attempts", 2)))
         add("")
         add("Return `PLAN` when the validator passes.")
+        return "\n".join(lines)
+
+    if questions_error:
+        add("## The questions you wrote cannot be put to the user")
+        add("")
+        add(questions_error)
+        add("")
+        add("Rewrite `{}` so it parses and obeys the format: unique ids, two".format(
+            questions_path(run, round_no)
+        ))
+        add("to four options each, `recommended` matching one option's `label`")
+        add("exactly. Change nothing else, then return `QUESTIONS`. If the")
+        add("questions no longer matter, delete the file, write the plan to")
+        add("`{}` and return `PLAN`.".format(run.tasks_path))
         return "\n".join(lines)
 
     if revision:

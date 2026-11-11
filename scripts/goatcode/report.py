@@ -742,7 +742,53 @@ def load_questions(path):
     doc = miniyaml.load(path)
     if not isinstance(doc, dict) or not isinstance(doc.get("questions"), list):
         raise ReportError("{} must be a mapping with a 'questions' list".format(path))
+    problems = _question_problems(doc["questions"])
+    if problems:
+        raise ReportError("{} is not a usable questions file:\n  - {}".format(path, "\n  - ".join(problems)))
     return doc
+
+
+#: Appended to the planner's pick when an `ask` is shaped for the user.
+RECOMMENDED_MARK = " (Recommended)"
+
+#: `AskUserQuestion` takes at most four per call and the planner is told
+#: eight; past that it is a survey, not a grill.
+MAX_QUESTIONS = 8
+
+
+def _question_problems(questions):
+    """What makes a questions file unaskable, found before a user sees it."""
+    problems = []
+    if len(questions) > MAX_QUESTIONS:
+        problems.append("{} questions; at most {} a round".format(len(questions), MAX_QUESTIONS))
+    seen = set()
+    for index, question in enumerate(questions):
+        if not isinstance(question, dict):
+            problems.append("question {} is not a mapping".format(index + 1))
+            continue
+        qid = str(question.get("id") or "").strip()
+        label = qid or "question {}".format(index + 1)
+        if not qid:
+            problems.append("{}: needs an 'id'".format(label))
+        elif qid in seen:
+            problems.append("{}: id used twice; answers are recorded by id".format(qid))
+        seen.add(qid)
+        if not str(question.get("question") or "").strip():
+            problems.append("{}: needs the 'question' text".format(label))
+        options = [o for o in question.get("options") or [] if isinstance(o, dict)]
+        labels = [str(o.get("label") or "").strip() for o in options]
+        if not 2 <= len([l for l in labels if l]) <= 4:
+            problems.append("{}: needs two to four options, each with a 'label'".format(label))
+        recommended = str(question.get("recommended") or "").strip()
+        if recommended and recommended not in labels:
+            # Unmatched, it silently lost its mark, and an unattended run
+            # then took the first option as if it were the planner's pick.
+            problems.append(
+                "{}: 'recommended' is {!r}, which is not one of its option labels ({})".format(
+                    label, recommended, ", ".join(repr(l) for l in labels)
+                )
+            )
+    return problems
 
 
 def record_answers(run, questions_path, answers, notes=None, free_text=None):
@@ -754,6 +800,22 @@ def record_answers(run, questions_path, answers, notes=None, free_text=None):
     doc = load_questions(questions_path)
     round_no = doc.get("round", run.grill_rounds + 1)
     notes = notes or {}
+
+    known = {str(q.get("id", "?")) for q in doc["questions"] if isinstance(q, dict)}
+    stray = sorted(set(answers or {}) - known)
+    if stray:
+        # Dropped silently, the user's answer vanished and the question was
+        # recorded as skipped.
+        raise ReportError(
+            "no question {} in this round; its questions are {}".format(
+                ", ".join(stray), ", ".join(sorted(known))
+            )
+        )
+    # The ask marks the planner's pick; the mark is not part of the label.
+    answers = {
+        qid: (answer[: -len(RECOMMENDED_MARK)] if str(answer).endswith(RECOMMENDED_MARK) else answer)
+        for qid, answer in (answers or {}).items()
+    }
 
     lines = ["## Clarifications (round {})".format(round_no), ""]
     unanswered = []

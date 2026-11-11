@@ -395,10 +395,12 @@ def test_ask_tells_the_orchestrator_how_to_record(run):
     assert "QID=answer" in action["ask"]["record_note"]
 
 
-def test_an_unreadable_questions_file_escalates(run):
+def test_an_unreadable_questions_file_is_sent_back_and_the_retries_are_capped(run):
     (run.cycle_dir() / "questions-round-1.yaml").write_text("nope: true\n", encoding="utf-8")
-    action = machine.next_action(run)
-    assert action["action"] == "escalate"
+    for _ in range(3):
+        action = machine.next_action(run)
+        assert action["dispatches"][0]["agent"] == "goat-code-planner"
+    assert machine.next_action(run)["action"] == "stop"
 
 
 # -- plan actions ----------------------------------------------------------
@@ -1523,3 +1525,17 @@ def test_a_replan_that_reopens_a_failed_slice_goes_back(run):
     assert machine.derive_phase(run) == "plan"
     action = machine.next_action(run)
     assert "new id" in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+
+
+def test_a_broken_questions_file_goes_back_to_the_planner(run):
+    """It used to be an `escalate` that every later `next` repeated, with no
+    sanctioned way out: the orchestrator may not edit a run's files."""
+    broken = QUESTIONS.replace('recommended: "15-minute timer"', 'recommended: "Something else"')
+    machine.dispatch.questions_path(run, 1).write_text(broken, encoding="utf-8")
+
+    action = machine.next_action(run)
+    assert action["action"] == "dispatch"
+    assert action["dispatches"][0]["agent"] == "goat-code-planner"
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "Something else" in prompt
+    assert str(machine.dispatch.questions_path(run, 1)) in prompt
