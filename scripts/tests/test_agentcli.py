@@ -116,12 +116,6 @@ def test_the_binary_is_configurable():
     assert argv[0] == "C:/tools/claude.cmd"
 
 
-def test_a_context_answer_rides_along_with_the_same_prompt_file():
-    argv = agentcli.build_argv(entry(context="the API base is /v2"), "C:/repo")
-    assert argv[2].startswith("Read C:/p/S1.md and follow it.")
-    assert "the API base is /v2" in argv[2]
-
-
 @pytest.mark.parametrize(
     "fields,expected",
     [({"slice": "S3"}, "S3"), ({"slice": None, "agent": "goat-code-verifier"}, "verifier")],

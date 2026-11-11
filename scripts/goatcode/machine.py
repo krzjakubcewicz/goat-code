@@ -546,6 +546,10 @@ def _execute(run, evidence, stack_profile):
     limit = run.config.get("parallel", 3)
     batch = ready[:limit]
 
+    waiting = [s for s in batch if report.awaits_context(tasks.get(evidence.doc, s))]
+    if waiting:
+        return _ask_context(run, evidence, waiting[0])
+
     missing = [s for s in batch if not _worktree_ready(evidence.doc, s)]
     if missing:
         return _action(
@@ -577,6 +581,58 @@ def _execute(run, evidence, stack_profile):
             len(batch), ", ".join("{} ({})".format(d["slice"], d["model"]) for d in dispatches)
         ),
         dispatches=dispatches,
+    )
+
+
+def _ask_context(run, evidence, slice_id):
+    """Put a slice's question to the user before it is dispatched again.
+
+    NEEDS_CONTEXT used to set the slice back to pending and nothing more, so
+    the next dispatch was the same prompt and the same question. One slice
+    at a time: the answer to the first often settles the second.
+    """
+    item = tasks.get(evidence.doc, slice_id)
+    question = (item.get("report") or {}).get("reason") or "(no question recorded)"
+    return _action(
+        run,
+        "ask",
+        "slice {} cannot continue without an answer".format(slice_id),
+        "put the executor's question to the user, then record the answer",
+        ask={
+            "kind": "context",
+            "slice": slice_id,
+            "questions": [
+                {
+                    "id": slice_id,
+                    "header": "Context",
+                    "question": "Slice {} ({}) asks: {}".format(
+                        slice_id, item.get("title", ""), question
+                    ),
+                    "options": [
+                        {
+                            "label": "Use your judgement",
+                            "description": "The executor picks the most reasonable reading and reports it as a concern.",
+                        },
+                        {
+                            "label": "Skip this slice",
+                            "description": "Record the slice as blocked and carry on without it.",
+                        },
+                    ],
+                    "blocking": True,
+                }
+            ],
+            "record": dispatch.command(
+                run, "context", "--slice", slice_id, "--answer", "<what the user said>"
+            ),
+            "give_up": dispatch.command(
+                run, "report", "--slice", slice_id, "--status", "BLOCKED",
+                "--reason", "the user chose to skip this slice",
+            ),
+            "record_note": (
+                "Pass what the user typed, or the label they picked, as --answer. "
+                "For 'Skip this slice' run `give_up` instead."
+            ),
+        },
     )
 
 

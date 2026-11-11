@@ -1328,3 +1328,44 @@ def test_a_dispatch_whose_prompt_changed_is_a_new_attempt(run):
     action = machine.next_action(run)
     assert action["action"] == "dispatch"
     assert action["dispatches"][0]["agent"] == "goat-code-planner"
+
+
+# -- a slice that needs context ----------------------------------------------
+#
+# NEEDS_CONTEXT put the slice back to pending and nothing else: the next
+# dispatch was the identical prompt, the question never reached a human
+# through the machine, and an answer given in one front-end was not kept.
+
+
+def _waiting_on_context(run, question="which TTL should a token have?"):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2"):
+        path = run.root / "wt-{}".format(slice_id)
+        path.mkdir()
+        tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
+    tasks.set_status(run.tasks_path, "S2", "done")
+    report.record_slice(run, "S1", "NEEDS_CONTEXT", reason=question)
+
+
+def test_a_slice_that_needs_context_becomes_a_question_for_the_user(run):
+    _waiting_on_context(run)
+    action = machine.next_action(run)
+
+    assert action["action"] == "ask"
+    assert action["dispatches"] == []
+    assert action["ask"]["kind"] == "context"
+    assert action["ask"]["slice"] == "S1"
+    assert "which TTL should a token have?" in action["ask"]["questions"][0]["question"]
+    assert "context --slice S1" in action["ask"]["record"]
+
+
+def test_the_answer_reaches_the_executor_through_its_prompt(run):
+    _waiting_on_context(run)
+    report.record_context(run, "S1", "15 minutes, same as the session cookie")
+
+    action = machine.next_action(run)
+    assert [d["slice"] for d in action["dispatches"]] == ["S1"]
+    prompt = open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+    assert "which TTL should a token have?" in prompt
+    assert "15 minutes, same as the session cookie" in prompt

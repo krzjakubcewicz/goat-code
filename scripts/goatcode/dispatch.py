@@ -303,6 +303,22 @@ def executor(run, doc, slice_id, stack=None):
         add(str(notes))
         add("")
 
+    answered = [c for c in item.get("context") or [] if isinstance(c, dict)]
+    if answered:
+        add("## What you asked, and the answer")
+        add("")
+        add("An earlier attempt at this slice stopped to ask. Work already")
+        add("committed in the worktree is yours to keep or change.")
+        add("")
+        for exchange in answered:
+            add("- You asked: {}".format(exchange.get("question")))
+            add("  Answer: {}".format(exchange.get("answer")))
+        add("")
+        add("That was the one question this slice gets. If something is still")
+        add("missing, choose the most reasonable reading and report it with")
+        add("`DONE_WITH_CONCERNS`, or report `BLOCKED`.")
+        add("")
+
     add("## Report")
     add("")
     add("Write your full report to:")

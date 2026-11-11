@@ -28,9 +28,12 @@ theirs.
 4. `cd` into your worktree. You are already on your branch. Confirm with
    `git status` before you touch anything.
 
-If the brief leaves something genuinely ambiguous, return `NEEDS_CONTEXT`
-with the precise question **before** you start writing code. Asking early is
-cheap; discovering at review time that you guessed wrong is not.
+If the brief leaves something genuinely ambiguous, report `NEEDS_CONTEXT`
+through the command in your dispatch, with the precise question as
+`--reason`, **before** you start writing code. Asking early is cheap;
+discovering at review time that you guessed wrong is not. The question goes
+to the user and you are dispatched again with the answer in your prompt. A
+slice gets one question: put everything you need into it.
 
 ## The rules that keep parallel work safe
 

@@ -104,10 +104,6 @@ def build_argv(entry, repo, config=None):
     fields, body = definition(entry["agent"])
 
     instruction = INSTRUCTION.format(entry["prompt"])
-    if entry.get("context"):
-        # A re-dispatch after NEEDS_CONTEXT: same prompt file, plus the
-        # answer to whatever the agent said it was missing.
-        instruction += "\n\nYou asked for context. Here it is:\n{}".format(entry["context"])
 
     argv = [
         config.get("claude_bin") or "claude",
