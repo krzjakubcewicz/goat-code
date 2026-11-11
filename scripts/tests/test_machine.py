@@ -140,7 +140,9 @@ def finish_slice(run, slice_id):
     target = path / "tests" / "{}.test.js".format(slice_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("// test\n", encoding="utf-8")
-    src = path / "src" / slice_id.lower() / "index.js"
+    # Inside the slice's own glob: a DONE that wrote anywhere else is refused.
+    owned = tasks.get(tasks.load(run.tasks_path), slice_id)["owns"][0]
+    src = path / owned.replace("**", "index.js")
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_text("module.exports = 1;\n", encoding="utf-8")
     osenv.git(["add", "-A"], cwd=path, check=True)

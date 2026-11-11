@@ -11,7 +11,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from . import classify, gates, ledger, miniyaml, osenv, tasks, tdd, workflow as workflowmod
+from . import classify, diffpkg, gates, ledger, miniyaml, osenv, schema, tasks, tdd, workflow as workflowmod
 
 SLICE_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED")
 FINISHED = ("DONE", "DONE_WITH_CONCERNS")
@@ -148,10 +148,73 @@ def verify_done(run, doc, slice_id, status="DONE", evidence=None, profile=None):
         if not (path / relpath).exists():
             problems.append("the brief requires a test at {} and it does not exist".format(relpath))
 
+    # For both finished statuses: a concern explains how the work was done,
+    # it does not excuse where. Another slice is writing those paths now.
+    if base and head.ok:
+        problems.extend(boundary_findings(item, path, base, profile))
+
     if status == "DONE":
         problems.extend(evidence_findings(item, evidence, path))
         problems.extend(tdd_findings(run, item, path, profile))
 
+    return problems
+
+
+def boundary_findings(item, worktree_path, base, profile=None):
+    """Where the slice wrote, held against what the plan let it write.
+
+    The ownership rules were validated in the plan before dispatch and were
+    only a paragraph in the brief after it. Disjoint ownership is what makes
+    a wave safe to run in parallel, so it is checked on the commits.
+    """
+    problems = []
+    owns = [str(p) for p in item.get("owns") or []]
+    shared = [str(p) for p in item.get("touches_shared") or []]
+
+    def inside(relpath, patterns):
+        return any(schema.matches(pattern, relpath) for pattern in patterns)
+
+    changed = diffpkg.changed_files(worktree_path, base, "HEAD")
+    outside = [
+        relpath
+        for relpath in changed
+        if not inside(relpath, owns + shared) and not tdd.is_test_path(relpath, item, profile)
+    ]
+    if outside:
+        problems.append(
+            "these files are outside the paths this slice owns ({}): {}. Move the change"
+            " inside your paths, or report BLOCKED and say what you needed".format(
+                ", ".join(owns) or "none", ", ".join(outside[:8])
+            )
+        )
+
+    rewritten = []
+    for relpath in changed:
+        if inside(relpath, owns) or not inside(relpath, shared):
+            continue
+        stat = osenv.git(["diff", "--numstat", "{}..HEAD".format(base), "--", relpath], cwd=worktree_path)
+        removed = (stat.out.split() or ["0", "0"])[1]
+        if removed not in ("0", "-"):
+            rewritten.append(relpath)
+    if rewritten:
+        problems.append(
+            "shared paths are append-only, and these had lines removed or rewritten: {}".format(
+                ", ".join(rewritten)
+            )
+        )
+
+    merges = osenv.git(["rev-list", "--merges", "{}..HEAD".format(base)], cwd=worktree_path)
+    if merges.out:
+        problems.append(
+            "this branch contains a merge commit ({}); a slice never merges, rebases or"
+            " pulls in another branch".format(merges.out.split()[0][:8])
+        )
+
+    branch = osenv.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=worktree_path)
+    if item.get("branch") and branch.ok and branch.out != item["branch"]:
+        problems.append(
+            "the worktree is on {}, not the slice's branch {}".format(branch.out, item["branch"])
+        )
     return problems
 
 

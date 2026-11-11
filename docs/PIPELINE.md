@@ -191,6 +191,12 @@ A `DONE` is checked before it is accepted: clean worktree, HEAD moved from
 the slice's base, and every declared test file present. A rejection lists all
 the problems and changes nothing.
 
+Where the slice wrote is checked on its commits too, for `DONE` and
+`DONE_WITH_CONCERNS` alike: every changed file must match the slice's `owns`
+or `touches_shared` globs or be a test file, a shared path may only gain
+lines, and the branch may hold no merge commit. Disjoint ownership is what
+makes a wave safe to run in parallel, so it is not left to the brief.
+
 **A blocked slice** is retried exactly once, on `models.executor_escalated`.
 If it blocks again it is marked failed and the run moves on; its dependents
 never become ready, and the replanner picks it up.

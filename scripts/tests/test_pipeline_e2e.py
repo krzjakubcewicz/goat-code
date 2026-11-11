@@ -144,12 +144,16 @@ class FakeAgent:
         path = tasks.get(doc, slice_id)["worktree"]
         # What a real executor relies on: the code its dependencies built is
         # in the tree it was handed.
+        def owned_file(of):
+            # Inside the slice's own glob: a DONE that wrote anywhere else is refused.
+            return tasks.get(doc, of)["owns"][0].replace("**", "index.js")
+
         for dependency in tasks.get(doc, slice_id).get("depends_on") or []:
-            built = pathlib.Path(path) / "src" / dependency.lower() / "index.js"
+            built = pathlib.Path(path) / owned_file(dependency)
             assert self.conflict or built.exists(), "{} cannot see {}".format(slice_id, dependency)
         _write(path, "tests/{}.test.js".format(slice_id), "// test\n")
         body = "shared\n" if self.conflict else "module.exports = '{}';\n".format(slice_id)
-        target = "shared.js" if self.conflict else "src/{}/index.js".format(slice_id.lower())
+        target = "shared.js" if self.conflict else owned_file(slice_id)
         _write(path, target, "{}{}".format(body, slice_id))
         osenv.git(["add", "-A"], cwd=path, check=True)
         osenv.git(["commit", "-qm", "{}: work".format(slice_id)], cwd=path, check=True)
@@ -523,7 +527,11 @@ def test_a_slice_that_recovers_on_the_retry_completes(started):
 
 def test_a_merge_conflict_wakes_the_synthesizer_and_the_run_finishes(started):
     agent = FakeAgent(
-        [slice_doc("S1", "src/s1/**"), slice_doc("S2", "src/s2/**")], conflict=True
+        [
+            slice_doc("S1", "src/s1/**", touches_shared=["shared.js"]),
+            slice_doc("S2", "src/s2/**", touches_shared=["shared.js"]),
+        ],
+        conflict=True,
     )
     driver = make_driver(started, agent)
     final = driver.loop()

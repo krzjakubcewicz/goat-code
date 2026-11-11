@@ -612,3 +612,79 @@ def test_asking_for_context_a_second_time_blocks_the_slice(run, plan):
     result = report.record_slice(run, "S1", "NEEDS_CONTEXT", reason="which port?")
     assert result["slice_status"] == "blocked"
     assert "which port?" in tasks.get(tasks.load(run.tasks_path), "S1")["report"]["reason"]
+
+
+# -- ownership -------------------------------------------------------------
+#
+# "Create and edit files ONLY inside your owned paths" was validated in the
+# plan before dispatch and never looked at again afterwards.
+
+
+def _commit(path, files, message="more work"):
+    for relpath, text in files.items():
+        target = path / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    osenv.git(["add", "-A"], cwd=path, check=True)
+    osenv.git(["commit", "-qm", message], cwd=path, check=True)
+
+
+def test_done_is_rejected_when_the_slice_wrote_outside_what_it_owns(run, plan):
+    path = prepare(run, "S1")
+    _commit(path, {"src/mail/send.js": "// S2 owns this\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    assert "src/mail/send.js" in str(excinfo.value)
+    assert "outside" in str(excinfo.value)
+
+
+def test_owned_paths_and_test_files_are_inside_the_boundary(run, plan):
+    path = prepare(run, "S1")
+    _commit(path, {"src/auth/store.js": "// owned\n", "tests/helpers/fake.test.js": "// a test\n"})
+    assert report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])["slice_status"] == "done"
+
+
+def test_a_concern_does_not_excuse_writing_outside_the_boundary(run, plan):
+    """DONE_WITH_CONCERNS is the way past the evidence and TDD checks, which
+    judge how the work was done. Where it was done is not negotiable: another
+    slice is writing those paths at the same moment."""
+    path = prepare(run, "S1")
+    _commit(path, {"src/mail/send.js": "// S2 owns this\n"})
+    with pytest.raises(ReportError):
+        report.record_slice(run, "S1", "DONE_WITH_CONCERNS", concerns="touched the mailer")
+
+
+def _shared(run, git_repo):
+    """S1 may append to a registry that exists at the base commit."""
+    from tests import conftest
+
+    conftest.commit_file(git_repo, "src/registry.js", "one\ntwo\n", "registry")
+    run.state["base_commit"] = osenv.git(["rev-parse", "HEAD"], cwd=git_repo).out
+    run.save()
+    tasks.set_field(run.tasks_path, "S1", "touches_shared", ["src/registry.js"])
+    return prepare(run, "S1")
+
+
+def test_appending_to_a_shared_path_is_allowed(run, plan, git_repo):
+    path = _shared(run, git_repo)
+    _commit(path, {"src/registry.js": "one\ntwo\nthree\n"})
+    assert report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])["slice_status"] == "done"
+
+
+def test_rewriting_a_shared_path_is_rejected(run, plan, git_repo):
+    path = _shared(run, git_repo)
+    _commit(path, {"src/registry.js": "three\n"})
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    assert "src/registry.js" in str(excinfo.value)
+    assert "append-only" in str(excinfo.value)
+
+
+def test_done_is_rejected_when_another_branch_was_merged_in(run, plan):
+    path = prepare(run, "S1")
+    other = prepare(run, "S2")
+    branch = osenv.git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=other).out
+    osenv.git(["merge", "--no-ff", "-qm", "pull in S2", branch], cwd=path, check=True)
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    assert "merge" in str(excinfo.value)
