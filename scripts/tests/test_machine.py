@@ -1024,6 +1024,8 @@ def test_classification_switched_off_behaves_exactly_as_before(git_repo):
 def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
     run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
     write_plan(run)
+    # Slices only finish after the branch is named; without it the plan reads as unstarted.
+    run.adopt_branch("feature/magic-link")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
@@ -1038,6 +1040,8 @@ def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
 def test_a_direct_workflow_fails_on_a_failed_end_to_end_test(run):
     run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
     write_plan(run)
+    # Slices only finish after the branch is named; without it the plan reads as unstarted.
+    run.adopt_branch("feature/magic-link")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
@@ -1053,6 +1057,8 @@ def test_a_direct_workflow_fails_on_a_failed_end_to_end_test(run):
 def test_a_direct_workflow_fails_rather_than_replanning_on_a_red_gate(run):
     run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
     write_plan(run)
+    # Slices only finish after the branch is named; without it the plan reads as unstarted.
+    run.adopt_branch("feature/magic-link")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
@@ -1171,6 +1177,8 @@ def test_an_escalation_is_not_lost_when_the_run_would_otherwise_be_done(run, git
         item["status"] = "done"
     doc["slices"][0]["owns"] = ["src/auth/**"]
     write_plan(run, doc)
+    # Slices only finish after the branch is named; without it the plan reads as unstarted.
+    run.adopt_branch("feature/magic-link")
     run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.state["scribe"] = {"status": "WRITTEN"}
     run.save()
@@ -1478,3 +1486,40 @@ def test_a_dispatch_in_between_clears_the_repeat_count(run):
         tasks.set_field(run.tasks_path, slice_id, "worktree", str(path))
     assert machine.next_action(run)["action"] == "dispatch"
     assert "repeated_run" not in Run.load(run.repo, run.run_id).state
+
+
+# -- a plan is checked once more before anything executes ---------------------
+
+
+def test_a_fresh_plan_with_a_finished_slice_goes_back_to_the_planner(run):
+    doc = copy.deepcopy(PLAN)
+    doc["slices"][0]["status"] = "done"
+    write_plan(run, doc)
+    assert machine.derive_phase(run) == "plan"
+    action = machine.next_action(run)
+    assert "pending" in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()
+
+
+def test_statuses_move_freely_once_execution_has_started(run):
+    write_plan(run)
+    approved(run)
+    tasks.set_status(run.tasks_path, "S1", "done")
+    assert machine.derive_phase(run) != "plan"
+
+
+def test_a_replan_that_reopens_a_failed_slice_goes_back(run):
+    write_plan(run)
+    approved(run)
+    tasks.set_status(run.tasks_path, "S1", "done")
+    tasks.set_status(run.tasks_path, "S2", "failed")
+    tasks.set_status(run.tasks_path, "S3", "failed")
+    miniyaml.dump(tasks.load(run.tasks_path), run.cycle_dir() / "tasks-snapshot.yaml")
+    run.advance_cycle()
+    run.state["awaiting_replan"] = True
+    run.save()
+    tasks.set_status(run.tasks_path, "S1", "carried")
+    tasks.set_status(run.tasks_path, "S2", "pending")
+
+    assert machine.derive_phase(run) == "plan"
+    action = machine.next_action(run)
+    assert "new id" in open(action["dispatches"][0]["prompt"], encoding="utf-8").read()

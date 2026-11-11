@@ -60,8 +60,15 @@ criteria that were not accepted. Carried slices are never re-executed. Do
 not delete them from the plan — the verifier still checks their criteria
 next cycle.
 
-**Add only remedial slices**, each `status: pending`. They must obey the
-same discipline as any plan:
+**Add only remedial slices**, each `status: pending` and each with a **new
+id**. A slice that failed or blocked last cycle stays in the plan as it is;
+do not set it back to `pending`. Its branch and worktree still hold the
+failed attempt, and a reopened id would start on top of them. The validator
+checks all of this against a snapshot of the plan you are replacing: carried
+slices still present and still `carried`, `kind` unchanged, remedial slices
+new and pending.
+
+They must obey the same discipline as any plan:
 
 - disjoint `owns` globs within a wave. The carried slices' files already
   exist on the integration branch, so a remedial slice *should* claim the

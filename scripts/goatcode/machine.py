@@ -39,6 +39,9 @@ class Evidence:
                 self.parse_error = str(exc)
             else:
                 self.validation = schema.validate(self.doc)
+                if self.validation.ok:
+                    for error in _unstarted_plan_errors(run, self.doc):
+                        self.validation.error(error)
 
         self.round = run.grill_rounds + 1
         self.questions = dispatch.questions_path(run, self.round)
@@ -113,6 +116,28 @@ class Evidence:
     @property
     def unfinished(self):
         return tasks.remaining(self.doc) if self.doc else []
+
+
+def _unstarted_plan_errors(run, doc):
+    """The extra rules for a plan no executor has touched yet.
+
+    Whether a plan is unstarted is read from state that already exists: in
+    cycle 1 the feature branch is named just before the first dispatch, and
+    in a later cycle `awaiting_replan` is cleared at the same point.
+    """
+    if run.cycle <= 1:
+        return [] if run.feature_branch else schema.fresh_plan_errors(doc)
+    if not run.state.get("awaiting_replan") or not tasks.ready(doc):
+        # Either execution is under way, or the replanner has not delivered:
+        # the plan on disk is still last cycle's.
+        return []
+    snapshot = run.cycle_dir(run.cycle - 1) / "tasks-snapshot.yaml"
+    if not snapshot.exists():
+        return []
+    try:
+        return schema.replan_errors(miniyaml.load(snapshot) or {}, doc)
+    except miniyaml.YamlError:
+        return []
 
 
 # --------------------------------------------------------------------------
