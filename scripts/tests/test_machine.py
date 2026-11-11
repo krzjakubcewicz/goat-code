@@ -234,7 +234,7 @@ def test_finishing_cycle_two_synthesizes_before_verifying(run):
     was built at the previous cycle's integration ref."""
     write_plan(run)
     approved(run)
-    run.state["merge"] = {"status": "clean", "merged": [], "pending": [], "worktree": "w"}
+    run.state["merge"] = {"status": "clean", "merged": ["S1", "S2", "S3"], "pending": [], "worktree": "w"}
     run.save()
     run.advance_cycle()
     for slice_id in ("S1", "S2", "S3"):
@@ -247,7 +247,7 @@ def test_a_clean_merge_moves_to_verify(run):
     approved(run)
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "merged": [], "pending": [], "worktree": "w"}
+    run.state["merge"] = {"status": "clean", "merged": ["S1", "S2", "S3"], "pending": [], "worktree": "w"}
     run.save()
     assert machine.derive_phase(run) == "verify"
 
@@ -512,7 +512,69 @@ def test_the_second_wave_waits_for_the_first(run):
 
     action = machine.next_action(run)
     assert action["action"] == "run"
+    assert action["commands"][0][-1] == "merge", "the first wave lands before the second branches off it"
+
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2"], "pending": []}
+    run.save()
+    action = machine.next_action(run)
+    assert action["action"] == "run"
     assert action["commands"][0][-2:] == ["create", "S3"]
+
+
+# -- a wave is merged before the next one starts -----------------------------
+#
+# A worktree starts at the integration tip. Merging happened once per cycle,
+# after every wave, so a second-wave executor was told its dependencies'
+# interfaces "exist now" in a tree that held none of their code.
+
+
+def _first_wave_done(run):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+
+
+def test_a_finished_wave_is_merged_before_its_dependents_run(run):
+    _first_wave_done(run)
+    assert machine.derive_phase(run) == "synthesize"
+
+
+def test_dependents_run_once_their_dependencies_are_merged(run):
+    _first_wave_done(run)
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2"], "pending": []}
+    run.save()
+    assert machine.derive_phase(run) == "execute"
+
+
+def test_a_dependency_merged_in_an_earlier_cycle_counts(run):
+    write_plan(run)
+    approved(run)
+    for slice_id in ("S1", "S2"):
+        tasks.set_status(run.tasks_path, slice_id, "carried")
+    assert machine.derive_phase(run) == "execute"
+
+
+def test_the_last_wave_is_merged_before_verify(run):
+    """A clean merge of the first wave is not a clean merge of the run."""
+    _first_wave_done(run)
+    tasks.set_status(run.tasks_path, "S3", "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2"], "pending": []}
+    run.save()
+    assert machine.derive_phase(run) == "synthesize"
+    action = machine.next_action(run)
+    assert action["action"] == "run" and action["commands"][0][-1] == "merge"
+
+
+def test_a_conflict_in_the_first_wave_holds_the_second(run):
+    _first_wave_done(run)
+    run.state["merge"] = {
+        "status": "conflict", "worktree": "w", "merged": ["S1"], "pending": ["S2"],
+        "conflicted": "S2", "conflicts": ["src/shared.js"],
+    }
+    run.save()
+    action = machine.next_action(run)
+    assert action["dispatches"][0]["agent"] == "goat-code-synthesizer"
 
 
 def test_a_blocked_slice_is_retried_once_on_a_stronger_model(run):
@@ -587,7 +649,7 @@ def test_a_clean_merge_never_wakes_the_synthesizer(run):
     approved(run)
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1"], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
 
     action = machine.next_action(run)
@@ -600,7 +662,7 @@ def test_verify_dispatches_the_verifier_once_the_package_exists(run):
     approved(run)
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
@@ -625,7 +687,7 @@ def test_a_remedial_cycle_narrows_the_verifier_to_what_moved(run, git_repo):
     second = conftest.commit_file(git_repo, "src/s2/index.js", "two", "s2")
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "worktree": str(git_repo), "merged": [], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": str(git_repo), "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "ref": second})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
@@ -962,7 +1024,7 @@ def test_a_direct_workflow_is_done_on_green_gates_without_a_verifier(run):
     write_plan(run)
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
@@ -976,7 +1038,7 @@ def test_a_direct_workflow_fails_on_a_failed_end_to_end_test(run):
     write_plan(run)
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
@@ -991,7 +1053,7 @@ def test_a_direct_workflow_fails_rather_than_replanning_on_a_red_gate(run):
     write_plan(run)
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": ["test"]})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
@@ -1005,7 +1067,7 @@ def test_a_planned_workflow_still_dispatches_the_verifier(run):
     approved(run)
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
@@ -1107,7 +1169,7 @@ def test_an_escalation_is_not_lost_when_the_run_would_otherwise_be_done(run, git
         item["status"] = "done"
     doc["slices"][0]["owns"] = ["src/auth/**"]
     write_plan(run, doc)
-    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.state["scribe"] = {"status": "WRITTEN"}
     run.save()
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}, "regressions": []})
@@ -1260,7 +1322,7 @@ def _verify_ready(run):
     approved(run)
     for slice_id in ("S1", "S2", "S3"):
         tasks.set_status(run.tasks_path, slice_id, "done")
-    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": [], "pending": []}
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
     run.save()
     osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {}})
     (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")

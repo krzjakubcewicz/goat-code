@@ -67,6 +67,44 @@ class Evidence:
         return tasks.ready(self.doc) if self.doc else []
 
     @property
+    def merged(self):
+        """Slices whose work is on the integration branch.
+
+        Carried ones landed in an earlier cycle; the rest are whatever this
+        cycle's merge has taken so far.
+        """
+        carried = [s["id"] for s in tasks.slices(self.doc or {}) if s.get("status") == "carried"]
+        return set(self.merge_state.get("merged") or []) | set(carried)
+
+    @property
+    def dispatchable(self):
+        """Ready slices whose dependencies are merged, not merely finished.
+
+        A worktree starts at the integration tip. Slices were merged once
+        per cycle, after every wave, so a second-wave executor was told its
+        dependencies' interfaces "exist now" in a tree that held none of
+        their code.
+        """
+        if not self.doc:
+            return []
+        merged = self.merged
+        return [
+            slice_id
+            for slice_id in self.ready
+            if all(dep in merged for dep in tasks.get(self.doc, slice_id).get("depends_on") or [])
+        ]
+
+    @property
+    def unmerged(self):
+        """Slices finished this cycle that the merge has not taken yet."""
+        if not self.doc:
+            return []
+        taken = set(self.merge_state.get("merged") or [])
+        return [
+            s["id"] for s in tasks.slices(self.doc) if s.get("status") == "done" and s["id"] not in taken
+        ]
+
+    @property
     def blocked(self):
         if not self.doc:
             return []
@@ -141,10 +179,16 @@ def derive_phase(run, evidence=None):
     if run.state.get("awaiting_replan") and not evidence.ready:
         return "replan"
 
-    if evidence.ready or evidence.blocked:
+    if evidence.dispatchable:
+        return "execute"
+    if evidence.ready:
+        # Ready, but waiting on a dependency that is finished and not yet
+        # merged: land the wave before the next one branches off it.
+        return "synthesize"
+    if evidence.blocked:
         return "execute"
 
-    if evidence.merge_state.get("status") in ("clean", "empty"):
+    if evidence.merge_state.get("status") in ("clean", "empty") and not evidence.unmerged:
         return "verify"
 
     if evidence.unfinished and not evidence.ready:
@@ -564,13 +608,16 @@ def _execute(run, evidence, stack_profile):
             commands=[cli_argv(run, "branch")],
         )
 
-    ready = evidence.ready
+    ready = evidence.dispatchable
     if not ready:
         retried = _retry_blocked(run, evidence)
         if retried:
             evidence = Evidence(run)
-            ready = evidence.ready
-        else:
+            ready = evidence.dispatchable
+        if not ready and evidence.ready:
+            # The retry is waiting on a merge like any other ready slice.
+            return _synthesize(run, evidence, stack_profile)
+        if not ready:
             _fail_stuck(run, evidence)
             return _synthesize(run, Evidence(run), stack_profile)
 
@@ -704,7 +751,9 @@ def _synthesize(run, evidence, _stack):
     state = evidence.merge_state
     status = state.get("status", "not-started")
 
-    if status in ("not-started", "in-progress"):
+    # A clean merge with finished slices it has not taken is the merge of an
+    # earlier wave; run it again and it picks up the rest.
+    if status in ("not-started", "in-progress") or (status != "conflict" and evidence.unmerged):
         return _action(
             run,
             "run",
