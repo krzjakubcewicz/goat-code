@@ -214,6 +214,16 @@ def record_slice(
     except tasks.TaskError as exc:
         raise ReportError(str(exc))
 
+    if item.get("status") in tasks.TERMINAL and status not in FINISHED:
+        # The driver reports BLOCKED for any agent process that exits badly,
+        # including one that hit its budget after its DONE was accepted.
+        # That turned verified work into a retry, and then into a failure.
+        raise ReportError(
+            "{} is already {}; a finished slice cannot go back to {}".format(
+                slice_id, item.get("status"), status
+            )
+        )
+
     if status in FINISHED and not force:
         problems = verify_done(run, doc, slice_id, status=status, evidence=evidence, profile=profile)
         if problems:

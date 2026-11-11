@@ -111,6 +111,17 @@ def test_done_writes_a_ledger_entry(run, plan):
     assert any("slice S1 done" in entry for entry in ledger.entries(run))
 
 
+def test_a_finished_slice_cannot_be_reported_blocked_afterwards(run, plan):
+    """The driver reports BLOCKED for an agent process that exits badly. One
+    that ran out of budget after its DONE was accepted lost verified work."""
+    prepare(run, "S1")
+    report.record_slice(run, "S1", "DONE", evidence=EVIDENCE["S1"])
+    with pytest.raises(ReportError) as excinfo:
+        report.record_slice(run, "S1", "BLOCKED", reason="budget exhausted")
+    assert "already done" in str(excinfo.value)
+    assert tasks.get(tasks.load(run.tasks_path), "S1")["status"] == "done"
+
+
 def test_done_with_concerns_still_counts_as_finished(run, plan):
     prepare(run, "S1")
     result = report.record_slice(
