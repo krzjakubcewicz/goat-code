@@ -16,7 +16,7 @@ from __future__ import annotations
 import pathlib
 import sys
 
-from . import _scribe_prompt, osenv, progress, tasks
+from . import _scribe_prompt, osenv, progress, report, tasks
 
 #: Absolute path to the CLI, resolved from this file so a rendered command
 #: is correct regardless of the agent's working directory or PATH.
@@ -733,11 +733,23 @@ def replanner(run, previous_cycle):
     add("")
     add("Rewrite `{}` for cycle {}.".format(run.tasks_path, run.cycle))
     add("")
-    add("Slices already marked `carried` passed and are merged; leave them")
-    add("exactly as they are so nothing re-executes them. Add only remedial")
-    add("slices, `status: pending`, obeying the same ownership and acceptance")
-    add("rules as any plan.")
+    # Carried means merged, not passed: every finished slice is carried,
+    # because its code is on the integration branch whatever the verifier
+    # ruled. Saying "passed" here sent the replanner away from the slices it
+    # had to remedy.
+    add("Slices marked `carried` are merged into the integration branch, whether")
+    add("or not the verifier accepted them. Leave them exactly as they are so")
+    add("nothing re-executes them. Add only remedial slices, `status: pending`,")
+    add("obeying the same ownership and acceptance rules as any plan. A remedial")
+    add("slice may own a carried slice's paths: that is how it fixes them.")
     add("")
+    unmet = [row for row in report.parse_verdict(run, previous_cycle) if row["mark"] != "pass"]
+    if unmet:
+        add("The verifier did not accept these criteria; each needs a remedy:")
+        add("")
+        for row in unmet:
+            add("- {}/{}: {}".format(row["slice"], row["id"], row["evidence"] or "(no reason given)"))
+        add("")
     add("Validate before you return:")
     add("")
     add("    {}".format(command(run, "plan", "validate")))

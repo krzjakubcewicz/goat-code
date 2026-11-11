@@ -515,6 +515,11 @@ def _validate_ownership(slices, report):
         for right_id in ids[i + 1 :]:
             left = by_id[left_id]
             right = by_id[right_id]
+            if "carried" in (left.get("status"), right.get("status")):
+                # A carried slice never runs again and its work is merged, so
+                # it cannot race anything. A remedial slice has to own those
+                # paths to fix them.
+                continue
             clashes = _clashing(left.get("owns"), right.get("owns"))
             if not clashes:
                 continue
