@@ -68,7 +68,7 @@ def plan(run):
 
 def test_command_pins_interpreter_repo_and_run(run):
     text = dispatch.command(run, "report", "--slice", "S1")
-    assert sys.executable in text
+    assert dispatch.interpreter(run) in text
     assert "goatcode.py" in text
     assert str(run.repo) in text
     assert run.run_id in text
@@ -589,3 +589,23 @@ def test_remedial_slices_go_to_the_stronger_executor(run, plan):
     run.advance_cycle()
     text = dispatch.replanner(run, 1)
     assert "model: {}".format(run.config["models"]["executor_escalated"]) in text
+
+
+def test_every_prompt_names_the_scratch_directory(run):
+    """An agent told nowhere to put a throwaway file chose the system temp
+    directory. `write` is the one door every prompt goes through."""
+    path = dispatch.write(run, "anything", "# Some dispatch")
+    assert str(run.scratch_dir) in osenv.read_text(path)
+    assert run.scratch_dir.is_dir()
+    assert run.scratch_dir.parent == run.temp_root, "inside what the guard already admits"
+
+
+def test_commands_name_plain_python_when_path_has_one(run, monkeypatch):
+    monkeypatch.setattr(dispatch.shutil, "which", lambda name: "/usr/bin/python")
+    assert dispatch.command(run, "report").startswith('"python" ')
+
+
+def test_commands_fall_back_to_the_running_interpreter(run, monkeypatch):
+    """A system with only python3 has no `python` to name."""
+    monkeypatch.setattr(dispatch.shutil, "which", lambda name: None)
+    assert sys.executable in dispatch.command(run, "report")

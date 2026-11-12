@@ -102,8 +102,14 @@ def test_the_guard_hook_is_wired_up():
     entries = data["hooks"]["PreToolUse"]
     assert len(entries) == 1
 
-    for tool in ("Read", "Edit", "Write", "Glob", "Grep", "Bash"):
+    for tool in ("Read", "Edit", "Write", "Glob", "Grep", "Bash", "PowerShell"):
         assert tool in entries[0]["matcher"]
+
+    # An approval is only ever seen by the tool having run, so the same
+    # tools have to be watched on the way out.
+    after = data["hooks"]["PostToolUse"]
+    assert after[0]["matcher"] == entries[0]["matcher"]
+    assert after[0]["hooks"][0]["command"].endswith("repo_guard.sh\" post")
 
     command = entries[0]["hooks"][0]["command"]
     assert "${CLAUDE_PLUGIN_ROOT}" in command, "the path must resolve wherever it is installed"

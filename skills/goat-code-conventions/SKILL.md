@@ -101,10 +101,14 @@ worktrees, and goat-code's own files. Nothing else - not a sibling checkout,
 not another project you remember, however relevant it looks.
 
 This is enforced by a `PreToolUse` hook while a run is live, not left to
-judgement. A refused call comes back naming the path and is recorded in the
-run's `guard.jsonl`, which the verifier is shown. If a path outside genuinely
-matters, say so in your report: `guard.extra_roots` in
+judgement. A call outside is put to the user, or refused outright where
+nobody is watching; a refused call comes back naming the path and is recorded
+in the run's `guard.jsonl`, which the verifier is shown. If a path outside
+genuinely matters, say so in your report: `guard.extra_roots` in
 `.goatcode/config.yaml` is the user's decision, not yours.
+
+Throwaway files - logs, captured output, one-off scripts - go in the scratch
+directory your dispatch prompt names, never the system temp directory.
 
 ## Run directory
 
@@ -133,7 +137,8 @@ never commits it.
     merge-report.md   gates.json   review.diff   verdict.md
 ```
 
-Worktrees are **outside** the repo, at `<tempdir>/goatcode/<8 hex>/<slice-id>`.
+Worktrees are **outside** the repo, at `<tempdir>/goatcode/<8 hex>/<slice-id>`,
+with the run's scratch directory beside them at `<tempdir>/goatcode/<8 hex>/scratch`.
 
 ## tasks.yaml dialect
 

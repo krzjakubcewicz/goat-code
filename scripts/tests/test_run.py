@@ -531,3 +531,46 @@ def test_a_recorded_classification_is_read_back(git_repo):
     reloaded = Run.load(git_repo)
     assert reloaded.classification["complexity"] == "SIMPLE"
     assert reloaded.workflow == "DIRECT_DEVELOPMENT"
+
+
+# -- an approved path is remembered ------------------------------------------
+
+M2 = "C:/Users/me/.m2"
+
+
+def _roots(repo):
+    return runmod.load_config(repo)["guard"]["extra_roots"]
+
+
+@pytest.mark.parametrize(
+    "existing",
+    [
+        None,
+        "parallel: 2\n",
+        "# kept\nguard:\n  enabled: true\n  extra_roots: []\n\nparallel: 2\n",
+        "guard:\n    # kept\n    extra_roots:\n        - ../design-system\n    enabled: true\n",
+        "guard:\n  enabled: true\n",
+    ],
+)
+def test_add_extra_root_keeps_the_rest_of_the_file(git_repo, existing):
+    path = git_repo / ".goatcode" / "config.yaml"
+    path.parent.mkdir(exist_ok=True)
+    if existing is not None:
+        path.write_text(existing, encoding="utf-8")
+    before = runmod.load_config(git_repo)
+
+    assert runmod.add_extra_root(git_repo, M2) is True
+
+    after = runmod.load_config(git_repo)
+    assert after["guard"]["extra_roots"] == before["guard"]["extra_roots"] + [M2]
+    assert after["guard"]["enabled"] is True
+    assert after["parallel"] == before["parallel"]
+    if existing and "# kept" in existing:
+        assert "# kept" in path.read_text(encoding="utf-8")
+
+
+def test_add_extra_root_twice_writes_once(git_repo):
+    (git_repo / ".goatcode").mkdir(exist_ok=True)
+    assert runmod.add_extra_root(git_repo, "C:\\Users\\me\\.m2") is True
+    assert runmod.add_extra_root(git_repo, M2) is False
+    assert _roots(git_repo) == [M2]

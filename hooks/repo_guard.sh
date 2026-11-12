@@ -34,25 +34,32 @@
 # is read with sed, since the YAML parser lives on the other side of the
 # interpreter this is choosing. A configured python that does not run stops
 # the run rather than falling back to PATH, which would hide the mistake.
+#
+# Called as `repo_guard.sh post` from PostToolUse, to record a path the user
+# was asked about and approved. Almost no call was ever asked about, so that
+# mode leaves before any interpreter starts unless a request is waiting.
 dir=${GOATCODE_REPO:-$PWD}
-while [ -n "$dir" ] && [ ! -f "$dir/.goatcode/config.yaml" ]; do
+while [ -n "$dir" ] && [ ! -d "$dir/.goatcode" ]; do
   # A sandboxed run keeps its clone one level down from where the session stands.
-  if [ -f "$dir/repo/.goatcode/config.yaml" ]; then
+  if [ -d "$dir/repo/.goatcode" ]; then
     dir=$dir/repo
     break
   fi
   parent=$(dirname "$dir")
   [ "$parent" = "$dir" ] && dir= || dir=$parent
 done
-if [ -n "$dir" ]; then
-  config="$dir/.goatcode/config.yaml"
+if [ "$1" = post ]; then
+  [ -n "$dir" ] && [ -f "$dir/.goatcode/guard.pending" ] || exit 0
+fi
+config="$dir/.goatcode/config.yaml"
+if [ -n "$dir" ] && [ -f "$config" ]; then
   configured=$(tr -d '\r' <"$config" | sed -n 's/^python:[[:space:]]*//p' | head -n 1 |
     sed -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//' -e "s/^['\"]//" -e "s/['\"]\$//")
   case "$configured" in
     "" | null | "~") ;;
     *)
       if "$configured" -c '' </dev/null >/dev/null 2>&1; then
-        "$configured" "$(dirname "$0")/repo_guard.py"
+        "$configured" "$(dirname "$0")/repo_guard.py" "$@"
         status=$?
         if [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; then
           exit "$status"
@@ -64,14 +71,16 @@ if [ -n "$dir" ]; then
   esac
 fi
 
-for interpreter in python3 python py; do
+# `python` first: it is the name rendered commands use, so the hook and the
+# commands it guards run under the same interpreter.
+for interpreter in python python3 py; do
   command -v "$interpreter" >/dev/null 2>&1 || continue
   "$interpreter" -c '' </dev/null >/dev/null 2>&1 || continue
-  "$interpreter" "$(dirname "$0")/repo_guard.py"
+  "$interpreter" "$(dirname "$0")/repo_guard.py" "$@"
   status=$?
   if [ "$status" -eq 0 ] || [ "$status" -eq 2 ]; then
     exit "$status"
   fi
 done
-echo "goat-code: no working Python (python3, python or py) was found, so the repository guard cannot run and the run is stopped. Install Python 3.9+ and put it on PATH, then restart. Report this to the user; do not work around it." >&2
+echo "goat-code: no working Python (python, python3 or py) was found, so the repository guard cannot run and the run is stopped. Install Python 3.9+ and put it on PATH, then restart. Report this to the user; do not work around it." >&2
 exit 2

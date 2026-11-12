@@ -245,6 +245,24 @@ the test suite cannot drive end to end. That is also why the *decision* lives
 in `guard.py`, which is ordinary tested code, and the hook is a thin
 try/except around it.
 
+**Where someone is watching, it asks.** Refusing a build's read of its own
+dependency cache helped nobody, and the agent could not act on the refusal.
+In a plugin session the hook answers `permissionDecision: ask` instead, and
+the user decides. A hook never sees the answer, so the request is parked in
+`.goatcode/guard.pending` and a PostToolUse hook reads the tool having run as
+the yes: it appends the approved root to `guard.extra_roots`, so the same
+place is asked about once. A recognised cache (`~/.m2`, `~/.gradle`, `~/.npm`,
+`~/.cargo`, `~/go/pkg/mod`) is granted whole, anything else by its directory.
+PostToolUse fires on every call, so the shim leaves before starting an
+interpreter unless a request is waiting. The standalone driver sets
+`GOATCODE_HEADLESS`, and there the guard refuses as before - nobody can
+answer.
+
+**Agents are told where scratch files go.** With no named place, one wrote
+into the system temp directory through `$TEMP`, which a shell heuristic cannot
+see. Every rendered prompt now ends by naming `<temp_root>/scratch` - inside
+what the guard already admits, and removed with the run's worktrees.
+
 Refusals go to `guard.jsonl` in the run directory, appended one line at a
 time. Deliberately not the ledger: `ledger.append` is read-modify-write with
 no lock, and a wave of executors tripping the guard would corrupt it.

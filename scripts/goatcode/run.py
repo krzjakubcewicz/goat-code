@@ -107,6 +107,8 @@ DEFAULT_CONFIG = {
     # the repo, its worktrees and goat-code's own files is refused and
     # recorded. extra_roots names directories a run genuinely needs -
     # relative to the repository - for a monorepo with a sibling package.
+    # In a session someone is watching the call is asked about instead, and
+    # an approval is appended here as an absolute path.
     "guard": {
         "enabled": True,
         "extra_roots": [],
@@ -129,8 +131,9 @@ DEFAULT_CONFIG = {
     # The Claude Code executable, if it is not on PATH.
     "claude_bin": "claude",
     # The Python interpreter agents are told to call, and the one the guard
-    # hook runs under. null: the interpreter running goat-code for commands,
-    # and python3, python, py off PATH for the hook.
+    # hook runs under. null: plain `python` when PATH has one, else the
+    # interpreter running goat-code, for commands; python, python3, py off
+    # PATH for the hook.
     "python": None,
     "models": {
         "classifier": "haiku",
@@ -491,6 +494,63 @@ def _is_base_branch_key(line):
     return stripped == "base_branch:" or stripped.startswith("base_branch: ")
 
 
+def add_extra_root(repo, root):
+    """Append ``root`` to ``guard.extra_roots`` in ``.goatcode/config.yaml``.
+
+    Called when the user approves a tool call outside the run, so the same
+    place is not asked about twice. Line-level for the reason
+    :func:`record_base_branch` is: the file is mostly comments. Locked,
+    because a wave of executors can each be approved at once. Returns False
+    when the root was already there.
+
+    ponytail: understands the block form the template ships (``guard:`` on
+    its own line). An inline ``guard: {...}`` gets a second ``guard:`` block
+    appended; teach it flow mappings if anyone writes one.
+    """
+    path = goatcode_dir(repo) / "config.yaml"
+    root = str(root).replace("\\", "/")
+    with osenv.FileLock(path):
+        current = [str(r) for r in (load_config(repo).get("guard") or {}).get("extra_roots") or []]
+        if root in current:
+            return False
+        block = miniyaml.dumps({"guard": {"extra_roots": current + [root]}}).rstrip().splitlines()
+        base = len(block[1]) - len(block[1].lstrip())
+
+        if path.exists():
+            lines = path.read_text(encoding="utf-8").splitlines()
+        else:
+            lines = [
+                "# goat-code per-project configuration. Every option and its default",
+                "# is documented in templates/config.yaml in the plugin.",
+            ]
+
+        start = next((i for i, line in enumerate(lines) if line.rstrip() == "guard:"), None)
+        if start is None:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines += block
+        else:
+            end = start + 1
+            while end < len(lines) and (not lines[end].strip() or lines[end][:1] in (" ", "\t")):
+                end += 1
+            body = [i for i in range(start + 1, end) if lines[i].strip()]
+            key = next((i for i in body if lines[i].strip().startswith("extra_roots:")), None)
+            # Whatever indentation the user's block already has, keep it:
+            # mixing it with the serialiser's would stop the file parsing.
+            like = lines[key if key is not None else body[0]] if body else block[1]
+            indent = like[: len(like) - len(like.lstrip())]
+            fresh = [indent + line[base:] for line in block[1:]]
+            if key is None:
+                lines[start + 1 : start + 1] = fresh
+            else:
+                last = key + 1
+                while last < end and lines[last].lstrip().startswith("-"):
+                    last += 1
+                lines[key:last] = fresh
+        osenv.write_text(path, "\n".join(lines) + "\n")
+    return True
+
+
 def divergence(repo, base_branch):
     """Commits on the current branch that the base does not have.
 
@@ -750,6 +810,13 @@ class Run:
     @property
     def temp_root(self):
         return pathlib.Path(self.state["temp_root"])
+
+    @property
+    def scratch_dir(self):
+        """Where agents put throwaway files. Under ``temp_root`` so the guard
+        already admits it and reaping the run removes it; an agent with no
+        named place invented one in the system temp directory instead."""
+        return self.temp_root / "scratch"
 
     def save(self):
         self.state["updated_at"] = _now_iso()
