@@ -1,9 +1,14 @@
 #!/usr/bin/env python
-"""PreToolUse hook: refuse a tool call that reaches outside the live run.
+"""PreToolUse hook: stop a tool call that reaches outside the live run.
 
 Reads Claude Code's hook payload on stdin. Exit 0 allows the call; exit 2
 blocks it and hands stderr back to the agent as the reason. Both behaviours
 are verified against a real dispatch, including from inside a subagent.
+
+Where someone is watching, a call outside is asked about rather than
+refused: exit 0 with a ``permissionDecision: ask`` on stdout. Run as
+``repo_guard.py post`` from PostToolUse, it records what was approved - the
+tool running at all is the only sign of the answer a hook ever gets.
 
 Two properties matter more than the check:
 
@@ -24,12 +29,15 @@ import json
 import os
 import pathlib
 import sys
+import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 
 ALLOW = 0
 BLOCK = 2
+#: Not an exit status: `main` turns it into exit 0 plus a JSON decision.
+ASK = "ask"
 
 
 def find_repo(cwd):
@@ -84,9 +92,31 @@ def record(repo, state, entry):
         handle.write(json.dumps(entry) + "\n")
 
 
-def decide(payload):
-    """``(exit code, message)`` for one hook payload."""
+def call_key(payload):
+    """What ties a PostToolUse payload back to the PreToolUse one.
+
+    ``tool_use_id`` when Claude Code sends it; the call itself otherwise.
+    """
+    return str(
+        payload.get("tool_use_id")
+        or json.dumps([payload.get("tool_name"), payload.get("tool_input")], sort_keys=True)
+    )
+
+
+def pending_path(repo):
     from goatcode import guard, run as runmod
+
+    return runmod.goatcode_dir(repo) / guard.PENDING_NAME
+
+
+def decide(payload):
+    """``(verdict, message)`` for one PreToolUse payload.
+
+    Someone watching the session is asked; a headless run, where nobody can
+    answer, is refused as it always was. A hook cannot see the answer, so the
+    request is parked for :func:`approved` to find if the tool then runs.
+    """
+    from goatcode import guard, osenv, run as runmod
 
     cwd = payload.get("cwd") or os.getcwd()
     repo = find_repo(cwd)
@@ -102,25 +132,79 @@ def decide(payload):
         return ALLOW, ""
 
     roots = guard.allowed_roots(repo, config, state)
-    reason = guard.verdict(payload.get("tool_name", ""), payload.get("tool_input"), roots, cwd)
-    if reason is None:
+    tool, tool_input = payload.get("tool_name", ""), payload.get("tool_input")
+    path = guard.outside(tool, tool_input, roots, cwd)
+    if path is None:
         return ALLOW, ""
 
+    if not os.environ.get("GOATCODE_HEADLESS"):
+        root = guard.grant_root(path)
+        target = pending_path(repo)
+        with osenv.FileLock(target):
+            with target.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"key": call_key(payload), "root": root, "at": time.time()}) + "\n")
+        return ASK, guard.ask_reason(path, root)
+
     record(repo, state, {
-        "tool": payload.get("tool_name"),
-        "input": {k: str(v)[:300] for k, v in (payload.get("tool_input") or {}).items()},
+        "tool": tool,
+        "input": {k: str(v)[:300] for k, v in (tool_input or {}).items()},
         "cwd": str(cwd),
         "session": str(payload.get("session_id", ""))[:8],
     })
-    return BLOCK, reason
+    return BLOCK, guard.verdict(tool, tool_input, roots, cwd)
 
 
-def main():
+def approved(payload):
+    """PostToolUse: a call that was asked about ran, so the user said yes.
+
+    Writes the approved root into the config and forgets the request, along
+    with any old enough that the answer must have been no.
+    """
+    from goatcode import guard, osenv, run as runmod
+
+    repo = find_repo(payload.get("cwd") or os.getcwd())
+    if repo is None:
+        return
+    target = pending_path(repo)
+    if not target.exists():
+        return
+
+    key, now, granted, kept = call_key(payload), time.time(), [], []
+    with osenv.FileLock(target):
+        for line in target.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("key") == key:
+                granted.append(entry["root"])
+            elif now - entry.get("at", 0) < guard.PENDING_SECONDS:
+                kept.append(line)
+        if kept:
+            target.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        else:
+            target.unlink()
+    for root in granted:
+        runmod.add_extra_root(repo, root)
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
     try:
         payload = json.load(sys.stdin)
+        if argv[:1] == ["post"]:
+            approved(payload)
+            return ALLOW
         code, message = decide(payload)
     except Exception:
         # Every failure is a pass. See the module docstring.
+        return ALLOW
+    if code == ASK:
+        json.dump({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": message,
+        }}, sys.stdout)
         return ALLOW
     if message:
         sys.stderr.write(message + "\n")

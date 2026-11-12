@@ -42,6 +42,15 @@ _BASH_ELSEWHERE = re.compile(r"(?:^|[;&|]\s*)cd\s+(\S+)|-C\s+(\S+)")
 #: POSIX absolute, Windows drive-absolute, or an explicit walk upward.
 _PATHLIKE = re.compile(r"^(?:/|[A-Za-z]:[\\/]|\.\.[\\/])")
 
+#: Tools whose input is a shell command. PowerShell was missing from the hook
+#: matcher and from here while executors, which may use any tool, ran it
+#: dozens of times a run with nothing looking.
+SHELL_TOOLS = ("Bash", "PowerShell")
+
+#: Dependency caches, relative to the home directory. A build reads these
+#: file by file, so one approval admits the cache rather than one artifact.
+CACHE_ROOTS = (".m2", ".gradle", ".npm", ".cargo", "go/pkg/mod")
+
 
 def real(path):
     """``realpath`` as a string, with symlinks resolved and case left alone.
@@ -86,8 +95,9 @@ def allowed_roots(repo, config=None, state=None):
 
     for extra in (config.get("guard") or {}).get("extra_roots") or []:
         # Relative to the repository, which is the only stable thing a
-        # config file can be written against.
-        roots.append(pathlib.Path(repo) / str(extra))
+        # config file can be written against. An absolute entry - what an
+        # approved request records - survives the join unchanged.
+        roots.append(pathlib.Path(repo) / os.path.expanduser(str(extra)))
 
     return sorted({real(root) for root in roots if root})
 
@@ -117,7 +127,7 @@ def paths_in(tool_name, tool_input):
         # `Glob /other/repo/**` names its own root and is judged by that.
         found.append(_literal_prefix(str(pattern)))
 
-    if tool_name == "Bash" and tool_input.get("command"):
+    if tool_name in SHELL_TOOLS and tool_input.get("command"):
         found.extend(_bash_paths(str(tool_input["command"])))
 
     return [path for path in found if path]
@@ -154,6 +164,15 @@ def _bash_paths(command):
     return [token.rstrip(";&|") for token in found if token]
 
 
+def outside(tool_name, tool_input, roots, cwd=None):
+    """The first path this tool call reaches outside ``roots``, or None."""
+    for path in paths_in(tool_name, tool_input):
+        candidate = path if os.path.isabs(path) else os.path.join(str(cwd or ""), path)
+        if not inside(candidate, roots):
+            return real(candidate)
+    return None
+
+
 def verdict(tool_name, tool_input, roots, cwd=None):
     """The reason to refuse this tool call, or None to allow it.
 
@@ -161,17 +180,46 @@ def verdict(tool_name, tool_input, roots, cwd=None):
     refused, why, and what to do instead. A refusal an agent cannot act on
     just becomes a retry.
     """
-    for path in paths_in(tool_name, tool_input):
-        candidate = path if os.path.isabs(path) else os.path.join(str(cwd or ""), path)
-        if not inside(candidate, roots):
-            return (
-                "goat-code: {} is outside this run's repository, so it was refused.\n"
-                "A run may only read and write the repository it was started in, its "
-                "worktrees, and goat-code's own files. Work from what is in the repo. "
-                "If this path is genuinely needed, it belongs in guard.extra_roots in "
-                ".goatcode/config.yaml - which is the user's call, not yours.".format(real(candidate))
-            )
-    return None
+    path = outside(tool_name, tool_input, roots, cwd)
+    if path is None:
+        return None
+    return (
+        "goat-code: {} is outside this run's repository, so it was refused.\n"
+        "A run may only read and write the repository it was started in, its "
+        "worktrees, and goat-code's own files. Work from what is in the repo. "
+        "If this path is genuinely needed, it belongs in guard.extra_roots in "
+        ".goatcode/config.yaml - which is the user's call, not yours.".format(path)
+    )
+
+
+def grant_root(path, home=None):
+    """What approving ``path`` should admit from then on.
+
+    A recognised dependency cache admits the whole cache. Anything else
+    admits the directory holding the file - unless that is the home
+    directory or a drive root, where one approved file would quietly open
+    everything beside it; then only the path itself.
+    """
+    resolved = real(path)
+    home = real(home or pathlib.Path.home())
+    for cache in CACHE_ROOTS:
+        root = real(os.path.join(home, cache))
+        if inside(resolved, [root]):
+            return root
+    if os.path.isdir(resolved):
+        return resolved
+    parent = os.path.dirname(resolved)
+    if parent == home or parent == os.path.dirname(parent):
+        return resolved
+    return parent
+
+
+def ask_reason(path, root):
+    """What the user is shown when a call outside the run needs their say."""
+    return (
+        "goat-code: {} is outside this run's repository. Allowing it adds {} to "
+        "guard.extra_roots in .goatcode/config.yaml, so it is not asked again.".format(path, root)
+    )
 
 
 def enabled(config):
@@ -181,6 +229,13 @@ def enabled(config):
 
 #: Where the hook records what it refused, inside the run directory.
 LOG_NAME = "guard.jsonl"
+
+#: Requests waiting on the user's answer, in ``.goatcode/``. Its existence is
+#: what the PostToolUse shim tests before starting an interpreter at all.
+PENDING_NAME = "guard.pending"
+
+#: A request nobody approved in this long was denied; forget it.
+PENDING_SECONDS = 600
 
 
 def violations(run_dir):

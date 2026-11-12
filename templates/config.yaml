@@ -124,8 +124,9 @@ agent_timeout_minutes: 60
 claude_bin: claude
 
 # The Python interpreter agents are told to call, and the one the repository
-# guard hook runs under. null uses the interpreter running goat-code for the
-# commands, and searches PATH for python3, python, py for the hook. Set it
+# guard hook runs under. null uses plain `python` for the commands when PATH
+# has one, else the interpreter running goat-code, and searches PATH for
+# python, python3, py for the hook. Set it
 # when that search lands on the wrong thing - on Windows, the Microsoft Store
 # alias or a pyenv shim. Use forward slashes or single quotes: a backslash in
 # double quotes is a YAML escape. If it is set and does not run, the run
@@ -157,6 +158,11 @@ classifier:
 # agent's tool call that resolves outside the repository, its worktrees and
 # goat-code's own files is refused and recorded in the run's guard.jsonl. The
 # agent is told why and carries on; nothing is killed over one stray path.
+#
+# In a session you are watching you are asked instead. Allowing the call
+# appends the place to extra_roots below as an absolute path - a dependency
+# cache such as ~/.m2 whole, anything else by its directory - so you are asked
+# once. A headless `goatcode run` has nobody to ask and still refuses.
 #
 # Dormant when no run is in progress, so your own sessions are untouched.
 #

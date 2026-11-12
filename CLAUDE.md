@@ -106,7 +106,11 @@ PreToolUse hook; `repo_guard.sh` finds an interpreter across three platforms
 chosen; the same setting is what `dispatch.interpreter` renders into every
 command. No working interpreter, or a configured one that does not run, exits
 2 — block — because an unguarded run can write outside its repository
-unnoticed; the message tells the agent to report it. All the judgement lives
+unnoticed; the message tells the agent to report it. A call outside the run
+is asked about (`permissionDecision: ask`) rather than refused, unless
+`GOATCODE_HEADLESS` says nobody can answer; the same shim run as `post` from
+PostToolUse takes the tool having run as approval and appends the root to
+`guard.extra_roots`. All the judgement lives
 in `guard.py` precisely so `test_guard.py` can reach it; keep the shims dumb.
 
 ## Invariants enforced by tests
@@ -135,6 +139,9 @@ Breaking one of these fails the suite, usually far from where you edited.
 - **One version, two places.** `goatcode.__version__` and
   `.claude-plugin/plugin.json` must agree; they drifted once, so
   `test_plugin.py::test_the_script_layer_reports_the_plugin_version` pins them.
+  Bump both in any change to a shipped file: Claude Code caches an installed
+  plugin by version, so an unbumped fix never reaches a user. 0.4.0 sat
+  through 44 commits and a month of guard fixes ran on nobody's machine.
 - **`telemetry/` is gitignored and stays that way.** It holds real transcripts —
   verbatim prompts, file contents from built projects, an account email. Local
   material only; never commit it and never quote it into a doc.

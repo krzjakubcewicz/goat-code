@@ -14,6 +14,7 @@ orchestrator would have to parse.
 from __future__ import annotations
 
 import pathlib
+import shutil
 import sys
 
 from . import _scribe_prompt, osenv, progress, report, tasks
@@ -42,8 +43,16 @@ def interpreter(run):
     ``python`` in the config wins: the interpreter running goat-code is not
     always one an agent can or should call - on Windows it may be a Store
     alias or a pyenv shim the guard cannot see past.
+
+    Otherwise the bare name, when PATH has one: an absolute interpreter path
+    in every command is long, machine-specific and one more place outside the
+    repository for a command to name. The running interpreter is the fallback
+    for a system with only ``python3``.
     """
-    return str(run.config.get("python") or sys.executable)
+    configured = run.config.get("python")
+    if configured:
+        return str(configured)
+    return "python" if shutil.which("python") else sys.executable
 
 
 def _quote(value):
@@ -57,10 +66,24 @@ def dispatch_dir(run):
 
 
 def write(run, name, text):
-    """Persist a rendered prompt. Returns its path."""
+    """Persist a rendered prompt. Returns its path.
+
+    Every prompt passes through here, so this is where each one is told
+    where throwaway files go. Left unsaid, an agent picked the system temp
+    directory - outside the run, and through ``$TEMP`` invisible to the guard.
+    """
+    run.scratch_dir.mkdir(parents=True, exist_ok=True)
     path = dispatch_dir(run) / "{}.md".format(name)
-    osenv.write_text(path, text.rstrip() + "\n")
+    osenv.write_text(path, text.rstrip() + "\n\n" + SCRATCH.format(run.scratch_dir) + "\n")
     return path
+
+
+SCRATCH = """## Scratch files
+
+Logs, captured output and throwaway scripts go in this directory and nowhere
+else - not the system temp directory, not `/tmp`, not the repository:
+
+    {}"""
 
 
 # --------------------------------------------------------------------------

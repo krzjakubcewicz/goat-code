@@ -18,6 +18,13 @@ from goatcode import guard, run as runmod
 from tests.conftest import make_run
 
 
+@pytest.fixture(autouse=True)
+def headless(monkeypatch):
+    """Refusal is what most of this file is about, and only a headless run
+    refuses outright; the tests about asking take the variable back out."""
+    monkeypatch.setenv("GOATCODE_HEADLESS", "1")
+
+
 @pytest.fixture
 def elsewhere(tmp_path):
     """Another repository, beside the one under test."""
@@ -457,3 +464,104 @@ def test_a_null_python_setting_falls_back_to_the_path_search(git_repo):
     _write_python_setting(git_repo, "null")
     result = _shim({"GOATCODE_REPO": str(git_repo)}, payload(git_repo, file_path=str(git_repo / "README.md")))
     assert result.returncode == 0, result.stderr
+
+
+# -- powershell is a shell too ----------------------------------------------
+
+
+def test_a_powershell_command_naming_another_repository_is_refused(git_repo, roots, elsewhere):
+    """Executors may use any tool, and used this one unguarded."""
+    command = "Get-Content {}".format(elsewhere / "src" / "app.js")
+    assert guard.verdict("PowerShell", {"command": command}, roots, cwd=git_repo) is not None
+    assert guard.verdict("PowerShell", {"command": "git status"}, roots, cwd=git_repo) is None
+
+
+# -- asking, and remembering the answer --------------------------------------
+
+
+def test_a_dependency_cache_is_granted_whole(tmp_path):
+    jar = tmp_path / ".m2" / "repository" / "org" / "x" / "x-1.0.jar"
+    assert guard.grant_root(jar, home=tmp_path) == guard.real(tmp_path / ".m2")
+
+
+def test_anything_else_is_granted_by_its_directory(tmp_path, elsewhere):
+    assert guard.grant_root(elsewhere / "src" / "app.js", home=tmp_path / "home") == guard.real(elsewhere / "src")
+    assert guard.grant_root(elsewhere / "src", home=tmp_path / "home") == guard.real(elsewhere / "src")
+
+
+def test_one_file_in_the_home_directory_does_not_open_the_home_directory(tmp_path):
+    secret = tmp_path / "notes.txt"
+    assert guard.grant_root(secret, home=tmp_path) == guard.real(secret)
+
+
+def test_an_absolute_extra_root_is_admitted(git_repo, elsewhere):
+    """What an approval writes: an absolute path, not one relative to the repo."""
+    roots = guard.allowed_roots(git_repo, {"guard": {"extra_roots": [str(elsewhere).replace(chr(92), "/")]}})
+    assert guard.verdict("Read", read(elsewhere / "src" / "app.js"), roots) is None
+
+
+def test_a_watched_session_is_asked_and_the_answer_remembered(git_repo, elsewhere, monkeypatch, capsys):
+    """Refusing a build's read of its own dependency cache helped nobody.
+    The hook asks; the tool running afterwards is the yes."""
+    monkeypatch.delenv("GOATCODE_HEADLESS")
+    run = make_run(git_repo)
+    run.set_phase("execute")
+    module = hook()
+    target = elsewhere / "src" / "app.js"
+    call = dict(payload(git_repo, file_path=str(target)), tool_use_id="toolu_1")
+
+    assert run_main(module, monkeypatch, json.dumps(call)) == 0
+    decision = json.loads(capsys.readouterr().out)["hookSpecificOutput"]
+    assert decision["permissionDecision"] == "ask"
+    assert guard.real(elsewhere / "src") in decision["permissionDecisionReason"]
+    assert guard.violations(run.root) == [], "asked is not refused"
+    assert runmod.load_config(git_repo)["guard"]["extra_roots"] == [], "nothing is granted by asking"
+
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO(json.dumps(call)))
+    assert module.main(["post"]) == 0
+
+    assert not (git_repo / ".goatcode" / guard.PENDING_NAME).exists()
+    code, _message = module.decide(call)
+    assert code == 0, "approved once, not asked again"
+    code, _message = module.decide(payload(git_repo, file_path=str(elsewhere / "other.js")))
+    assert code == module.ASK, "and nothing wider than what was approved"
+
+
+def test_a_denied_request_grants_nothing(git_repo, elsewhere, monkeypatch):
+    """A different call finishing must not be read as this one's approval."""
+    monkeypatch.delenv("GOATCODE_HEADLESS")
+    run = make_run(git_repo)
+    run.set_phase("execute")
+    module = hook()
+    module.decide(dict(payload(git_repo, file_path=str(elsewhere / "src" / "app.js")), tool_use_id="toolu_1"))
+
+    module.approved(dict(payload(git_repo, file_path=str(git_repo / "README.md")), tool_use_id="toolu_2"))
+    assert runmod.load_config(git_repo)["guard"]["extra_roots"] == []
+
+
+def test_the_post_shim_leaves_early_when_nothing_was_asked(tmp_path, git_repo):
+    """PostToolUse fires on every call; starting Python for each would be
+    felt. No request waiting means no interpreter - proven with none on PATH."""
+    import shutil
+
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("needs a POSIX sh")
+    make_run(git_repo)
+    result = _shim_args(["post"], {"GOATCODE_REPO": str(git_repo)}, {}, path=os.path.dirname(sh))
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+
+
+def _shim_args(args, env_extra, body, path=None):
+    import pathlib
+    import shutil
+    import subprocess
+
+    script = pathlib.Path(__file__).resolve().parents[2] / "hooks" / "repo_guard.sh"
+    env = dict(os.environ, **env_extra)
+    if path is not None:
+        env["PATH"] = path
+    return subprocess.run(
+        [shutil.which("sh"), str(script)] + args, input=json.dumps(body), capture_output=True, text=True, env=env
+    )

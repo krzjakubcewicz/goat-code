@@ -264,7 +264,14 @@ It is enforced by a hook, not by asking the agents nicely, which is why it
 holds under `permission_mode: bypassPermissions` too. It is dormant unless a
 run is actually in progress.
 
-For a monorepo where slices genuinely need a sibling package:
+In a session you are watching, a call outside is put to you instead of being
+refused. Allow it and the place is added to `guard.extra_roots` in
+`.goatcode/config.yaml`, so you are asked once: a dependency cache such as
+`~/.m2` is added whole, anything else by its directory. A headless
+`goatcode run` has nobody to ask and still refuses.
+
+You can also name a place up front - for a monorepo where slices genuinely
+need a sibling package:
 
 ```yaml
 guard:

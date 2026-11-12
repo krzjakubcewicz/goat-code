@@ -173,7 +173,9 @@ def dispatch(entry, repo, config=None, on_event=None):
             cwd=entry.get("cwd") or str(repo),
             # An executor stands in a worktree outside the repository, so the
             # guard cannot find the run by walking up from there. Name it.
-            env={"GOATCODE_REPO": str(repo)},
+            # Nobody is watching a headless agent, so the guard must refuse
+            # rather than ask a question that can never be answered.
+            env={"GOATCODE_REPO": str(repo), "GOATCODE_HEADLESS": "1"},
             on_line=consume,
             timeout=_timeout_seconds(config),
         )

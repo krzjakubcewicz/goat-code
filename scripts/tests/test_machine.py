@@ -1317,9 +1317,10 @@ def test_next_commands_use_the_configured_python(run):
 
 
 def test_next_commands_default_to_the_running_python(run):
+    import shutil
     import sys
 
-    assert machine.cli_argv(run, "merge")[0] == sys.executable
+    assert machine.cli_argv(run, "merge")[0] == ("python" if shutil.which("python") else sys.executable)
 
 
 # -- every dispatch is capped ------------------------------------------------
