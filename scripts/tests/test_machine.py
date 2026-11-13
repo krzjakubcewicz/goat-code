@@ -303,6 +303,29 @@ def test_awaiting_replan_yields_once_the_replanner_delivers(run):
     assert machine.derive_phase(run) == "execute"
 
 
+def test_a_gated_run_replans_before_it_asks_for_approval(run):
+    """A high-risk run was asked to approve cycle 2 before the replanner had
+    run: the user signed off last cycle's plan, and the remedial slices
+    written a second later were never shown to anyone."""
+    write_plan(run)
+    approved(run)
+    run.set_classification({"complexity": "COMPLEX", "risk": "HIGH"}, "HIGH_RISK_DEVELOPMENT")
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "carried")
+    run.state["awaiting_replan"] = True
+    run.set_approval(None)  # what advance_cycle does
+    assert machine.derive_phase(run) == "replan"
+
+
+def test_a_gated_run_asks_for_approval_once_the_replanner_delivers(run):
+    write_plan(run)
+    approved(run)
+    run.set_classification({"complexity": "COMPLEX", "risk": "HIGH"}, "HIGH_RISK_DEVELOPMENT")
+    run.state["awaiting_replan"] = True
+    run.set_approval(None)
+    assert machine.derive_phase(run) == "approve"
+
+
 @pytest.mark.parametrize("terminal", ["done", "failed", "aborted"])
 def test_terminal_phases_are_sticky(run, terminal):
     run.set_phase(terminal)

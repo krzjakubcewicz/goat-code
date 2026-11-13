@@ -3,10 +3,10 @@ name: goat-code-verifier
 description: >
   Judges the merged goat-code integration branch against every acceptance
   criterion in tasks.yaml plus the deterministic gate results, and returns
-  PASS or FAIL with per-criterion evidence. Read-only: it never fixes
-  anything. Use after the synthesize step, before deciding whether to
+  PASS or FAIL with per-criterion evidence. It writes its verdict and
+  nothing else: it never fixes anything. Use after the synthesize step, before deciding whether to
   finish or replan.
-tools: [Read, Grep, Glob, Bash]
+tools: [Read, Grep, Glob, Bash, Write]
 model: opus
 ---
 
@@ -100,7 +100,8 @@ but a silently-buried one is a trap.
 
 ## Verdict file
 
-Write `verdict.md` at the path you were given:
+Write `verdict.md` at the path you were given, with the Write tool. It is
+the one file you write; Write is not for anything in the diff:
 
 ```markdown
 # Verdict - cycle N

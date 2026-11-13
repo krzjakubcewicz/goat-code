@@ -186,6 +186,31 @@ def reap(run, keep_integration=True, delete_branches=False):
     return removed
 
 
+def prune_merged_branches(run):
+    """Delete this run's slice branches whose work is on the integration branch.
+
+    Called at ``finish``: three real runs each left their slice branches in
+    the user's repository. Ancestry is checked here rather than left to
+    ``git branch -d``, which measures against the user's checked-out branch
+    and so would refuse every one of them. A branch that is not an ancestor
+    is the only copy of its commits and is kept.
+    """
+    keep = run.integration_branch
+    listed = osenv.git(
+        ["for-each-ref", "--format=%(refname:short)", "refs/heads/goatcode/{}/".format(run.run_id)],
+        cwd=run.repo,
+    )
+    removed = []
+    for branch in listed.out.split():
+        if branch == keep:
+            continue
+        if not osenv.git(["merge-base", "--is-ancestor", branch, keep], cwd=run.repo).ok:
+            continue
+        if osenv.git(["branch", "-D", branch], cwd=run.repo).ok:
+            removed.append(branch)
+    return removed
+
+
 def reap_orphans(repo):
     """Drop goat-code worktrees git still lists but whose directory is gone.
 

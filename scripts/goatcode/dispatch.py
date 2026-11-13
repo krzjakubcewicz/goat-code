@@ -17,7 +17,7 @@ import pathlib
 import shutil
 import sys
 
-from . import _scribe_prompt, osenv, progress, report, tasks
+from . import _scribe_prompt, osenv, progress, report, schema, tasks
 
 #: Absolute path to the CLI, resolved from this file so a rendered command
 #: is correct regardless of the agent's working directory or PATH.
@@ -56,7 +56,9 @@ def interpreter(run):
 
 
 def _quote(value):
-    return '"{}"'.format(value) if " " in value else value
+    # A backslash as well as a space: bash drops a bare one, so a Windows
+    # path given as an argument arrived with its separators gone.
+    return '"{}"'.format(value) if " " in value or "\\" in value else value
 
 
 def dispatch_dir(run):
@@ -74,8 +76,20 @@ def write(run, name, text):
     """
     run.scratch_dir.mkdir(parents=True, exist_ok=True)
     path = dispatch_dir(run) / "{}.md".format(name)
-    osenv.write_text(path, text.rstrip() + "\n\n" + SCRATCH.format(run.scratch_dir) + "\n")
+    osenv.write_text(
+        path, text.rstrip() + "\n\n" + SCRATCH.format(run.scratch_dir) + "\n\n" + FILES + "\n"
+    )
     return path
+
+
+#: Measured on three real runs: a verdict, a slice report and a test file
+#: written with `cat > f <<EOF` each held the run for 100-370 seconds, and
+#: tool waits like those were 30-45% of the wall time.
+FILES = """## Writing files
+
+Create and change files with the Write and Edit tools, never with a shell
+heredoc or redirect (`cat > file <<EOF`, `echo ... > file`). A shell write
+stops a watched run on a permission prompt until someone answers it."""
 
 
 SCRATCH = """## Scratch files
@@ -201,10 +215,31 @@ def _ready_to_plan(run, heading):
         "",
         "Write the plan to `{}` and return the single line `PLAN`.".format(run.tasks_path),
         "",
+    ] + _slice_budget() + [
+        "",
         "Check it yourself first:",
         "",
         "    {}".format(command(run, "plan", "validate")),
     ]
+
+
+def _slice_budget():
+    """The size a slice may be for each model, from the table the validator uses.
+
+    Rendered rather than written into the agent's markdown so the planner is
+    never told one number while the validator enforces another.
+    """
+    lines = [
+        "Size every slice to the model you give it. The validator rejects one",
+        "over its budget; split it, or give it the next model up:",
+        "",
+        "| model | acceptance criteria | owned paths |",
+        "| --- | --- | --- |",
+    ]
+    for model, (criteria, owns) in schema.SLICE_BUDGET.items():
+        lines.append("| {} | {} | {} |".format(model, criteria, owns))
+    lines += ["", "A slice with no `model` is held to the {} row.".format(schema.DEFAULT_EXECUTOR)]
+    return lines
 
 
 def questions_path(run, round_no):
@@ -922,6 +957,8 @@ def replanner(run, previous_cycle):
     add("nothing re-executes them. Add only remedial slices, `status: pending`,")
     add("obeying the same ownership and acceptance rules as any plan. A remedial")
     add("slice may own a carried slice's paths: that is how it fixes them.")
+    add("")
+    lines.extend(_slice_budget())
     add("")
     unmet = [row for row in report.parse_verdict(run, previous_cycle) if row["mark"] != "pass"]
     if unmet:

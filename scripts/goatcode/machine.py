@@ -179,6 +179,14 @@ def derive_phase(run, evidence=None):
     if run.approval == "revise":
         return "grill"
 
+    # Only owed a replan while the plan has nothing to execute. Once the
+    # replanner has added remedial slices, the flag is stale and executing
+    # them is what clears it. Asked before the gate, not after: the other way
+    # round a high-risk run approved last cycle's plan, and the remedial
+    # slices written a second later were never shown to anyone.
+    if run.state.get("awaiting_replan") and not evidence.ready:
+        return "replan"
+
     if workflowmod.wants_gate(run.workflow) and run.needs_approval():
         return "approve"
 
@@ -202,11 +210,6 @@ def derive_phase(run, evidence=None):
     if evidence.verdict == "PASS":
         return _after_the_work_is_judged(run, evidence)
     if evidence.verdict == "FAIL":
-        return "replan"
-    # Only owed a replan while the plan has nothing to execute. Once the
-    # replanner has added remedial slices, the flag is stale and executing
-    # them is what clears it.
-    if run.state.get("awaiting_replan") and not evidence.ready:
         return "replan"
 
     if evidence.dispatchable:
@@ -601,7 +604,7 @@ def _approve(run, evidence, _stack):
     return _action(
         run,
         "ask",
-        "chat-mode plan needs approval before any executor runs",
+        "the plan needs approval before any executor runs",
         "show the plan and ask the user to approve it",
         commands=[cli_argv(run, "plan", "show")],
         ask={

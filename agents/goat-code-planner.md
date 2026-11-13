@@ -158,6 +158,12 @@ Follow `superpowers:writing-plans` for task right-sizing, then write
   spans several files or needs integration judgement, `opus` only where it
   genuinely needs design judgement. Most slices should be `haiku` - if a
   slice needs more than that, that is usually a sign it should be split.
+- **Size each slice to its model.** Your dispatch gives a budget per model:
+  how many acceptance criteria and how many owned paths one slice may carry.
+  A slice over its budget is a validator error, not a warning - split it
+  along a behaviour, or give it the next model up when it cannot be split.
+  A small model re-reads its whole context on every turn, so a fat slice
+  costs it far more than two thin ones.
 - Copy the spec's project-wide requirements into `global_constraints`
   verbatim, with exact values.
 - Set `kind` and justify it in one line of `kind_reason`. A **bugfix**
@@ -167,9 +173,10 @@ Follow `superpowers:writing-plans` for task right-sizing, then write
   while a wrong `bugfix` silently skips one. The user sees your call at the
   approval gate.
 
-**Sizing:** aim for 2–6 slices. One slice means you have not decomposed.
-More than eight usually means you are splitting by layer instead of by
-capability. Prefer fewer, well-separated slices over many entangled ones.
+**Sizing:** the number of slices follows from the budget, not from a target.
+A request that fits one slice's budget is one slice. When the count climbs,
+check you are still splitting by capability and not by layer, and prefer
+well-separated slices over entangled ones.
 
 Then run the validator yourself and fix anything it reports:
 

@@ -438,11 +438,27 @@ def test_end_to_end_pipeline(capsys, node_repo):
     review = pathlib.Path(verify_payload["review"]).read_text(encoding="utf-8")
     assert "src/s1/index.js" in review
 
+    # A slice branch whose commit never reached the integration branch: the
+    # only copy of that work, so finish must leave it alone.
+    stray = worktree.branch_name(run.run_id, "S9")
+    orphan = osenv.git_out(["commit-tree", "HEAD^{tree}", "-p", "HEAD", "-m", "unmerged"], cwd=node_repo)
+    osenv.git(["branch", stray, orphan], cwd=node_repo, check=True)
+
     code, finish_payload, out = invoke_json(capsys, "--repo", str(node_repo), "finish")
     assert code == 0
     assert finish_payload["integration_branch"] == run.integration_branch
     for slice_id in ("S1", "S2", "S3"):
         assert not worktree.path_for(run, slice_id).exists()
+
+    # Three merged slice branches per run were left in the user's repository.
+    branches = osenv.git_out(["branch", "--format=%(refname:short)"], cwd=node_repo).split()
+    for slice_id in ("S1", "S2", "S3"):
+        assert worktree.branch_name(run.run_id, slice_id) not in branches
+    assert sorted(finish_payload["removed_branches"]) == [
+        worktree.branch_name(run.run_id, s) for s in ("S1", "S2", "S3")
+    ]
+    assert stray in branches, "an unmerged slice branch is the only copy of its work"
+    assert run.integration_branch in branches
 
     # The user's branch is untouched: same branch, same commit, and the only
     # thing in the tree is the .gitignore goat-code added on the first run.

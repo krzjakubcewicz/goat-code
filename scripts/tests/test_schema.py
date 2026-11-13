@@ -549,3 +549,68 @@ def test_a_remedial_slice_needs_a_new_id():
     before, after = _replanned()
     after["slices"][1]["status"] = "pending"
     assert any("S2" in e and "new id" in e for e in schema.replan_errors(before, after))
+
+
+# -- a slice sized to the model that builds it --------------------------------
+#
+# The only limit was a warning above eight criteria, the same for every model.
+# A real planner handed haiku slices of seven and eight, and each took 16-30
+# turns, re-reading a context that grows with the slice on every one.
+
+
+def _sized(model, criteria, owns):
+    doc = plan()
+    item = doc["slices"][0]
+    if model is None:
+        item.pop("model", None)
+    else:
+        item["model"] = model
+    item["acceptance"] = [{"id": "A{}".format(n + 1), "text": "Criterion {}.".format(n + 1)} for n in range(criteria)]
+    item["owns"] = ["src/auth/tokens/f{}.ts".format(n) for n in range(owns)]
+    return doc
+
+
+@pytest.mark.parametrize("model", sorted(schema.SLICE_BUDGET))
+def test_a_slice_at_its_models_budget_is_fine(model):
+    criteria, owns = schema.SLICE_BUDGET[model]
+    assert schema.fresh_plan_errors(_sized(model, criteria, owns)) == []
+
+
+@pytest.mark.parametrize("model", sorted(schema.SLICE_BUDGET))
+def test_a_slice_over_its_models_budget_goes_back_to_the_planner(model):
+    criteria, owns = schema.SLICE_BUDGET[model]
+    too_many = schema.fresh_plan_errors(_sized(model, criteria + 1, owns))
+    assert len(too_many) == 1
+    assert "S1" in too_many[0] and "acceptance criteria" in too_many[0] and model in too_many[0]
+    too_wide = schema.fresh_plan_errors(_sized(model, criteria, owns + 1))
+    assert len(too_wide) == 1
+    assert "S1" in too_wide[0] and "owned paths" in too_wide[0]
+
+
+def test_the_error_says_how_to_get_under_the_budget():
+    error = schema.fresh_plan_errors(_sized("haiku", 7, 1))[0]
+    assert error == "S1: 7 acceptance criteria on haiku (budget 4); split the slice or set model: sonnet"
+    assert schema.fresh_plan_errors(_sized("opus", 9, 1))[0].endswith("split the slice")
+
+
+def test_a_slice_with_no_model_is_held_to_the_default_executors_budget():
+    criteria, owns = schema.SLICE_BUDGET["haiku"]
+    assert schema.fresh_plan_errors(_sized(None, criteria, owns)) == []
+    assert schema.fresh_plan_errors(_sized(None, criteria + 1, owns))
+
+
+@pytest.mark.parametrize("model", ["inherit", "fable"])
+def test_a_model_without_a_budget_is_not_measured(model):
+    assert schema.fresh_plan_errors(_sized(model, 12, 12)) == []
+
+
+def test_a_replan_measures_only_the_slices_it_adds():
+    """A carried slice was sized under whatever rule its own cycle had; failing
+    it now would strand a run that is already half built."""
+    before, after = _replanned()
+    fat = [{"id": "A{}".format(n + 1), "text": "Criterion {}.".format(n + 1)} for n in range(7)]
+    after["slices"][0]["acceptance"] = fat
+    assert schema.replan_errors(before, after) == []
+    after["slices"][2]["acceptance"] = fat
+    errors = schema.replan_errors(before, after)
+    assert len(errors) == 1 and errors[0].startswith("R2: 7 acceptance criteria on haiku")

@@ -178,12 +178,18 @@ def test_agent_points_at_the_conventions_skill(path):
     assert "goat-code-conventions" in path.read_text(encoding="utf-8")
 
 
-def test_read_only_agents_cannot_write():
-    """The verifier judges; if it could edit, nothing would be left to judge."""
+def test_the_verifier_cannot_edit_code():
+    """The verifier judges; if it could edit, nothing would be left to judge.
+
+    It does need Write, for the same reason the planner does: it is told to
+    produce one file, and without Write the only way was `cat > verdict.md`
+    through Bash, which stalled real runs on a permission prompt.
+    """
     fields, _body = frontmatter(ROOT / "agents" / "goat-code-verifier.md")
     tools = fields["tools"]
-    for forbidden in ("Edit", "Write", "NotebookEdit"):
-        assert forbidden not in tools, "verifier must stay read-only"
+    for forbidden in ("Edit", "NotebookEdit"):
+        assert forbidden not in tools, "verifier must not edit existing files"
+    assert "Write" in tools, "verdict.md has to be writable without a shell redirect"
 
 
 def test_planner_and_replanner_cannot_edit_code():
