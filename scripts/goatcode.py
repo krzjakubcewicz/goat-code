@@ -1259,6 +1259,7 @@ def cmd_cycle(args):
 def cmd_finish(args):
     run = resolve_run(args)
     removed = worktreemod.reap(run, keep_integration=not args.reap_integration)
+    pruned = worktreemod.prune_merged_branches(run)
     run.set_phase("done")
     ledgermod.append(run, "run complete on {}".format(run.integration_branch))
     payload = {
@@ -1267,6 +1268,7 @@ def cmd_finish(args):
         "base_commit": run.base_commit,
         "base_branch": run.state["base_branch"],
         "removed_worktrees": removed,
+        "removed_branches": pruned,
         "review_command": "git diff {}..{}".format(run.base_commit[:12], run.integration_branch),
     }
     lines = [

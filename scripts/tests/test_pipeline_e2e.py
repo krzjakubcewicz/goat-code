@@ -482,6 +482,23 @@ def test_a_failing_verdict_drives_a_replan_cycle(started):
     assert Run.load(started).cycle == 2
 
 
+def test_a_high_risk_replan_is_written_before_it_is_approved(started):
+    """The gate was asked first, so the user approved cycle 1's plan again
+    and the remedial slices were never put in front of them."""
+    run = Run.load(started)
+    osenv.write_text(run.spec_path, "Change the login token expiry.\n")
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], fail_verdicts=1)
+    driver = make_driver(started, agent)
+    final = driver.loop()
+
+    assert final["outcome"] == "done"
+    after_failure = driver.phases[driver.phases.index("replan"):]
+    wrote = max(i for i, phase in enumerate(after_failure) if phase == "replan")
+    asked = [i for i, phase in enumerate(after_failure) if phase == "approve"]
+    assert asked, "a high-risk run approves every cycle's plan"
+    assert min(asked) > wrote, "approval must follow the replanner, not precede it"
+
+
 def test_carried_slices_are_never_re_executed(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], fail_verdicts=1)
     driver = make_driver(started, agent)

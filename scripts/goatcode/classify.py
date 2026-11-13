@@ -126,10 +126,24 @@ RULES = (
     ("database-migration", "HIGH", r"\b(migration|schema change|alter table|drop table|drop column)"),
     ("data-deletion", "CRITICAL", r"\b(delete all|purge|truncate|hard[_ -]delete|wipe)"),
     ("customer-data", "HIGH", r"\b(pii|personal data|customer data|gdpr)"),
-    ("dependencies", "MEDIUM", r"\b(dependency|dependencies|upgrade|bump|lockfile|package\.json|requirements\.txt)"),
+    (
+        "dependencies",
+        "MEDIUM",
+        r"\b(dependency|dependencies|upgrade|bump|lockfile|package\.json|requirements\.txt"
+        r"|pyproject\.toml|uv\.lock|poetry\.lock|pipfile|go\.(mod|sum)|cargo\.(toml|lock))",
+    ),
 )
 
 _COMPILED = tuple((factor, minimum, re.compile(pattern, re.IGNORECASE)) for factor, minimum, pattern in RULES)
+
+#: "no new runtime dependencies", the commonest constraint a spec carries,
+#: matched the `dependencies` rule and bought a one-flag change the whole
+#: planned pipeline. Forgiven for this rule alone, and only in the prose: it
+#: is the one MEDIUM rule, and a plan that touches a manifest or a lockfile
+#: still trips it through its paths. The HIGH rules stay deaf to negation.
+_NO_DEPENDENCIES = re.compile(
+    r"\b(no|without|zero|never|not add(ing)?)\b[^.\n]{0,30}?\bdependenc(y|ies)\b", re.IGNORECASE
+)
 
 
 def evaluate(text, paths=None):
@@ -140,11 +154,13 @@ def evaluate(text, paths=None):
     same way, so a plan that reaches into `src/auth/**` escalates a run whose
     description never mentioned authentication.
     """
-    haystack = "\n".join([text or ""] + [str(p) for p in (paths or [])])
+    prose = text or ""
+    claimed = [str(p) for p in (paths or [])]
     risk = "LOW"
     factors = []
     for factor, minimum, pattern in _COMPILED:
-        if pattern.search(haystack):
+        subject = _NO_DEPENDENCIES.sub("", prose) if factor == "dependencies" else prose
+        if pattern.search("\n".join([subject] + claimed)):
             risk = risk_at_least(risk, minimum)
             if factor not in factors:
                 factors.append(factor)

@@ -75,6 +75,22 @@ def test_command_pins_interpreter_repo_and_run(run):
     assert "report --slice S1" in text
 
 
+def test_a_backslashed_argument_is_quoted(run):
+    """Bash eats a bare backslash, so `classify --file D:\\runs\\x.json` arrived
+    as `D:runsx.json` and the classifier's answer was recorded as missing."""
+    text = dispatch.command(run, "classify", "--file", "D:\\runs\\x.json")
+    assert '--file "D:\\runs\\x.json"' in text
+
+
+def test_every_prompt_says_to_write_files_with_the_file_tools(run):
+    """A verdict, a report and a test file all went through `cat > f <<EOF`,
+    and each one held a watched run on a permission prompt for minutes."""
+    path = dispatch.write(run, "anything", "# a prompt")
+    text = path.read_text(encoding="utf-8")
+    assert "Write and Edit tools" in text
+    assert "heredoc" in text
+
+
 def test_command_uses_the_configured_python(run):
     """On Windows the interpreter running goat-code is often not the one the
     user wants agents to call - a Store alias, a pyenv shim, a venv."""
@@ -158,6 +174,20 @@ def test_planner_prompt_offers_both_outcomes(run):
     assert str(dispatch.questions_path(run, 1)) in text
     assert str(run.tasks_path) in text
     assert "QUESTIONS" in text and "PLAN" in text
+
+
+def test_whoever_writes_a_plan_is_given_the_validators_slice_budget(run):
+    """The numbers come from the table the validator enforces, so the planner
+    is never told one size while being held to another."""
+    from goatcode import schema
+
+    planner = dispatch.planner(run, 1)
+    forced = dispatch.planner(run, 1, forced=True)
+    run.advance_cycle()
+    replanner = dispatch.replanner(run, 1)
+    for text in (planner, forced, replanner):
+        for model, (criteria, owns) in schema.SLICE_BUDGET.items():
+            assert "| {} | {} | {} |".format(model, criteria, owns) in text
 
 
 def test_planner_prompt_reports_the_round_budget(run):

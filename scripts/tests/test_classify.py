@@ -185,3 +185,44 @@ def test_the_secrets_rule_does_not_escalate_parser_work(text):
     """Over-matching is the preferred direction, but not to the point of
     routing every lexer change through the high-risk pipeline."""
     assert classify.evaluate(text, [])["factors"] == [], text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Standard library only; no new runtime dependencies.",
+        "Ship it without any third-party dependency.",
+        "Zero dependencies.",
+        "Not adding a dependency for this.",
+    ],
+)
+def test_forbidding_dependencies_is_not_a_dependency_change(text):
+    """A spec constraint reading "no new runtime dependencies" raised a
+    one-flag change to MEDIUM and bought it a planner, a verifier and an e2e
+    agent: 647 seconds against 65."""
+    assert classify.evaluate(text, []) == {"risk": "LOW", "factors": []}, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Upgrade the requests dependency.",
+        "No new dependencies, but bump the lockfile.",
+        "Dependencies change here. No tests.",
+    ],
+)
+def test_a_real_dependency_change_still_raises(text):
+    assert classify.evaluate(text, [])["factors"] == ["dependencies"], text
+
+
+@pytest.mark.parametrize("path", ["pyproject.toml", "uv.lock", "backend/go.mod", "Cargo.lock", "package.json"])
+def test_a_manifest_in_the_plan_raises_whatever_the_spec_promised(path):
+    """What lets the prose be forgiven: the plan's own paths are still read."""
+    found = classify.evaluate("No new runtime dependencies.", [path])
+    assert found == {"risk": "MEDIUM", "factors": ["dependencies"]}, path
+
+
+def test_only_the_dependencies_rule_listens_to_a_negation():
+    """Forgiving "no login changes" would let a sentence buy less scrutiny
+    for authentication, which is the one thing the rules exist to prevent."""
+    assert classify.evaluate("No login changes, no new dependencies.", [])["risk"] == "HIGH"

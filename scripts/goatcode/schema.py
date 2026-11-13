@@ -26,6 +26,18 @@ REQUIRED_SLICE = ("id", "title", "owns", "acceptance", "tests")
 MAX_ACCEPTANCE_PER_SLICE = 8
 MAX_SLICES_PER_WAVE = 6
 
+#: (acceptance criteria, owned paths) one slice may carry, per executor model.
+#: A judgement, not a measurement: with no limit but the warning above, a real
+#: planner gave haiku slices of 7-8 criteria and each ran 16-30 turns, every
+#: turn re-reading a context that grows with the slice. Tune from run data -
+#: smaller slices are not free, each pays for a worktree and a merge.
+SLICE_BUDGET = {"haiku": (4, 3), "sonnet": (6, 5), "opus": (8, 8)}
+
+#: A slice that names no model runs on the default executor.
+DEFAULT_EXECUTOR = "haiku"
+
+_STRONGER = {"haiku": "sonnet", "sonnet": "opus"}
+
 
 class Report:
     """Outcome of validating one plan."""
@@ -603,6 +615,29 @@ def fresh_plan_errors(doc):
                 "{}: status is {!r}; every slice of a new plan starts pending".format(label, status)
             )
         errors.extend(_preset_errors(item, label))
+        errors.extend(budget_errors(item, label))
+    return errors
+
+
+def budget_errors(item, label):
+    """Where a slice is bigger than the model assigned to it should be given.
+
+    Asked only of a slice nobody has started: a carried one was sized under
+    its own cycle's rule, and failing it now would strand a half-built run.
+    ``inherit`` and ``fable`` name no fixed model, so there is nothing to
+    measure them against.
+    """
+    model = item.get("model") or DEFAULT_EXECUTOR
+    budget = SLICE_BUDGET.get(model)
+    if budget is None:
+        return []
+    stronger = _STRONGER.get(model)
+    remedy = "split the slice or set model: {}".format(stronger) if stronger else "split the slice"
+    errors = []
+    for key, noun, limit in (("acceptance", "acceptance criteria", budget[0]), ("owns", "owned paths", budget[1])):
+        value = item.get(key)
+        if isinstance(value, list) and len(value) > limit:
+            errors.append("{}: {} {} on {} (budget {}); {}".format(label, len(value), noun, model, limit, remedy))
     return errors
 
 
@@ -652,4 +687,5 @@ def replan_errors(before, doc):
         if status != "pending":
             errors.append("{}: a remedial slice starts pending, not {!r}".format(slice_id, status))
         errors.extend(_preset_errors(new, slice_id))
+        errors.extend(budget_errors(new, slice_id))
     return errors

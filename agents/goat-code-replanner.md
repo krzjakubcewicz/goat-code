@@ -75,6 +75,8 @@ They must obey the same discipline as any plan:
   paths it needs to change; a carried slice's ownership does not collide
   with it
 - at least one checkable acceptance criterion and one test path each
+- sized to its model: your dispatch gives the budget of criteria and owned
+  paths per model, and the validator rejects a remedial slice over it
 - `depends_on` set where a fix needs an earlier fix in place
 
 **Rewrite criteria that were the real problem.** If the verifier found a

@@ -76,7 +76,7 @@ def test_the_prompt_is_one_line_pointing_at_the_file():
 
 def test_tools_come_from_the_agents_own_frontmatter():
     argv = agentcli.build_argv(entry("goat-code-verifier"), "C:/repo")
-    assert argv_value(argv, "--allowedTools") == "Read,Grep,Glob,Bash"
+    assert argv_value(argv, "--allowedTools") == "Read,Grep,Glob,Bash,Write"
 
 
 def test_a_wildcard_tool_list_means_no_restriction():
