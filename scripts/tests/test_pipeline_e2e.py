@@ -509,6 +509,20 @@ def test_carried_slices_are_never_re_executed(started):
     assert "R2" in executed, "the remedial slice must run"
 
 
+def test_a_remedial_slice_is_merged_before_its_cycle_is_verified(started):
+    """goat-report, cause 1: cycles 2 and 3 verified cycle 1's S1-only diff
+    because the clean merge record survived the cycle boundary."""
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], fail_verdicts=1)
+    make_driver(started, agent).loop()
+
+    run = Run.load(started)
+    assert (run.cycle_dir(2) / "merge-report.md").exists()
+    first = (run.cycle_dir(1) / "review.diff").read_text(encoding="utf-8")
+    second = (run.cycle_dir(2) / "review.diff").read_text(encoding="utf-8")
+    assert "src/fix2/index.js" in second
+    assert second != first
+
+
 def test_the_cycle_cap_stops_instead_of_looping(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], fail_verdicts=99)
     driver = make_driver(started, agent)
