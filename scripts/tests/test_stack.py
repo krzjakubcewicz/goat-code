@@ -199,6 +199,44 @@ def test_detects_dotnet(tmp_path):
     assert profile["commands"]["test"] == ["dotnet", "test", "--nologo"]
 
 
+def test_detects_maven(tmp_path):
+    write(tmp_path, "pom.xml", "<project/>")
+    profile = stack.detect(tmp_path)
+    assert profile["languages"] == ["java"]
+    assert profile["package_manager"] == "maven"
+    assert profile["commands"]["build"] == ["mvn", "-B", "-DskipTests", "test-compile"]
+    assert profile["commands"]["test"] == ["mvn", "-B", "verify"]
+    assert stack.usable(profile)
+
+
+def test_detects_gradle(tmp_path):
+    write(tmp_path, "build.gradle.kts", "")
+    profile = stack.detect(tmp_path)
+    assert profile["languages"] == ["java"]
+    assert profile["package_manager"] == "gradle"
+    assert profile["commands"]["test"] == ["gradle", "check"]
+
+
+def test_configured_commands_replace_the_detected_ones(tmp_path):
+    write(tmp_path, "pom.xml", "<project/>")
+    profile = stack.detect(tmp_path, commands={"test": ["mvn", "-B", "clean", "verify"], "lint": None})
+    assert profile["commands"]["test"] == ["mvn", "-B", "clean", "verify"]
+    assert profile["commands"]["build"] == ["mvn", "-B", "-DskipTests", "test-compile"]
+    assert "commands from .goatcode/config.yaml: test" in profile["notes"]
+
+
+def test_configured_commands_make_an_unknown_stack_usable(tmp_path):
+    write(tmp_path, "notes.txt", "x")
+    assert stack.usable(stack.detect(tmp_path, commands={"test": ["make", "test"]}))
+
+
+def test_detects_a_maven_project_under_backend(tmp_path):
+    write(tmp_path, "backend/pom.xml", "<project/>")
+    profile = stack.detect(tmp_path)
+    assert profile["project_dir"] == "backend"
+    assert profile["commands"]["test"] == ["mvn", "-B", "verify"]
+
+
 def test_polyglot_repo_reports_both(tmp_path):
     write(tmp_path, "package.json", package_json(scripts={"build": "vite build"}))
     write(tmp_path, "package-lock.json", "{}")

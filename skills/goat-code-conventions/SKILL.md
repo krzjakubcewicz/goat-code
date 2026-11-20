@@ -72,6 +72,7 @@ guessed from where you happen to be standing.
 | `ledger "..."` | append to the durable progress ledger |
 | `stats` | where this run's time went: per-phase durations, cycles, remedial slices, gate outcomes |
 | `cycle` | advance to the next replan cycle |
+| `reopen --max-cycles N` | give a failed run more cycles; the next `next` picks up where it stopped |
 | `status` / `resume` / `finish` / `abort` | lifecycle |
 
 Exit codes: `0` success, `1` the pipeline is not in a good state (act on

@@ -17,7 +17,8 @@ import pytest
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from goatcode import ledger, miniyaml, osenv, worktree  # noqa: E402
+from goatcode import ledger, machine, miniyaml, osenv, worktree  # noqa: E402
+from goatcode import tasks as tasksmod  # noqa: E402
 from goatcode.run import Run  # noqa: E402
 from tests.conftest import make_run  # noqa: E402
 
@@ -90,6 +91,56 @@ def test_init_creates_a_run_and_detects_the_stack(capsys, node_repo):
     assert pathlib.Path(payload["spec"]).exists()
     assert pathlib.Path(payload["stack"]).exists()
     assert payload["base_commit"]
+
+
+def test_init_takes_gate_commands_from_the_config(capsys, git_repo):
+    target = git_repo / ".goatcode" / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("commands:\n  test: [make, test]\n", encoding="utf-8")
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline"
+    )
+    assert code == 0
+    profile = json.loads(pathlib.Path(payload["stack"]).read_text(encoding="utf-8"))
+    assert profile["commands"]["test"] == ["make", "test"]
+
+
+def test_init_warns_when_no_test_command_was_detected(capsys, git_repo):
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline"
+    )
+    assert code == 0
+    warning = next(w for w in payload["warnings"] if "no test command detected" in w)
+    # the run already snapshotted its config; only `stack detect` reaches it
+    assert "stack detect" in warning
+
+
+def test_init_does_not_warn_about_gates_on_a_detected_stack(capsys, node_repo):
+    _code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "add a thing", "--no-baseline"
+    )
+    assert not any("no test command detected" in w for w in payload["warnings"])
+
+
+def test_stack_detect_brings_config_commands_into_a_live_run(capsys, git_repo):
+    """What the no-test-command warning tells the user to do must work."""
+    _code, payload, _err = invoke_json(
+        capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline"
+    )
+    target = git_repo / ".goatcode" / "config.yaml"
+    target.write_text("commands:\n  test: [make, test]\n", encoding="utf-8")
+    invoke(capsys, "--repo", str(git_repo), "stack", "detect")
+    profile = json.loads(pathlib.Path(payload["stack"]).read_text(encoding="utf-8"))
+    assert profile["commands"]["test"] == ["make", "test"]
+
+
+def test_init_refuses_a_misspelt_gate_in_the_config(capsys, git_repo):
+    target = git_repo / ".goatcode" / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("commands:\n  tests: [make, test]\n", encoding="utf-8")
+    code, _out, err = invoke(capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline")
+    assert code != 0
+    assert "commands.tests" in err
 
 
 def test_init_hides_state_from_git_without_dirtying_the_tree(capsys, node_repo):
@@ -345,6 +396,59 @@ def test_cycle_cap_stops_the_loop(capsys, node_repo):
     code, _out, err = invoke(capsys, "--repo", str(node_repo), "cycle")
     assert code == cli.EXIT_USAGE
     assert "cycle cap reached" in err
+
+
+def _failed_at_the_cap(node_repo):
+    run = make_run(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    tasksmod.set_status(run.tasks_path, "S1", "carried")
+    run.state["cycle"] = 4
+    run.state["awaiting_replan"] = True
+    run.state["dispatch_attempts"] = {"4:goat-code-replanner:-:opus:abc": 3}
+    run.save()
+    run.set_phase("failed")
+    return run
+
+
+def test_reopen_raises_the_cap_and_the_run_replans(capsys, node_repo):
+    run = _failed_at_the_cap(node_repo)
+    code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert code == 0
+    assert payload["max_cycles"] == 6
+    run = Run.load(node_repo, run.run_id)
+    assert run.config["max_cycles"] == 6
+    assert not run.state.get("dispatch_attempts")
+    assert machine.derive_phase(run) == "replan"
+
+
+def test_reopen_with_the_cap_spent_names_the_minimum(capsys, node_repo):
+    _failed_at_the_cap(node_repo)
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen")
+    assert code == cli.EXIT_USAGE
+    assert "--max-cycles 4 or more" in err
+
+
+def test_reopen_below_the_current_cycle_is_refused(capsys, node_repo):
+    _failed_at_the_cap(node_repo)
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "3")
+    assert code == cli.EXIT_USAGE
+    assert "--max-cycles 4 or more" in err
+
+
+def test_reopen_forgets_why_the_run_stopped(capsys, node_repo):
+    run = _failed_at_the_cap(node_repo)
+    run.state["stop_reason"] = "cycle cap of 3 reached"
+    run.save()
+    invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert "stop_reason" not in Run.load(node_repo, run.run_id).state
+
+
+def test_only_a_failed_run_can_be_reopened(capsys, node_repo):
+    run = make_run(node_repo)
+    run.set_phase("done")
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert code == cli.EXIT_USAGE
+    assert "only a failed run" in err
 
 
 def test_abort_cleans_up(capsys, node_repo):

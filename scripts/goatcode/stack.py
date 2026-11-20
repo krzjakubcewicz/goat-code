@@ -19,6 +19,9 @@ import re
 
 from . import osenv
 
+#: Every gate a profile carries a command for.
+COMMAND_NAMES = ("setup", "build", "typecheck", "lint", "test", "test_one", "e2e")
+
 #: Order matters: the first matching entry names the primary language.
 _LANGUAGE_MARKERS = (
     ("javascript", ("package.json",)),
@@ -90,12 +93,14 @@ _PY_TEST_LIBS = ("pytest", "unittest2", "nose2")
 _PY_E2E_LIBS = ("playwright", "selenium", "splinter")
 
 
-def detect(repo, project_dir=None, _siblings=True):
+def detect(repo, project_dir=None, commands=None, _siblings=True):
     """Inspect ``repo`` and return the stack profile as a plain dict.
 
     ``project_dir`` names the subdirectory holding the build system, for a
     repo where detection cannot tell on its own - a monorepo with several.
-    It comes from ``project_dir`` in ``.goatcode/config.yaml``.
+    It comes from ``project_dir`` in ``.goatcode/config.yaml``, and
+    ``commands`` from ``commands`` there: any gate it names replaces the
+    detected one, which is the only way to gate a stack detection misses.
     """
     repo = pathlib.Path(repo)
     profile = {
@@ -147,6 +152,8 @@ def detect(repo, project_dir=None, _siblings=True):
         _detect_rust(repo, profile)
     if _find_dotnet_projects(repo):
         _detect_dotnet(repo, profile)
+    if any(m in markers for m in ("pom.xml", "build.gradle", "build.gradle.kts")):
+        _detect_java(repo, profile)
 
     if not profile["languages"]:
         for language, files in _LANGUAGE_MARKERS:
@@ -160,6 +167,14 @@ def detect(repo, project_dir=None, _siblings=True):
             )
 
     _containerize(root, profile)
+
+    # The user's own commands go on last and verbatim: past containerising,
+    # because a hand-written command already says where it runs.
+    configured = [name for name, argv in (commands or {}).items() if argv]
+    for name in configured:
+        profile["commands"][name] = list(commands[name])
+    if configured:
+        profile["notes"].append("commands from .goatcode/config.yaml: {}".format(", ".join(configured)))
 
     profile["source_dirs"] = _existing(repo, ["src", "lib", "app", "pkg", "cmd", "internal"])
     profile["test_dirs"] = _existing(repo, ["tests", "test", "spec", "__tests__", "e2e"])
@@ -342,6 +357,24 @@ def _detect_dotnet(repo, profile):
     profile["commands"]["build"] = profile["commands"]["build"] or ["dotnet", "build", "--nologo"]
     profile["commands"]["test"] = profile["commands"]["test"] or ["dotnet", "test", "--nologo"]
     profile["test_framework"] = profile["test_framework"] or "dotnet test"
+
+
+def _detect_java(repo, profile):
+    # `verify` and `check` run whatever the build binds to them - Spotless,
+    # JaCoCo, integration tests. A run whose test gate stopped at `test`
+    # reported green on code `mvn clean verify` then rejected.
+    # ponytail: no mvnw/gradlew detection - a relative argv[0] is found from
+    # the gate's cwd on POSIX but not on Windows, so a detected wrapper would
+    # gate differently per OS. `commands:` in the config is the way in.
+    if (repo / "pom.xml").exists():
+        tool, build, test = "maven", ["mvn", "-B", "-DskipTests", "test-compile"], ["mvn", "-B", "verify"]
+    else:
+        tool, build, test = "gradle", ["gradle", "assemble"], ["gradle", "check"]
+    profile["languages"] = _merge(profile["languages"], ["java"])
+    profile["package_manager"] = profile["package_manager"] or tool
+    profile["commands"]["build"] = profile["commands"]["build"] or build
+    profile["commands"]["test"] = profile["commands"]["test"] or test
+    profile["test_framework"] = profile["test_framework"] or tool
 
 
 # -- helpers ---------------------------------------------------------------
@@ -617,9 +650,9 @@ def _read_text(path):
         return None
 
 
-def write(repo, path, project_dir=None):
+def write(repo, path, project_dir=None, commands=None):
     """Detect and persist the profile. Returns the profile."""
-    profile = detect(repo, project_dir=project_dir)
+    profile = detect(repo, project_dir=project_dir, commands=commands)
     osenv.write_json(path, profile)
     return profile
 

@@ -14,6 +14,8 @@ parallel: 3
 
 # How many verify -> replan -> execute cycles before the pipeline stops and
 # reports what it could not achieve. There is no "keep trying forever".
+# Copied into each run when it starts: editing it here does not reach a run
+# already under way; `goatcode reopen --max-cycles N` does.
 max_cycles: 3
 
 # How many rounds of questions the planner may put to you before it must
@@ -91,6 +93,22 @@ write_progress: true
 # null auto-detects, which is right for a single-project repository and for
 # one whose only build system sits one level down.
 project_dir: null
+
+# Gate commands that replace what stack detection found, one per gate:
+# setup, build, typecheck, lint, test, test_one, e2e. Each is an argument
+# list, not a shell string. Use it for a stack detection misses, or a
+# stricter command than the detected one:
+#
+#   commands:
+#     test: [mvn, -B, clean, verify]
+#
+# A relative program (./mvnw) is found from the project directory on Linux
+# and macOS only; on Windows give the wrapper's absolute path.
+#
+# A gate name that does not exist, or a command written as a string, stops
+# the run at init rather than being ignored. A run reads this when it starts;
+# for one already under way, run `goatcode stack detect` after editing.
+commands: {}
 
 # Install dependencies in each new worktree. Turn this off for projects
 # where install is slow and the tests do not need it.

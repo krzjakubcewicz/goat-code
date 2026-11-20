@@ -5,8 +5,10 @@ Two reasons, both learned the hard way on Windows: a repo-local worktree
 with a deep ``node_modules`` blows past the 260-character path limit, and a
 cleanup that fails on a locked file litters the user's project.
 
-Branches are created off the run's recorded base commit, never off HEAD, so
-a run stays reproducible even if the user moves their branch mid-flight.
+Slice branches start at the integration tip (see ``start_point``) - the
+recorded base commit in cycle 1, then whatever earlier waves merged - and
+never at the user's HEAD, so a dependent slice sees its dependencies' code
+and a run stays reproducible even if the user moves their branch mid-flight.
 """
 
 from __future__ import annotations

@@ -82,7 +82,11 @@ what an agent is told is a Python edit, not a markdown one.
 Module map worth knowing: `run.py` (run dir + state), `schema.py` (tasks.yaml
 validation, glob-overlap test), `tasks.py` (the only writer of tasks.yaml,
 locked and re-read because executors report concurrently), `miniyaml.py`
-(hand-written YAML subset), `osenv.py` (the only subprocess boundary),
+(hand-written YAML subset), `osenv.py` (the only subprocess boundary), `worktree.py` (slice
+branches start at the integration tip, never the user's HEAD, so a dependent
+slice sees what earlier waves merged and a user moving their branch mid-run
+changes nothing), `ledger.py` (append-only; which slices
+are finished is a tasks.yaml status, never parsed back out of the ledger),
 `dispatch.py` (renders every agent prompt), `brief.py` / `diffpkg.py` (the
 files agents are handed), `gates.py` (build/typecheck/lint/test + baseline
 classification), `stack.py` (stack detection), `merge.py` (mechanical

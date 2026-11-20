@@ -164,6 +164,32 @@ def test_config_rejects_a_non_mapping(git_repo):
         runmod.load_config(git_repo)
 
 
+def _config(git_repo, text):
+    target = git_repo / ".goatcode" / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+
+
+def test_a_misspelt_gate_name_is_refused(git_repo):
+    _config(git_repo, "commands:\n  tests: [mvn, verify]\n")
+    with pytest.raises(RunError, match="commands.tests"):
+        runmod.check_commands(git_repo, runmod.load_config(git_repo))
+
+
+def test_a_gate_command_written_as_a_string_is_refused(git_repo):
+    _config(git_repo, "commands:\n  test: mvn verify\n")
+    with pytest.raises(RunError, match="list of arguments"):
+        runmod.check_commands(git_repo, runmod.load_config(git_repo))
+
+
+def test_a_bad_commands_section_still_loads_for_the_guard(git_repo):
+    """The repo guard hook reads load_config on every tool call and allows
+    the call when it raises, so a typo under commands: switched the guard
+    off for a live run. Only the places that use the commands refuse them."""
+    _config(git_repo, "commands:\n  tests: [mvn, verify]\nguard:\n  extra_roots: [../x]\n")
+    assert runmod.load_config(git_repo)["guard"]["extra_roots"] == ["../x"]
+
+
 # -- run directory ---------------------------------------------------------
 
 
