@@ -1094,6 +1094,45 @@ def test_a_direct_workflow_fails_rather_than_replanning_on_a_red_gate(run):
     assert machine.derive_phase(run) == "failed"
 
 
+def _direct_run_with_gates(run, gate_report, e2e=None):
+    """A direct run whose `failed` phase an earlier `next` already persisted."""
+    if e2e:
+        run.state["e2e"] = e2e
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    write_plan(run)
+    run.adopt_branch("feature/magic-link")
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1", "S2", "S3"], "pending": []}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", gate_report)
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+    phase = machine.derive_phase(run)
+    assert phase == "failed"
+    run.set_phase(phase)
+
+
+def test_a_red_gate_stop_says_which_gate(run):
+    """Derived `failed` phases reached _stop with no reason, so the run
+    printed `STOPPED (failed)` over a blank line - goat-report's symptom."""
+    _direct_run_with_gates(run, {"gates": {"test": {"status": "fail"}}, "regressions": ["test"]})
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert "test" in action["reason"] and "gates.json" in action["message"]
+
+
+def test_a_failed_end_to_end_stop_says_so(run):
+    _direct_run_with_gates(
+        run,
+        {"gates": {"test": {"status": "pass"}}, "regressions": []},
+        e2e={"status": "FAILED", "detail": "login journey times out", "tests": None},
+    )
+    action = machine.next_action(run)
+    assert action["action"] == "stop"
+    assert "end-to-end" in action["reason"]
+    assert "login journey times out" in action["message"]
+
+
 def test_a_planned_workflow_still_dispatches_the_verifier(run):
     run.set_classification({"complexity": "COMPLEX", "risk": "LOW"}, "PLANNED_DEVELOPMENT")
     write_plan(run)

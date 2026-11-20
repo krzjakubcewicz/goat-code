@@ -106,7 +106,8 @@ project_dir: null
 # and macOS only; on Windows give the wrapper's absolute path.
 #
 # A gate name that does not exist, or a command written as a string, stops
-# the run at init rather than being ignored.
+# the run at init rather than being ignored. A run reads this when it starts;
+# for one already under way, run `goatcode stack detect` after editing.
 commands: {}
 
 # Install dependencies in each new worktree. Turn this off for projects

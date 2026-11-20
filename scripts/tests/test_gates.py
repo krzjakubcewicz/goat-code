@@ -166,6 +166,7 @@ def test_render_says_nothing_was_checked_when_no_gate_ran(run, git_repo):
     text = gates.render(report)
     assert "no regressions" not in text
     assert "nothing was checked" in text
+    assert "stack detect" in text
 
 
 def test_a_gate_tool_missing_from_the_host_is_not_an_all_clear(run, git_repo):

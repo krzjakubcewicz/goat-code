@@ -110,7 +110,9 @@ def test_init_warns_when_no_test_command_was_detected(capsys, git_repo):
         capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline"
     )
     assert code == 0
-    assert any("no test command detected" in w for w in payload["warnings"])
+    warning = next(w for w in payload["warnings"] if "no test command detected" in w)
+    # the run already snapshotted its config; only `stack detect` reaches it
+    assert "stack detect" in warning
 
 
 def test_init_does_not_warn_about_gates_on_a_detected_stack(capsys, node_repo):
@@ -118,6 +120,27 @@ def test_init_does_not_warn_about_gates_on_a_detected_stack(capsys, node_repo):
         capsys, "--repo", str(node_repo), "init", "--prompt", "add a thing", "--no-baseline"
     )
     assert not any("no test command detected" in w for w in payload["warnings"])
+
+
+def test_stack_detect_brings_config_commands_into_a_live_run(capsys, git_repo):
+    """What the no-test-command warning tells the user to do must work."""
+    _code, payload, _err = invoke_json(
+        capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline"
+    )
+    target = git_repo / ".goatcode" / "config.yaml"
+    target.write_text("commands:\n  test: [make, test]\n", encoding="utf-8")
+    invoke(capsys, "--repo", str(git_repo), "stack", "detect")
+    profile = json.loads(pathlib.Path(payload["stack"]).read_text(encoding="utf-8"))
+    assert profile["commands"]["test"] == ["make", "test"]
+
+
+def test_init_refuses_a_misspelt_gate_in_the_config(capsys, git_repo):
+    target = git_repo / ".goatcode" / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("commands:\n  tests: [make, test]\n", encoding="utf-8")
+    code, _out, err = invoke(capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline")
+    assert code != 0
+    assert "commands.tests" in err
 
 
 def test_init_hides_state_from_git_without_dirtying_the_tree(capsys, node_repo):

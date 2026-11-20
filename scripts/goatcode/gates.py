@@ -306,7 +306,8 @@ def render(report):
         # alike, on a run whose gates had not run a single command.
         lines.append(
             "nothing ran - no gate command was detected or runnable, so nothing "
-            "was checked; set commands in .goatcode/config.yaml"
+            "was checked; set commands in .goatcode/config.yaml, then run "
+            "`goatcode.py stack detect` so this run picks them up"
         )
     else:
         lines.append("no regressions")

@@ -371,7 +371,8 @@ def cmd_init(args):
     if not stackmod.usable(profile):
         problems.append(
             "no test command detected - the gates check nothing until there is one; "
-            "set commands.test in .goatcode/config.yaml"
+            "set commands.test in .goatcode/config.yaml, then run "
+            "`goatcode.py stack detect` so this run picks it up"
         )
 
     baseline = None
@@ -482,7 +483,10 @@ def cmd_stack(args):
             target = run.stack_path
         except RunError:
             target = None
-        config = runmod.load_config(repo)
+        try:
+            config = runmod.check_commands(repo, runmod.load_config(repo))
+        except RunError as exc:
+            raise CliError(str(exc))
         profile = stackmod.detect(repo, project_dir=config.get("project_dir"), commands=config.get("commands"))
         if target:
             osenv.write_json(target, profile)

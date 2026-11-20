@@ -985,9 +985,11 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
             run.state["stop_reason"] = reason
             run.state["stop_details"] = list(details or [])
             run.save()
-        else:
-            reason = run.state.get("stop_reason")
+        elif run.state.get("stop_reason"):
+            reason = run.state["stop_reason"]
             details = details or run.state.get("stop_details")
+        elif outcome == "failed":
+            reason, details = _why_it_failed(run, evidence)
     if run.phase != outcome:
         run.set_phase(outcome)
 
@@ -1035,6 +1037,26 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
         )
 
     return _action(run, "stop", reason or outcome, message, **payload)
+
+
+def _why_it_failed(run, evidence):
+    """The reason for a `failed` that derive_phase reached on its own.
+
+    A red e2e test and a red gate on a direct run are read straight off disk
+    and never pass through a call that could name them, so the evidence that
+    decided the phase is what explains it.
+    """
+    if evidence.e2e.get("status") == "FAILED":
+        return "the end-to-end test failed", [evidence.e2e.get("detail") or "no detail recorded"]
+    path = run.cycle_dir() / "gates.json"
+    gate_report = osenv.read_json(path) if path.exists() else None
+    blocking = gates.blocking(gate_report or {})
+    if blocking:
+        return (
+            "gates regressed on a direct run: {}".format(", ".join(blocking)),
+            ["gate output: {}".format(path)],
+        )
+    return None, []
 
 
 def push_hint(run):

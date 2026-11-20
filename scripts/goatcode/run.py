@@ -279,19 +279,24 @@ def load_config(repo):
     if not isinstance(overrides, dict):
         raise RunError("{} must contain a mapping".format(path))
     _deep_merge(config, overrides)
-    _check_commands(config.get("commands"), path)
     return config
 
 
-def _check_commands(commands, path):
+def check_commands(repo, config):
     """Refuse a gate command the stack would otherwise drop without a word.
 
     Editing the config and seeing nothing change is how a failed run's user
     lost an evening: a typo in a gate name, or a shell string where an argv
     list belongs, must stop the run at init instead.
+
+    Called where the commands are used, never from ``load_config``: the
+    repo guard hook reads the config on every tool call and allows the call
+    when that raises, so a typo here would switch the guard off.
     """
+    path = goatcode_dir(repo) / "config.yaml"
+    commands = config.get("commands")
     if commands is None:
-        return
+        return config
     if not isinstance(commands, dict):
         raise RunError("commands in {} must be a mapping of gate to argv list".format(path))
     for name, argv in commands.items():
@@ -307,6 +312,7 @@ def _check_commands(commands, path):
             raise RunError(
                 "commands.{} in {} must be a list of arguments, like [mvn, -B, verify]".format(name, path)
             )
+    return config
 
 
 def _deep_copy(value):
@@ -717,7 +723,7 @@ class Run:
     def create(cls, repo, title, mode, spec_text="", now=None):
         repo = pathlib.Path(repo)
         run_id = _unique_run_id(repo, new_run_id(title, now=now))
-        config = load_config(repo)
+        config = check_commands(repo, load_config(repo))
         # The whole run forks from the base branch, not from wherever the
         # user happens to be standing: baseline gates, slice branches and the
         # feature branch all share one base, so the final diff is exactly
