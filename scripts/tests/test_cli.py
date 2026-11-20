@@ -412,6 +412,14 @@ def test_reopen_below_the_current_cycle_is_refused(capsys, node_repo):
     assert "--max-cycles 4 or more" in err
 
 
+def test_reopen_forgets_why_the_run_stopped(capsys, node_repo):
+    run = _failed_at_the_cap(node_repo)
+    run.state["stop_reason"] = "cycle cap of 3 reached"
+    run.save()
+    invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert "stop_reason" not in Run.load(node_repo, run.run_id).state
+
+
 def test_only_a_failed_run_can_be_reopened(capsys, node_repo):
     run = make_run(node_repo)
     run.set_phase("done")

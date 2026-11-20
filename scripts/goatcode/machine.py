@@ -945,9 +945,9 @@ def _replan(run, evidence, _stack):
             run,
             evidence,
             outcome="failed",
-            reason="cycle cap of {} reached with criteria still unmet".format(
-                run.config.get("max_cycles", 3)
-            ),
+            reason="cycle cap of {} reached with criteria still unmet; "
+            "goatcode reopen --max-cycles N gives it more".format(run.config.get("max_cycles", 3)),
+            details=["last verdict: {}".format(run.cycle_dir(run.cycle - 1) / "verdict.md")],
         )
 
     if not run.state.get("awaiting_replan"):
@@ -977,6 +977,17 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
     outcome = outcome or run.phase
     if outcome not in ("done", "failed", "aborted"):
         outcome = "done"
+    if outcome != "done":
+        # Only the call that decides to stop knows why. Every later `next`
+        # derives the terminal phase and lands here with nothing, which is
+        # how a headless run printed `STOPPED (failed)` and a blank line.
+        if reason:
+            run.state["stop_reason"] = reason
+            run.state["stop_details"] = list(details or [])
+            run.save()
+        else:
+            reason = run.state.get("stop_reason")
+            details = details or run.state.get("stop_details")
     if run.phase != outcome:
         run.set_phase(outcome)
 

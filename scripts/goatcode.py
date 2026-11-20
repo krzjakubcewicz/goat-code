@@ -1334,6 +1334,8 @@ def cmd_reopen(args):
     # one without fresh attempts would stop it again on the same key.
     run.state.pop("dispatch_attempts", None)
     run.state.pop("repeated_run", None)
+    run.state.pop("stop_reason", None)
+    run.state.pop("stop_details", None)
     run.save()
     run.set_phase("init")
     ledgermod.append(run, "run reopened (max_cycles {})".format(wanted))

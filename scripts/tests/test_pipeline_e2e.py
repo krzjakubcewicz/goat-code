@@ -534,6 +534,19 @@ def test_the_cycle_cap_stops_instead_of_looping(started):
     assert Run.load(started).cycle == 4
 
 
+def test_a_stopped_run_keeps_saying_why(started):
+    """goat-report: the headless run printed `STOPPED (failed)` with an empty
+    reason, because only the first stop was handed one."""
+    agent = FakeAgent([slice_doc("S1", "src/s1/**")], fail_verdicts=99)
+    make_driver(started, agent).loop()
+
+    again = machine.next_action(Run.load(started))
+    assert again["action"] == "stop"
+    assert "cycle cap of 3" in again["message"]
+    assert "reopen --max-cycles" in again["message"]
+    assert "cycle-3" in again["message"] and "verdict.md" in again["message"]
+
+
 def test_a_blocked_slice_is_retried_once_then_the_run_moves_on(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], block={"S1": 99})
     driver = make_driver(started, agent)
