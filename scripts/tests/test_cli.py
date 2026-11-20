@@ -104,6 +104,21 @@ def test_init_takes_gate_commands_from_the_config(capsys, git_repo):
     assert profile["commands"]["test"] == ["make", "test"]
 
 
+def test_init_warns_when_no_test_command_was_detected(capsys, git_repo):
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline"
+    )
+    assert code == 0
+    assert any("no test command detected" in w for w in payload["warnings"])
+
+
+def test_init_does_not_warn_about_gates_on_a_detected_stack(capsys, node_repo):
+    _code, payload, _err = invoke_json(
+        capsys, "--repo", str(node_repo), "init", "--prompt", "add a thing", "--no-baseline"
+    )
+    assert not any("no test command detected" in w for w in payload["warnings"])
+
+
 def test_init_hides_state_from_git_without_dirtying_the_tree(capsys, node_repo):
     invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
     assert ".goatcode/" in (node_repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")

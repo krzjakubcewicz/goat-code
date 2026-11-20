@@ -301,6 +301,13 @@ def render(report):
     lines.append("")
     if regressions:
         lines.append("regressions caused by this run: {}".format(", ".join(regressions)))
+    elif nothing_ran(report):
+        # "no regressions" here read as an all-clear to a verifier and a user
+        # alike, on a run whose gates had not run a single command.
+        lines.append(
+            "nothing ran - no gate command was detected or runnable, so nothing "
+            "was checked; set commands in .goatcode/config.yaml"
+        )
     else:
         lines.append("no regressions")
     if pre_existing:

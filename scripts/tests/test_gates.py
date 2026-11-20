@@ -161,6 +161,18 @@ def test_render_says_so_when_all_is_well(run, git_repo):
     assert "no regressions" in gates.render(report)
 
 
+def test_render_says_nothing_was_checked_when_no_gate_ran(run, git_repo):
+    report = gates.run_and_classify(run, git_repo, profile=profile())
+    text = gates.render(report)
+    assert "no regressions" not in text
+    assert "nothing was checked" in text
+
+
+def test_a_gate_tool_missing_from_the_host_is_not_an_all_clear(run, git_repo):
+    report = gates.run_and_classify(run, git_repo, profile=profile(test=["goatcode-no-such-tool"]))
+    assert "nothing was checked" in gates.render(report)
+
+
 def test_timeout_is_reported_as_a_failure(run, git_repo):
     run.state["config"]["gate_timeout_seconds"] = 1
     report = gates.run_all(run, git_repo, profile=profile(test=python_cmd("import time; time.sleep(30)")))

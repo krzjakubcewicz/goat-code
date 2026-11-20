@@ -368,6 +368,11 @@ def cmd_init(args):
     profile = stackmod.write(
         repo, run.stack_path, project_dir=run.config.get("project_dir"), commands=run.config.get("commands")
     )
+    if not stackmod.usable(profile):
+        problems.append(
+            "no test command detected - the gates check nothing until there is one; "
+            "set commands.test in .goatcode/config.yaml"
+        )
 
     baseline = None
     integration = None
