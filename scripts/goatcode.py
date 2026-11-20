@@ -365,7 +365,9 @@ def cmd_init(args):
 
     run = Run.create(repo, title, "spec" if args.spec else "chat", spec_text=spec_text)
     _start_trace(run)
-    profile = stackmod.write(repo, run.stack_path, project_dir=run.config.get("project_dir"))
+    profile = stackmod.write(
+        repo, run.stack_path, project_dir=run.config.get("project_dir"), commands=run.config.get("commands")
+    )
 
     baseline = None
     integration = None
@@ -475,7 +477,8 @@ def cmd_stack(args):
             target = run.stack_path
         except RunError:
             target = None
-        profile = stackmod.detect(repo, project_dir=runmod.load_config(repo).get("project_dir"))
+        config = runmod.load_config(repo)
+        profile = stackmod.detect(repo, project_dir=config.get("project_dir"), commands=config.get("commands"))
         if target:
             osenv.write_json(target, profile)
         emit(args, profile, stackmod.summary_line(profile))

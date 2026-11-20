@@ -217,6 +217,19 @@ def test_detects_gradle(tmp_path):
     assert profile["commands"]["test"] == ["gradle", "check"]
 
 
+def test_configured_commands_replace_the_detected_ones(tmp_path):
+    write(tmp_path, "pom.xml", "<project/>")
+    profile = stack.detect(tmp_path, commands={"test": ["mvn", "-B", "clean", "verify"], "lint": None})
+    assert profile["commands"]["test"] == ["mvn", "-B", "clean", "verify"]
+    assert profile["commands"]["build"] == ["mvn", "-B", "-DskipTests", "test-compile"]
+    assert "commands from .goatcode/config.yaml: test" in profile["notes"]
+
+
+def test_configured_commands_make_an_unknown_stack_usable(tmp_path):
+    write(tmp_path, "notes.txt", "x")
+    assert stack.usable(stack.detect(tmp_path, commands={"test": ["make", "test"]}))
+
+
 def test_detects_a_maven_project_under_backend(tmp_path):
     write(tmp_path, "backend/pom.xml", "<project/>")
     profile = stack.detect(tmp_path)

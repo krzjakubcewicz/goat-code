@@ -92,6 +92,21 @@ write_progress: true
 # one whose only build system sits one level down.
 project_dir: null
 
+# Gate commands that replace what stack detection found, one per gate:
+# setup, build, typecheck, lint, test, test_one, e2e. Each is an argument
+# list, not a shell string. Use it for a stack detection misses, or a
+# stricter command than the detected one:
+#
+#   commands:
+#     test: [mvn, -B, clean, verify]
+#
+# A relative program (./mvnw) is found from the project directory on Linux
+# and macOS only; on Windows give the wrapper's absolute path.
+#
+# A gate name that does not exist, or a command written as a string, stops
+# the run at init rather than being ignored.
+commands: {}
+
 # Install dependencies in each new worktree. Turn this off for projects
 # where install is slow and the tests do not need it.
 worktree_setup: true

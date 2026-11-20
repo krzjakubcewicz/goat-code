@@ -92,6 +92,18 @@ def test_init_creates_a_run_and_detects_the_stack(capsys, node_repo):
     assert payload["base_commit"]
 
 
+def test_init_takes_gate_commands_from_the_config(capsys, git_repo):
+    target = git_repo / ".goatcode" / "config.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("commands:\n  test: [make, test]\n", encoding="utf-8")
+    code, payload, _err = invoke_json(
+        capsys, "--repo", str(git_repo), "init", "--prompt", "add a thing", "--no-baseline"
+    )
+    assert code == 0
+    profile = json.loads(pathlib.Path(payload["stack"]).read_text(encoding="utf-8"))
+    assert profile["commands"]["test"] == ["make", "test"]
+
+
 def test_init_hides_state_from_git_without_dirtying_the_tree(capsys, node_repo):
     invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x", "--no-baseline")
     assert ".goatcode/" in (node_repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")

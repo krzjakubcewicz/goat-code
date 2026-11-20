@@ -12,7 +12,7 @@ import datetime
 import pathlib
 import re
 
-from . import debuglog, guard, miniyaml, osenv, workflow as workflowmod
+from . import debuglog, guard, miniyaml, osenv, stack as stackmod, workflow as workflowmod
 
 GOATCODE_DIR = ".goatcode"
 STATE_VERSION = 1
@@ -117,6 +117,9 @@ DEFAULT_CONFIG = {
     # cannot tell on its own - a monorepo with a backend/ and a frontend/.
     # null lets stack detection decide.
     "project_dir": None,
+    # Gate commands that replace detected ones, as argv lists keyed by gate.
+    # Validated on load: a misspelt gate would otherwise be ignored silently.
+    "commands": {},
     "worktree_setup": True,
     # Standalone (`goatcode run`) only. How a headless agent's tool calls are
     # permitted. acceptEdits lets it write files, but a Bash call still needs
@@ -276,7 +279,34 @@ def load_config(repo):
     if not isinstance(overrides, dict):
         raise RunError("{} must contain a mapping".format(path))
     _deep_merge(config, overrides)
+    _check_commands(config.get("commands"), path)
     return config
+
+
+def _check_commands(commands, path):
+    """Refuse a gate command the stack would otherwise drop without a word.
+
+    Editing the config and seeing nothing change is how a failed run's user
+    lost an evening: a typo in a gate name, or a shell string where an argv
+    list belongs, must stop the run at init instead.
+    """
+    if commands is None:
+        return
+    if not isinstance(commands, dict):
+        raise RunError("commands in {} must be a mapping of gate to argv list".format(path))
+    for name, argv in commands.items():
+        if name not in stackmod.COMMAND_NAMES:
+            raise RunError(
+                "commands.{} in {} is not a gate; use one of {}".format(
+                    name, path, ", ".join(stackmod.COMMAND_NAMES)
+                )
+            )
+        if argv is None:
+            continue
+        if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+            raise RunError(
+                "commands.{} in {} must be a list of arguments, like [mvn, -B, verify]".format(name, path)
+            )
 
 
 def _deep_copy(value):
