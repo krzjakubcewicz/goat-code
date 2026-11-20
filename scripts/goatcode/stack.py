@@ -147,6 +147,8 @@ def detect(repo, project_dir=None, _siblings=True):
         _detect_rust(repo, profile)
     if _find_dotnet_projects(repo):
         _detect_dotnet(repo, profile)
+    if any(m in markers for m in ("pom.xml", "build.gradle", "build.gradle.kts")):
+        _detect_java(repo, profile)
 
     if not profile["languages"]:
         for language, files in _LANGUAGE_MARKERS:
@@ -342,6 +344,24 @@ def _detect_dotnet(repo, profile):
     profile["commands"]["build"] = profile["commands"]["build"] or ["dotnet", "build", "--nologo"]
     profile["commands"]["test"] = profile["commands"]["test"] or ["dotnet", "test", "--nologo"]
     profile["test_framework"] = profile["test_framework"] or "dotnet test"
+
+
+def _detect_java(repo, profile):
+    # `verify` and `check` run whatever the build binds to them - Spotless,
+    # JaCoCo, integration tests. A run whose test gate stopped at `test`
+    # reported green on code `mvn clean verify` then rejected.
+    # ponytail: no mvnw/gradlew detection - osenv resolves a relative argv[0]
+    # against the process cwd, not the gate's. `commands:` in the config
+    # names a wrapper when a project needs one.
+    if (repo / "pom.xml").exists():
+        tool, build, test = "maven", ["mvn", "-B", "-DskipTests", "test-compile"], ["mvn", "-B", "verify"]
+    else:
+        tool, build, test = "gradle", ["gradle", "assemble"], ["gradle", "check"]
+    profile["languages"] = _merge(profile["languages"], ["java"])
+    profile["package_manager"] = profile["package_manager"] or tool
+    profile["commands"]["build"] = profile["commands"]["build"] or build
+    profile["commands"]["test"] = profile["commands"]["test"] or test
+    profile["test_framework"] = profile["test_framework"] or tool
 
 
 # -- helpers ---------------------------------------------------------------
