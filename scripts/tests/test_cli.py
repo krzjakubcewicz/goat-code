@@ -17,7 +17,8 @@ import pytest
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from goatcode import ledger, miniyaml, osenv, worktree  # noqa: E402
+from goatcode import ledger, machine, miniyaml, osenv, worktree  # noqa: E402
+from goatcode import tasks as tasksmod  # noqa: E402
 from goatcode.run import Run  # noqa: E402
 from tests.conftest import make_run  # noqa: E402
 
@@ -372,6 +373,51 @@ def test_cycle_cap_stops_the_loop(capsys, node_repo):
     code, _out, err = invoke(capsys, "--repo", str(node_repo), "cycle")
     assert code == cli.EXIT_USAGE
     assert "cycle cap reached" in err
+
+
+def _failed_at_the_cap(node_repo):
+    run = make_run(node_repo)
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    tasksmod.set_status(run.tasks_path, "S1", "carried")
+    run.state["cycle"] = 4
+    run.state["awaiting_replan"] = True
+    run.state["dispatch_attempts"] = {"4:goat-code-replanner:-:opus:abc": 3}
+    run.save()
+    run.set_phase("failed")
+    return run
+
+
+def test_reopen_raises_the_cap_and_the_run_replans(capsys, node_repo):
+    run = _failed_at_the_cap(node_repo)
+    code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert code == 0
+    assert payload["max_cycles"] == 6
+    run = Run.load(node_repo, run.run_id)
+    assert run.config["max_cycles"] == 6
+    assert not run.state.get("dispatch_attempts")
+    assert machine.derive_phase(run) == "replan"
+
+
+def test_reopen_with_the_cap_spent_names_the_minimum(capsys, node_repo):
+    _failed_at_the_cap(node_repo)
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen")
+    assert code == cli.EXIT_USAGE
+    assert "--max-cycles 4 or more" in err
+
+
+def test_reopen_below_the_current_cycle_is_refused(capsys, node_repo):
+    _failed_at_the_cap(node_repo)
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "3")
+    assert code == cli.EXIT_USAGE
+    assert "--max-cycles 4 or more" in err
+
+
+def test_only_a_failed_run_can_be_reopened(capsys, node_repo):
+    run = make_run(node_repo)
+    run.set_phase("done")
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert code == cli.EXIT_USAGE
+    assert "only a failed run" in err
 
 
 def test_abort_cleans_up(capsys, node_repo):

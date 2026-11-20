@@ -14,6 +14,8 @@ parallel: 3
 
 # How many verify -> replan -> execute cycles before the pipeline stops and
 # reports what it could not achieve. There is no "keep trying forever".
+# Copied into each run when it starts: editing it here does not reach a run
+# already under way; `goatcode reopen --max-cycles N` does.
 max_cycles: 3
 
 # How many rounds of questions the planner may put to you before it must

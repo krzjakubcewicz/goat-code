@@ -1309,6 +1309,42 @@ def cmd_abort(args):
     return EXIT_OK
 
 
+def cmd_reopen(args):
+    """Undo a `failed` phase, raising the cycle cap if asked.
+
+    `failed` is terminal for `next`, and the config is snapshotted at init,
+    so a run that spent its cap had no way back but hand-editing state.json.
+    The phase is reset to `init` and re-derived from the evidence on the
+    next `next`: a run that failed for a reason still on disk fails again.
+    """
+    run = resolve_run(args)
+    if run.phase != "failed":
+        raise CliError("only a failed run can be reopened; {} is {}".format(run.run_id, run.phase))
+    cap = run.config.get("max_cycles", 3)
+    wanted = cap if args.max_cycles is None else args.max_cycles
+    if wanted < run.cycle:
+        raise CliError(
+            "cycle cap of {} is spent at cycle {}; pass --max-cycles {} or more".format(
+                cap, run.cycle, run.cycle
+            )
+        )
+    config = run.state.setdefault("config", runmod._deep_copy(runmod.DEFAULT_CONFIG))
+    config["max_cycles"] = wanted
+    # An agent that hit the dispatch cap is what stopped some runs; reopening
+    # one without fresh attempts would stop it again on the same key.
+    run.state.pop("dispatch_attempts", None)
+    run.state.pop("repeated_run", None)
+    run.save()
+    run.set_phase("init")
+    ledgermod.append(run, "run reopened (max_cycles {})".format(wanted))
+    emit(
+        args,
+        {"run_id": run.run_id, "max_cycles": wanted, "cycle": run.cycle},
+        "reopened {} at cycle {}, cap {}; run next".format(run.run_id, run.cycle, wanted),
+    )
+    return EXIT_OK
+
+
 def cmd_resume(args):
     run = resolve_run(args)
     payload = run.summary()
@@ -1598,6 +1634,10 @@ def build_parser():
 
     p = add(sub, "resume", help="what to trust after a crash or compaction")
     p.set_defaults(func=cmd_resume)
+
+    p = add(sub, "reopen", help="give a failed run more cycles and let next pick it up again")
+    p.add_argument("--max-cycles", type=int, default=None)
+    p.set_defaults(func=cmd_reopen)
 
     return parser
 

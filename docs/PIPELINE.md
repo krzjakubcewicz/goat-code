@@ -361,6 +361,13 @@ regardless of what the orchestrator remembers.
 python scripts/goatcode.py resume --json   # the same picture, for a human
 ```
 
+`failed` is the one phase `next` never derives its way out of. A run that
+spent its cycle cap comes back with
+`python scripts/goatcode.py reopen --max-cycles N`, which raises the cap,
+clears the dispatch counters and lets the next `next` re-derive the phase.
+Editing `max_cycles` in `.goatcode/config.yaml` does not reach it: each run
+snapshots its config at `init`.
+
 ## Tracing a run
 
 ```bash
