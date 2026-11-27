@@ -1303,6 +1303,10 @@ def cmd_abort(args):
     run = resolve_run(args)
     removed = worktreemod.reap(run, keep_integration=False, delete_branches=args.delete_branches)
     worktreemod.reap_orphans(run.repo)
+    # A run aborted after it failed would otherwise go on printing why it
+    # failed - a cycle cap nobody is asking about any more.
+    run.state["stop_reason"] = "aborted by request"
+    run.state["stop_details"] = []
     run.set_phase("aborted")
     ledgermod.append(run, "run aborted by request")
     emit(
@@ -1319,7 +1323,8 @@ def cmd_reopen(args):
     `failed` is terminal for `next`, and the config is snapshotted at init,
     so a run that spent its cap had no way back but hand-editing state.json.
     The phase is reset to `init` and re-derived from the evidence on the
-    next `next`: a run that failed for a reason still on disk fails again.
+    next `next`. A run that failed for a reason still on disk would fail
+    again at once, so that is refused here, with the reason.
     """
     run = resolve_run(args)
     if run.phase != "failed":
@@ -1327,9 +1332,26 @@ def cmd_reopen(args):
     cap = run.config.get("max_cycles", 3)
     wanted = cap if args.max_cycles is None else args.max_cycles
     if wanted < run.cycle:
+        if args.max_cycles is None:
+            raise CliError(
+                "cycle cap of {} is spent at cycle {}; pass --max-cycles {} or more".format(
+                    cap, run.cycle, run.cycle
+                )
+            )
         raise CliError(
-            "cycle cap of {} is spent at cycle {}; pass --max-cycles {} or more".format(
-                cap, run.cycle, run.cycle
+            "--max-cycles {} is below the run's current cycle {}; pass --max-cycles {} or more".format(
+                wanted, run.cycle, run.cycle
+            )
+        )
+    # A failure the evidence on disk decides - a red e2e test, a gate that
+    # regressed on a direct run - comes straight back on the next `next`.
+    run.state["phase"] = "init"
+    if machinemod.derive_phase(run) == "failed":
+        reason, details = machinemod.why_it_failed(run, machinemod.Evidence(run))
+        raise CliError(
+            "{}, and that is still on disk, so reopening would fail again at once{}".format(
+                reason or "the run failed on evidence it still has",
+                "".join("\n  - {}".format(d) for d in details),
             )
         )
     config = run.state.setdefault("config", runmod._deep_copy(runmod.DEFAULT_CONFIG))
@@ -1338,6 +1360,7 @@ def cmd_reopen(args):
     # one without fresh attempts would stop it again on the same key.
     run.state.pop("dispatch_attempts", None)
     run.state.pop("repeated_run", None)
+    run.state.pop("plan_fix_attempts", None)
     run.state.pop("stop_reason", None)
     run.state.pop("stop_details", None)
     run.save()

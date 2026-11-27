@@ -170,6 +170,25 @@ def _config(git_repo, text):
     target.write_text(text, encoding="utf-8")
 
 
+def test_a_numeric_gate_argument_is_taken_as_text(git_repo):
+    """YAML reads the 4 in [make, -j, 4] as an int."""
+    _config(git_repo, "commands:\n  build: [make, -j, 4]\n")
+    config = runmod.check_commands(git_repo, runmod.load_config(git_repo))
+    assert config["commands"]["build"] == ["make", "-j", "4"]
+
+
+def test_a_gate_argument_yaml_reads_as_true_says_to_quote_it(git_repo):
+    _config(git_repo, "commands:\n  test: [tool, --flag, true]\n")
+    with pytest.raises(RunError, match="quote"):
+        runmod.check_commands(git_repo, runmod.load_config(git_repo))
+
+
+def test_a_config_that_does_not_parse_names_the_file(git_repo):
+    _config(git_repo, "commands:\n  test: [mvn, verify\n")
+    with pytest.raises(RunError, match="config.yaml.*line 2"):
+        runmod.load_config(git_repo)
+
+
 def test_a_misspelt_gate_name_is_refused(git_repo):
     _config(git_repo, "commands:\n  tests: [mvn, verify]\n")
     with pytest.raises(RunError, match="commands.tests"):

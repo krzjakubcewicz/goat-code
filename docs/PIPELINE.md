@@ -364,7 +364,10 @@ python scripts/goatcode.py resume --json   # the same picture, for a human
 `failed` is the one phase `next` never derives its way out of. A run that
 spent its cycle cap comes back with
 `python scripts/goatcode.py reopen --max-cycles N`, which raises the cap,
-clears the dispatch counters and lets the next `next` re-derive the phase.
+clears the dispatch and plan-fix counters and lets the next `next`
+re-derive the phase. A failure the evidence still decides - a red e2e
+test, a gate that regressed on a direct run - would come straight back,
+so `reopen` refuses it and says which.
 Editing `max_cycles` in `.goatcode/config.yaml` does not reach it: each run
 snapshots its config at `init`.
 

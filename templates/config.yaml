@@ -103,7 +103,13 @@ project_dir: null
 #     test: [mvn, -B, clean, verify]
 #
 # A relative program (./mvnw) is found from the project directory on Linux
-# and macOS only; on Windows give the wrapper's absolute path.
+# and macOS only; on Windows give the wrapper's absolute path. Where the
+# gates run through docker compose, a command set here replaces the compose
+# one and runs on the host from the repository root; start it with
+# [docker, compose, run, --rm, <service>] to keep it in the container.
+#
+# Quote an argument holding a comma, which would split it in two
+# ("-Dgroups=a,b"), or one YAML would read as true/false or a decimal.
 #
 # A gate name that does not exist, or a command written as a string, stops
 # the run at init rather than being ignored. A run reads this when it starts;

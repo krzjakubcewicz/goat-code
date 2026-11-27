@@ -989,7 +989,7 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
             reason = run.state["stop_reason"]
             details = details or run.state.get("stop_details")
         elif outcome == "failed":
-            reason, details = _why_it_failed(run, evidence)
+            reason, details = why_it_failed(run, evidence)
     if run.phase != outcome:
         run.set_phase(outcome)
 
@@ -1039,7 +1039,7 @@ def _stop(run, evidence, outcome=None, reason=None, details=None):
     return _action(run, "stop", reason or outcome, message, **payload)
 
 
-def _why_it_failed(run, evidence):
+def why_it_failed(run, evidence):
     """The reason for a `failed` that derive_phase reached on its own.
 
     A red e2e test and a red gate on a direct run are read straight off disk
