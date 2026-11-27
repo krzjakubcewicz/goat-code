@@ -122,10 +122,10 @@ DEFAULT_CONFIG = {
     "commands": {},
     "worktree_setup": True,
     # Standalone (`goatcode run`) only. How a headless agent's tool calls are
-    # permitted. acceptEdits lets it write files, but a Bash call still needs
-    # permission - and nothing can grant one in a headless run, so it is
-    # denied and reported. bypassPermissions removes that ceiling and lets an
-    # agent run any command unattended.
+    # permitted. acceptEdits lets it edit files and run Bash, which every
+    # agent needs for its `goatcode` calls and the repo guard keeps inside
+    # the repository; any other tool that would prompt is denied, since
+    # nobody can answer one. bypassPermissions lifts that last ceiling.
     "permission_mode": "acceptEdits",
     # Hard dollar cap per agent dispatch. null for none.
     "max_cost_usd": None,

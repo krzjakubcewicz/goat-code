@@ -77,7 +77,7 @@ class Console:
         if receipt.denials:
             self.write(
                 "       {} tool call(s) denied. Set permission_mode: bypassPermissions in "
-                ".goatcode/config.yaml to let agents run commands unattended.".format(
+                ".goatcode/config.yaml, or add an allow rule, to let them through.".format(
                     len(receipt.denials)
                 )
             )

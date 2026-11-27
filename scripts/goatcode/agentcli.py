@@ -133,8 +133,16 @@ def build_argv(entry, repo, config=None):
         # way to run agents with no boundary at all.
         argv += ["--settings", settings]
 
+    # --allowedTools pre-approves; --tools is the one that restricts. An agent
+    # listing Bash may therefore run commands unattended, and a tools: [*]
+    # agent passed nothing was the one left unable to - the executor, whose
+    # tests and `goatcode report` were denied for nine cycles. Under
+    # acceptEdits, Edit and Write are already accepted and Read, Grep and
+    # Glob never prompt, so Bash is the only gap.
     tools = fields.get("tools")
-    if isinstance(tools, list) and "*" not in tools:
+    if isinstance(tools, list) and "*" in tools:
+        argv += ["--allowedTools", "Bash"]
+    elif isinstance(tools, list):
         argv += ["--allowedTools", ",".join(str(t) for t in tools)]
 
     budget = config.get("max_cost_usd")
