@@ -417,6 +417,24 @@ class Driver:
 # --------------------------------------------------------------------------
 
 
+#: Settings only the standalone driver reads. A run snapshots its config at
+#: init so its pipeline policy cannot shift under it; these say how agents
+#: are started, not what the run decides, and a stale permission_mode kept
+#: goat-bug's run denied for nine cycles after config.yaml was fixed.
+LIVE_KEYS = ("permission_mode", "max_cost_usd", "agent_timeout_minutes", "claude_bin")
+
+
+def live_settings(run):
+    """The run's config, with the driver's own settings read from the file."""
+    from . import run as runmod
+
+    settings = dict(run.config)
+    current = runmod.load_config(run.repo)
+    for key in LIVE_KEYS:
+        settings[key] = current.get(key)
+    return settings
+
+
 def claude_backend(repo, config=None):
     """A backend that runs each dispatch as a real ``claude`` process."""
 

@@ -265,7 +265,13 @@ def cmd_run(args):
 
     repo = resolve_repo(args)
     run = resolve_run(args, repo)
-    config = dict(run.config)
+    config = drivermod.live_settings(run)
+    if config.get("permission_mode") != run.config.get("permission_mode"):
+        console.write(
+            "permission_mode: {} from .goatcode/config.yaml (this run started with {})".format(
+                config.get("permission_mode"), run.config.get("permission_mode")
+            )
+        )
     if args.max_cost:
         config["max_cost_usd"] = args.max_cost
     if args.claude_bin:

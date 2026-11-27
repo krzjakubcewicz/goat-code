@@ -135,6 +135,8 @@ debug: false
 #                       would prompt (WebFetch, an MCP server) is denied,
 #                       since nobody can answer in a headless run
 #   bypassPermissions - nothing prompts: that last ceiling goes too
+# Read each time `goatcode run` starts, --resume included, so an edit
+# reaches a run already under way.
 permission_mode: acceptEdits
 
 # Hard dollar cap per agent dispatch. null for none.

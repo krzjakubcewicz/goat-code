@@ -369,7 +369,10 @@ re-derive the phase. A failure the evidence still decides - a red e2e
 test, a gate that regressed on a direct run - would come straight back,
 so `reopen` refuses it and says which.
 Editing `max_cycles` in `.goatcode/config.yaml` does not reach it: each run
-snapshots its config at `init`.
+snapshots its config at `init`. The standalone driver's own settings -
+`permission_mode`, `max_cost_usd`, `agent_timeout_minutes`, `claude_bin` -
+are the exception: they say how agents are started, not what the run
+decides, so `goatcode run` reads them from the file every time it starts.
 
 ## Tracing a run
 

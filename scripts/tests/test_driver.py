@@ -410,3 +410,32 @@ def test_a_malformed_denial_is_ignored():
         "not a dict",
     ]
     assert drivermod.refused_cli_calls(receipt(denials=odd)) == []
+
+
+# -- the driver's own settings ---------------------------------------------
+
+
+def _config_file(repo, text):
+    path = repo / ".goatcode" / "config.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_the_driver_takes_its_own_settings_from_the_file(git_repo):
+    """goat-bug: bypassPermissions in config.yaml never reached a resumed run."""
+    from tests.conftest import make_run
+
+    run = make_run(git_repo)
+    _config_file(git_repo, "permission_mode: bypassPermissions\nmax_cycles: 9\n")
+    settings = drivermod.live_settings(run)
+    assert settings["permission_mode"] == "bypassPermissions"
+    assert settings["max_cycles"] == run.config["max_cycles"], "pipeline policy stays the run's own"
+
+
+def test_a_config_that_does_not_parse_stops_a_resume_with_its_reason(git_repo):
+    from tests.conftest import make_run
+
+    run = make_run(git_repo)
+    _config_file(git_repo, "permission_mode: [bypass\n")
+    with pytest.raises(runmod.RunError, match="config.yaml"):
+        drivermod.live_settings(run)
