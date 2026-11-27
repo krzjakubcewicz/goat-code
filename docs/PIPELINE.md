@@ -329,6 +329,12 @@ slices. Back to `execute`, skipping the grill and the gate.
 Past `max_cycles` the run stops and reports what is still unmet. It does not
 loop forever and it does not claim success.
 
+It also stops early when three cycles in a row are verified at the same
+integration commit. Remedial slices that merge nothing leave the verifier
+judging the same tree, and the replan after it can only restate the same
+slices - a blocked environment does that until the cycle cap or the money
+runs out. `reopen` starts the count again.
+
 ## An agent that never reports
 
 The machine moves on only when an agent runs its reporting command. One that
@@ -364,9 +370,15 @@ python scripts/goatcode.py resume --json   # the same picture, for a human
 `failed` is the one phase `next` never derives its way out of. A run that
 spent its cycle cap comes back with
 `python scripts/goatcode.py reopen --max-cycles N`, which raises the cap,
-clears the dispatch counters and lets the next `next` re-derive the phase.
+clears the dispatch and plan-fix counters and lets the next `next`
+re-derive the phase. A failure the evidence still decides - a red e2e
+test, a gate that regressed on a direct run - would come straight back,
+so `reopen` refuses it and says which.
 Editing `max_cycles` in `.goatcode/config.yaml` does not reach it: each run
-snapshots its config at `init`.
+snapshots its config at `init`. The standalone driver's own settings -
+`permission_mode`, `max_cost_usd`, `agent_timeout_minutes`, `claude_bin` -
+are the exception: they say how agents are started, not what the run
+decides, so `goatcode run` reads them from the file every time it starts.
 
 ## Tracing a run
 

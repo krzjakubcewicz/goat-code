@@ -79,9 +79,11 @@ def test_tools_come_from_the_agents_own_frontmatter():
     assert argv_value(argv, "--allowedTools") == "Read,Grep,Glob,Bash,Write"
 
 
-def test_a_wildcard_tool_list_means_no_restriction():
+def test_a_wildcard_agent_gets_bash_pre_approved():
+    """--allowedTools pre-approves rather than restricts, so the executor -
+    tools: [*] - was the one agent that could run no command under acceptEdits."""
     argv = agentcli.build_argv(entry("goat-code-executor"), "C:/repo")
-    assert "--allowedTools" not in argv, "executors declare tools: [*]"
+    assert argv_value(argv, "--allowedTools") == "Bash"
 
 
 def test_the_repo_is_always_reachable():

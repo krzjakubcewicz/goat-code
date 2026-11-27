@@ -547,6 +547,69 @@ def test_a_stopped_run_keeps_saying_why(started):
     assert "cycle-3" in again["message"] and "verdict.md" in again["message"]
 
 
+class RefusedReportAgent(FakeAgent):
+    """An executor whose `goatcode report` the permission layer denied."""
+
+    def __call__(self, entry, on_event=None):
+        if entry["agent"] != "goat-code-executor":
+            return super().__call__(entry, on_event)
+        self.dispatched.append((entry["agent"], entry["slice"], entry["model"]))
+        command = "python goatcode.py report --slice {} --status DONE".format(entry["slice"])
+        return agentcli.Receipt(
+            entry, ok=True, duration_ms=0,
+            denials=[{"tool_name": "Bash", "tool_input": {"command": command}}],
+        )
+
+
+def test_a_refused_report_stops_the_run_at_the_first_dispatch(started):
+    """goat-bug: executors could not run `goatcode report`, the machine read
+    silence, and nine cycles re-dispatched them until a $550 key ran dry."""
+    agent = RefusedReportAgent([slice_doc("S1", "src/s1/**")])
+    with pytest.raises(drivermod.DriverError) as excinfo:
+        make_driver(started, agent).loop()
+    message = str(excinfo.value)
+    assert "S1" in message and "permission_mode" in message and "run --resume" in message
+    assert [a for a, _s, _m in agent.dispatched].count("goat-code-executor") == 1
+
+
+class RefusedThenReportedAgent(FakeAgent):
+    """An executor whose first report was refused and whose retry got through."""
+
+    def __call__(self, entry, on_event=None):
+        receipt = super().__call__(entry, on_event)
+        if entry["agent"] == "goat-code-executor":
+            command = "cd /elsewhere && python goatcode.py report --slice {}".format(entry["slice"])
+            receipt.denials = [{"tool_name": "Bash", "tool_input": {"command": command}}]
+        return receipt
+
+
+def test_a_report_that_got_through_on_a_retry_does_not_stop_the_run(started):
+    agent = RefusedThenReportedAgent([slice_doc("S1", "src/s1/**")])
+    final = make_driver(started, agent).loop()
+    assert final["outcome"] == "done"
+
+
+class RefusedAndDeadAgent(RefusedReportAgent):
+    """A refused report from a process that then died."""
+
+    def __call__(self, entry, on_event=None):
+        receipt = super().__call__(entry, on_event)
+        if entry["agent"] == "goat-code-executor":
+            receipt.ok = False
+            receipt.text = "process killed"
+        return receipt
+
+
+def test_a_refused_report_leaves_the_slice_as_it_was_for_the_resume(started):
+    """Recording BLOCKED first meant a resumed slice on the stronger model
+    was failed instead of dispatched again."""
+    agent = RefusedAndDeadAgent([slice_doc("S1", "src/s1/**")])
+    with pytest.raises(drivermod.DriverError):
+        make_driver(started, agent).loop()
+    doc = miniyaml.load(Run.load(started).tasks_path)
+    assert tasks.get(doc, "S1")["status"] != "blocked"
+
+
 def test_a_blocked_slice_is_retried_once_then_the_run_moves_on(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], block={"S1": 99})
     driver = make_driver(started, agent)

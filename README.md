@@ -229,9 +229,11 @@ read that will never return.
 ```
 
 **Permissions.** Agents run headless, so nobody can answer a permission
-prompt; a Bash call that needs one is denied and reported back. If you want
-agents running commands unattended, set `permission_mode: bypassPermissions`
-in `.goatcode/config.yaml`. That is not the default on purpose.
+prompt. Under the default `permission_mode: acceptEdits` every agent may
+edit files and run Bash - executors need it for their tests and every agent
+for its `goatcode` calls - and the repo guard keeps those calls inside the
+repository. A tool that would still prompt (WebFetch, an MCP server) is
+denied and reported. `bypassPermissions` lifts that last ceiling.
 
 **Your settings come along.** A dispatched `claude` inherits your `~/.claude`
 configuration, which is how the `superpowers` and `ponytail` skills the

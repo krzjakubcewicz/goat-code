@@ -300,7 +300,7 @@ def test_a_failed_dispatch_is_reported_so_the_machine_can_react(no_repo):
     driver.do_dispatch(None, wave("S1"))
     assert no_repo == [[
         "py", "goatcode.py", "report", "--slice", "S1", "--status", "BLOCKED",
-        "--reason", "You've hit your session limit",
+        "--reason", "agent process failed: You've hit your session limit",
     ]]
 
 
@@ -384,3 +384,59 @@ def test_the_loop_gives_up_rather_than_spinning(monkeypatch):
 def test_the_cli_module_resolves_to_the_real_entry_point():
     module = drivermod.cli_module()
     assert hasattr(module, "main") and hasattr(module, "build_parser")
+
+
+# -- a refused goatcode call -----------------------------------------------
+
+
+def denied(command):
+    return {"tool_name": "Bash", "tool_use_id": "t1", "tool_input": {"command": command}}
+
+
+def test_a_refused_report_is_found_inside_a_compound_command():
+    command = "cd backend && py scripts/goatcode.py --repo . report --slice S1 --status DONE"
+    assert drivermod.refused_cli_calls(receipt(denials=[denied(command)])) == [command]
+
+
+def test_a_refused_test_run_is_not_a_refused_report():
+    assert drivermod.refused_cli_calls(receipt(denials=[denied("pytest -q")])) == []
+
+
+def test_a_malformed_denial_is_ignored():
+    odd = [
+        {"tool_name": "Bash"},
+        {"tool_name": "WebFetch", "tool_input": {"url": "goatcode.py"}},
+        {"tool_name": "Bash", "tool_input": {"command": None}},
+        "not a dict",
+        {"tool_name": "Bash", "tool_input": "python goatcode.py report"},
+    ]
+    assert drivermod.refused_cli_calls(receipt(denials=odd)) == []
+
+
+# -- the driver's own settings ---------------------------------------------
+
+
+def _config_file(repo, text):
+    path = repo / ".goatcode" / "config.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_the_driver_takes_its_own_settings_from_the_file(git_repo):
+    """goat-bug: bypassPermissions in config.yaml never reached a resumed run."""
+    from tests.conftest import make_run
+
+    run = make_run(git_repo)
+    _config_file(git_repo, "permission_mode: bypassPermissions\nmax_cycles: 9\n")
+    settings = drivermod.live_settings(run)
+    assert settings["permission_mode"] == "bypassPermissions"
+    assert settings["max_cycles"] == run.config["max_cycles"], "pipeline policy stays the run's own"
+
+
+def test_a_config_that_does_not_parse_stops_a_resume_with_its_reason(git_repo):
+    from tests.conftest import make_run
+
+    run = make_run(git_repo)
+    _config_file(git_repo, "permission_mode: [bypass\n")
+    with pytest.raises(runmod.RunError, match="config.yaml"):
+        drivermod.live_settings(run)

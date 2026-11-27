@@ -309,6 +309,14 @@ def render(report):
             "was checked; set commands in .goatcode/config.yaml, then run "
             "`goatcode.py stack detect` so this run picks them up"
         )
+    elif (gates_map.get("test") or {}).get("status") == "missing":
+        # A green build is not a checked change: without the test gate this
+        # is the same all-clear, one gate short of nothing.
+        lines.append(
+            "no regressions in the gates that ran, but no test ran, so behaviour "
+            "was not checked; set commands.test in .goatcode/config.yaml, then run "
+            "`goatcode.py stack detect` so this run picks it up"
+        )
     else:
         lines.append("no regressions")
     if pre_existing:

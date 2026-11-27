@@ -235,14 +235,31 @@ def load_stack(run):
 # --------------------------------------------------------------------------
 
 
+def claude_bin(args):
+    """The claude executable: --claude-bin, else claude_bin in the config.
+
+    The flag defaulted to "claude", so the config's setting never won - while
+    the driver's docs said it was read on every start.
+    """
+    if args.claude_bin:
+        return args.claude_bin
+    try:
+        return runmod.load_config(resolve_repo(args)).get("claude_bin") or "claude"
+    except (CliError, RunError):
+        # No repository yet (init --clone makes one), or a config `init`
+        # will report properly; the probe only needs a name to try.
+        return "claude"
+
+
 def cmd_run(args):
     from goatcode import agentcli, driver as drivermod
 
-    version = agentcli.available({"claude_bin": args.claude_bin})
+    binary = claude_bin(args)
+    version = agentcli.available({"claude_bin": binary})
     if not version:
         raise CliError(
             "cannot run {!r}. Install the Claude Code CLI "
-            "(https://claude.com/claude-code), or pass --claude-bin.".format(args.claude_bin)
+            "(https://claude.com/claude-code), or pass --claude-bin.".format(binary)
         )
 
     console = drivermod.Console(quiet=args.quiet)
@@ -265,7 +282,13 @@ def cmd_run(args):
 
     repo = resolve_repo(args)
     run = resolve_run(args, repo)
-    config = dict(run.config)
+    config = drivermod.live_settings(run)
+    if config.get("permission_mode") != run.config.get("permission_mode"):
+        console.write(
+            "permission_mode: {} from .goatcode/config.yaml (this run started with {})".format(
+                config.get("permission_mode"), run.config.get("permission_mode")
+            )
+        )
     if args.max_cost:
         config["max_cost_usd"] = args.max_cost
     if args.claude_bin:
@@ -1303,6 +1326,10 @@ def cmd_abort(args):
     run = resolve_run(args)
     removed = worktreemod.reap(run, keep_integration=False, delete_branches=args.delete_branches)
     worktreemod.reap_orphans(run.repo)
+    # A run aborted after it failed would otherwise go on printing why it
+    # failed - a cycle cap nobody is asking about any more.
+    run.state["stop_reason"] = "aborted by request"
+    run.state["stop_details"] = []
     run.set_phase("aborted")
     ledgermod.append(run, "run aborted by request")
     emit(
@@ -1319,7 +1346,8 @@ def cmd_reopen(args):
     `failed` is terminal for `next`, and the config is snapshotted at init,
     so a run that spent its cap had no way back but hand-editing state.json.
     The phase is reset to `init` and re-derived from the evidence on the
-    next `next`: a run that failed for a reason still on disk fails again.
+    next `next`. A run that failed for a reason still on disk would fail
+    again at once, so that is refused here, with the reason.
     """
     run = resolve_run(args)
     if run.phase != "failed":
@@ -1327,9 +1355,26 @@ def cmd_reopen(args):
     cap = run.config.get("max_cycles", 3)
     wanted = cap if args.max_cycles is None else args.max_cycles
     if wanted < run.cycle:
+        if args.max_cycles is None:
+            raise CliError(
+                "cycle cap of {} is spent at cycle {}; pass --max-cycles {} or more".format(
+                    cap, run.cycle, run.cycle
+                )
+            )
         raise CliError(
-            "cycle cap of {} is spent at cycle {}; pass --max-cycles {} or more".format(
-                cap, run.cycle, run.cycle
+            "--max-cycles {} is below the run's current cycle {}; pass --max-cycles {} or more".format(
+                wanted, run.cycle, run.cycle
+            )
+        )
+    # A failure the evidence on disk decides - a red e2e test, a gate that
+    # regressed on a direct run - comes straight back on the next `next`.
+    run.state["phase"] = "init"
+    if machinemod.derive_phase(run) == "failed":
+        reason, details = machinemod.why_it_failed(run, machinemod.Evidence(run))
+        raise CliError(
+            "{}, and that is still on disk, so reopening would fail again at once{}".format(
+                reason or "the run failed on evidence it still has",
+                "".join("\n  - {}".format(d) for d in details),
             )
         )
     config = run.state.setdefault("config", runmod._deep_copy(runmod.DEFAULT_CONFIG))
@@ -1338,6 +1383,10 @@ def cmd_reopen(args):
     # one without fresh attempts would stop it again on the same key.
     run.state.pop("dispatch_attempts", None)
     run.state.pop("repeated_run", None)
+    run.state.pop("plan_fix_attempts", None)
+    # The no-progress breaker counts cycles from here, not the ones that
+    # stalled before; those would stop the reopened run on its first replan.
+    run.state["stall_floor"] = run.cycle
     run.state.pop("stop_reason", None)
     run.state.pop("stop_details", None)
     run.save()
@@ -1453,7 +1502,7 @@ def build_parser():
     p.add_argument("--force", action="store_true", help="proceed despite preflight problems")
     p.add_argument("--no-baseline", action="store_true", help="skip the baseline gate run")
     p.add_argument("--max-cost", type=float, help="dollar cap per agent dispatch")
-    p.add_argument("--claude-bin", default="claude", help="the Claude Code executable")
+    p.add_argument("--claude-bin", default=None, help="the Claude Code executable (default: claude_bin in the config)")
     p.add_argument(
         "--claude-arg",
         action="append",

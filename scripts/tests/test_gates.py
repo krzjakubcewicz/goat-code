@@ -169,6 +169,13 @@ def test_render_says_nothing_was_checked_when_no_gate_ran(run, git_repo):
     assert "stack detect" in text
 
 
+def test_a_build_without_a_test_is_not_an_all_clear(run, git_repo):
+    report = gates.run_and_classify(run, git_repo, profile=profile(build=PASS))
+    text = gates.render(report)
+    assert "no test ran" in text
+    assert "stack detect" in text
+
+
 def test_a_gate_tool_missing_from_the_host_is_not_an_all_clear(run, git_repo):
     report = gates.run_and_classify(run, git_repo, profile=profile(test=["goatcode-no-such-tool"]))
     assert "nothing was checked" in gates.render(report)

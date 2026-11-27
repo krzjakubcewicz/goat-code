@@ -421,6 +421,13 @@ def test_reopen_raises_the_cap_and_the_run_replans(capsys, node_repo):
     assert machine.derive_phase(run) == "replan"
 
 
+def test_reopen_starts_the_stall_count_again(capsys, node_repo):
+    """The cycles that stalled before a reopen must not stop it again at once."""
+    run = _failed_at_the_cap(node_repo)
+    invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert Run.load(node_repo, run.run_id).state["stall_floor"] == 4
+
+
 def test_reopen_with_the_cap_spent_names_the_minimum(capsys, node_repo):
     _failed_at_the_cap(node_repo)
     code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen")
@@ -441,6 +448,68 @@ def test_reopen_forgets_why_the_run_stopped(capsys, node_repo):
     run.save()
     invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
     assert "stop_reason" not in Run.load(node_repo, run.run_id).state
+
+
+def test_reopen_below_the_current_cycle_does_not_blame_the_cap(capsys, node_repo):
+    """The planner gave up at cycle 2 of 3; the cap had nothing to do with it."""
+    run = make_run(node_repo)
+    run.state["cycle"] = 2
+    run.state["stop_reason"] = "the planner could not produce a valid plan"
+    run.save()
+    run.set_phase("failed")
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "1")
+    assert code == cli.EXIT_USAGE
+    assert "cycle cap" not in err
+    assert "--max-cycles 2 or more" in err
+
+
+def test_reopen_gives_the_planner_fresh_attempts(capsys, node_repo):
+    run = make_run(node_repo)
+    run.state["plan_fix_attempts"] = 2
+    run.save()
+    run.set_phase("failed")
+    invoke(capsys, "--repo", str(node_repo), "reopen")
+    assert Run.load(node_repo, run.run_id).plan_fix_attempts == 0
+
+
+def test_reopen_refuses_a_failure_that_is_still_on_disk(capsys, node_repo):
+    """A red e2e result derives `failed` again on the next `next`."""
+    run = make_run(node_repo)
+    run.set_classification({"complexity": "SIMPLE", "risk": "LOW"}, "DIRECT_DEVELOPMENT")
+    plan_for(run, [slice_spec("S1", "src/a/**")])
+    run.adopt_branch("feature/x")
+    tasksmod.set_status(run.tasks_path, "S1", "done")
+    run.state["merge"] = {"status": "clean", "worktree": "w", "merged": ["S1"], "pending": []}
+    run.state["e2e"] = {"status": "FAILED", "detail": "login journey times out", "tests": None}
+    run.save()
+    osenv.write_json(run.cycle_dir() / "gates.json", {"gates": {"test": {"status": "pass"}}, "regressions": []})
+    (run.cycle_dir() / "review.diff").write_text("diff", encoding="utf-8")
+    run.set_phase("failed")
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert code == cli.EXIT_USAGE
+    assert "end-to-end" in err and "login journey times out" in err
+    assert Run.load(node_repo, run.run_id).phase == "failed"
+
+
+def test_abort_after_a_failure_does_not_repeat_why_it_failed(capsys, node_repo):
+    run = _failed_at_the_cap(node_repo)
+    run.state["stop_reason"] = "cycle cap of 3 reached with criteria still unmet"
+    run.save()
+    invoke(capsys, "--repo", str(node_repo), "abort")
+    _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "next")
+    assert payload["outcome"] == "aborted"
+    assert "cycle cap" not in payload["message"]
+    assert "aborted" in payload["reason"]
+
+
+def test_init_with_a_config_that_does_not_parse_offers_no_force(capsys, node_repo):
+    """--force skips preflight, not the config every later command reads."""
+    (node_repo / ".goatcode").mkdir(exist_ok=True)
+    (node_repo / ".goatcode" / "config.yaml").write_text("commands:\n  test: [mvn, verify\n", encoding="utf-8")
+    code, _out, err = invoke(capsys, "--repo", str(node_repo), "init", "--prompt", "x")
+    assert code == cli.EXIT_FAIL
+    assert "config.yaml" in err and "line 2" in err
+    assert "--force" not in err
 
 
 def test_only_a_failed_run_can_be_reopened(capsys, node_repo):
@@ -722,3 +791,14 @@ def test_the_brief_falls_back_to_the_suite_when_there_is_no_per_file_command(cap
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "brief", "S1")
     text = pathlib.Path(payload["briefs"][0]).read_text(encoding="utf-8")
     assert "whole suite once before you report" not in text
+
+
+def test_run_takes_the_claude_binary_from_the_config(node_repo):
+    """--claude-bin defaulted to "claude", so claude_bin in config.yaml never won."""
+    import argparse
+
+    (node_repo / ".goatcode").mkdir(exist_ok=True)
+    (node_repo / ".goatcode" / "config.yaml").write_text("claude_bin: C:/tools/claude.cmd\n", encoding="utf-8")
+    assert cli.claude_bin(argparse.Namespace(repo=str(node_repo), claude_bin=None)) == "C:/tools/claude.cmd"
+    assert cli.claude_bin(argparse.Namespace(repo=str(node_repo), claude_bin="mine")) == "mine"
+    assert cli.build_parser().parse_args(["run", "--prompt", "x"]).claude_bin is None

@@ -122,10 +122,10 @@ DEFAULT_CONFIG = {
     "commands": {},
     "worktree_setup": True,
     # Standalone (`goatcode run`) only. How a headless agent's tool calls are
-    # permitted. acceptEdits lets it write files, but a Bash call still needs
-    # permission - and nothing can grant one in a headless run, so it is
-    # denied and reported. bypassPermissions removes that ceiling and lets an
-    # agent run any command unattended.
+    # permitted. acceptEdits lets it edit files and run Bash, which every
+    # agent needs for its `goatcode` calls and the repo guard keeps inside
+    # the repository; any other tool that would prompt is denied, since
+    # nobody can answer one. bypassPermissions lifts that last ceiling.
     "permission_mode": "acceptEdits",
     # Hard dollar cap per agent dispatch. null for none.
     "max_cost_usd": None,
@@ -275,7 +275,10 @@ def load_config(repo):
     path = goatcode_dir(repo) / "config.yaml"
     if not path.exists():
         return config
-    overrides = miniyaml.load(path) or {}
+    try:
+        overrides = miniyaml.load(path) or {}
+    except miniyaml.YamlError as exc:
+        raise RunError("{}: {}".format(path, exc))
     if not isinstance(overrides, dict):
         raise RunError("{} must contain a mapping".format(path))
     _deep_merge(config, overrides)
@@ -308,9 +311,16 @@ def check_commands(repo, config):
             )
         if argv is None:
             continue
+        if isinstance(argv, list):
+            # YAML reads the 4 in [make, -j, 4] as a number; an int's text is
+            # exactly what was typed. A float or a bool is not (1.10, yes).
+            argv = commands[name] = [
+                str(a) if isinstance(a, int) and not isinstance(a, bool) else a for a in argv
+            ]
         if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
             raise RunError(
-                "commands.{} in {} must be a list of arguments, like [mvn, -B, verify]".format(name, path)
+                "commands.{} in {} must be a list of arguments, like [mvn, -B, verify]; "
+                "quote an argument YAML would read as a number or true/false".format(name, path)
             )
     return config
 
@@ -687,17 +697,15 @@ def preflight(repo=None):
 
     # Only "there is nothing to fork from" is a preflight problem. A config
     # naming a branch that has since been deleted is not: `base_choice` falls
-    # back to detection and init asks the user to pin one again.
-    try:
-        choice = base_choice(root, load_config(root).get("base_branch"), current=branch.out or None)
-    except RunError as exc:
-        problems.append(str(exc))
-    else:
-        if choice["branch"] is None:
-            problems.append(
-                "no base branch found (looked for origin/HEAD, main, master); "
-                "set base_branch in .goatcode/config.yaml"
-            )
+    # back to detection and init asks the user to pin one again. A config
+    # that does not load raises instead of joining the list: --force skips a
+    # preflight problem, and every command after this one reads the config.
+    choice = base_choice(root, load_config(root).get("base_branch"), current=branch.out or None)
+    if choice["branch"] is None:
+        problems.append(
+            "no base branch found (looked for origin/HEAD, main, master); "
+            "set base_branch in .goatcode/config.yaml"
+        )
 
     if osenv.in_linked_worktree(root):
         problems.append(

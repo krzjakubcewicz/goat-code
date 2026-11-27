@@ -277,6 +277,78 @@ def test_a_passing_verdict_over_a_gate_regression_replans(run):
     assert machine.derive_phase(run) == "replan"
 
 
+def test_a_blocked_slice_already_on_the_stronger_model_is_not_retried(run):
+    """goat-bug: the retry went to sonnet on slices already on sonnet; only the
+    prompt changed, so the dispatch cap reset and each slice ran six times."""
+    write_plan(run)
+    approved(run)
+    doc = miniyaml.load(run.tasks_path)
+    for item in doc["slices"]:
+        item["model"] = run.config["models"]["executor_escalated"]
+    miniyaml.dump(doc, run.tasks_path)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "blocked")
+    machine.next_action(run)
+    assert run.escalations("S1") == 0
+    assert tasks.get(miniyaml.load(run.tasks_path), "S1")["status"] != "pending"
+
+
+def test_a_slice_whose_agent_process_died_keeps_its_retry(run):
+    """Remedial slices are planned on the stronger model, so skipping every
+    same-model retry would cost a timed-out agent a whole cycle."""
+    write_plan(run)
+    approved(run)
+    doc = miniyaml.load(run.tasks_path)
+    for item in doc["slices"]:
+        item["model"] = run.config["models"]["executor_escalated"]
+    miniyaml.dump(doc, run.tasks_path)
+    report.record_slice(run, "S1", "BLOCKED", reason="{}: timed out".format(machine.PROCESS_FAILED))
+    for slice_id in ("S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    machine.next_action(run)
+    assert run.escalations("S1") == 1
+
+
+def _cycles_verified_at(run, refs):
+    """A planned run whose cycles 1..len(refs) verified at these refs; None = no gates.json."""
+    write_plan(run)
+    approved(run)
+    run.state["config"]["max_cycles"] = 9
+    run.state["cycle"] = len(refs)
+    run.save()
+    for cycle, ref in enumerate(refs, 1):
+        run.cycle_dir(cycle).mkdir(parents=True, exist_ok=True)
+        if ref:
+            osenv.write_json(run.cycle_dir(cycle) / "gates.json", {"ref": ref, "gates": {}})
+    (run.cycle_dir() / "verdict.md").write_text("VERDICT: FAIL\n", encoding="utf-8")
+
+
+def test_two_remedial_cycles_that_merged_nothing_stop_the_run(run):
+    """goat-bug: nine cycles verified the same integration HEAD."""
+    _cycles_verified_at(run, ["906dcdf" * 6, "906dcdf" * 6, "906dcdf" * 6])
+    action = machine.next_action(run)
+    assert action["action"] == "stop" and action["outcome"] == "failed"
+    assert "cycles 1-3" in action["reason"] and "906dcdf906dc" in action["reason"]
+    assert "reports" in action["message"]
+
+
+def test_one_empty_cycle_is_not_a_stall(run):
+    _cycles_verified_at(run, ["a" * 40, "b" * 40, "b" * 40])
+    assert machine.next_action(run)["action"] == "run"
+
+
+def test_a_cycle_that_never_reached_verify_is_not_a_stall(run):
+    _cycles_verified_at(run, [None, "b" * 40, "b" * 40])
+    assert machine.next_action(run)["action"] == "run"
+
+
+def test_cycles_before_a_reopen_do_not_count(run):
+    _cycles_verified_at(run, ["b" * 40, "b" * 40, "b" * 40])
+    run.state["stall_floor"] = 2
+    run.save()
+    assert machine.next_action(run)["action"] == "run"
+
+
 def test_a_failing_verdict_replans(run):
     write_plan(run)
     approved(run)
