@@ -174,6 +174,22 @@ class Prompter:
         return (self.stdin.readline() or "").strip()
 
 
+def refused_cli_calls(receipt):
+    """The `goatcode` commands among a dispatch's permission denials.
+
+    The denial list is claude's, so its shape is taken on trust nowhere:
+    anything that is not a Bash call with a string command is skipped.
+    """
+    refused = []
+    for denial in receipt.denials:
+        if not isinstance(denial, dict) or denial.get("tool_name") != "Bash":
+            continue
+        command = (denial.get("tool_input") or {}).get("command")
+        if isinstance(command, str) and "goatcode.py" in command:
+            refused.append(command)
+    return refused
+
+
 def recommended(question):
     """The option the planner marked, or the first one."""
     options = question.get("options") or []
@@ -265,6 +281,7 @@ class Driver:
             if not receipt.ok:
                 self.record_failure(run, receipt)
 
+        self._stop_on_a_refused_cli_call(results)
         self._guard_against_spinning(results)
         return results
 
@@ -284,6 +301,26 @@ class Driver:
         self.cli(machine.cli_argv(
             run, "report", "--slice", slice_id, "--status", "BLOCKED", "--reason", reason
         ))
+
+    def _stop_on_a_refused_cli_call(self, results):
+        """Stop when an agent could not tell the machine what it did.
+
+        The machine moves only when an agent runs its `goatcode` command. A
+        refused one reads as silence, which the dispatch cap turns into
+        "blocked, no result" and a replan - nine cycles of it in goat-bug.
+        Not a pipeline failure, so the phase is left alone and `run --resume`
+        carries on once the permission is fixed.
+        """
+        for receipt in results:
+            refused = refused_cli_calls(receipt)
+            if refused:
+                raise DriverError(
+                    "{} could not run its goatcode command - permission denied: {}. "
+                    "Nothing it did can be recorded, so the run is stopping rather than "
+                    "dispatching it again. Allow it (permission_mode: bypassPermissions in "
+                    ".goatcode/config.yaml, or an allow rule in your Claude settings), then "
+                    "run `goatcode run --resume`.".format(receipt.label, refused[0][:160])
+                )
 
     def _guard_against_spinning(self, results):
         """Stop when nothing is getting through at all.

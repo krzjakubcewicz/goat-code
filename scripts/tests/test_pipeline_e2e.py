@@ -547,6 +547,31 @@ def test_a_stopped_run_keeps_saying_why(started):
     assert "cycle-3" in again["message"] and "verdict.md" in again["message"]
 
 
+class RefusedReportAgent(FakeAgent):
+    """An executor whose `goatcode report` the permission layer denied."""
+
+    def __call__(self, entry, on_event=None):
+        if entry["agent"] != "goat-code-executor":
+            return super().__call__(entry, on_event)
+        self.dispatched.append((entry["agent"], entry["slice"], entry["model"]))
+        command = "python goatcode.py report --slice {} --status DONE".format(entry["slice"])
+        return agentcli.Receipt(
+            entry, ok=True, duration_ms=0,
+            denials=[{"tool_name": "Bash", "tool_input": {"command": command}}],
+        )
+
+
+def test_a_refused_report_stops_the_run_at_the_first_dispatch(started):
+    """goat-bug: executors could not run `goatcode report`, the machine read
+    silence, and nine cycles re-dispatched them until a $550 key ran dry."""
+    agent = RefusedReportAgent([slice_doc("S1", "src/s1/**")])
+    with pytest.raises(drivermod.DriverError) as excinfo:
+        make_driver(started, agent).loop()
+    message = str(excinfo.value)
+    assert "S1" in message and "permission_mode" in message and "run --resume" in message
+    assert [a for a, _s, _m in agent.dispatched].count("goat-code-executor") == 1
+
+
 def test_a_blocked_slice_is_retried_once_then_the_run_moves_on(started):
     agent = FakeAgent([slice_doc("S1", "src/s1/**")], block={"S1": 99})
     driver = make_driver(started, agent)

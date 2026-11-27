@@ -384,3 +384,29 @@ def test_the_loop_gives_up_rather_than_spinning(monkeypatch):
 def test_the_cli_module_resolves_to_the_real_entry_point():
     module = drivermod.cli_module()
     assert hasattr(module, "main") and hasattr(module, "build_parser")
+
+
+# -- a refused goatcode call -----------------------------------------------
+
+
+def denied(command):
+    return {"tool_name": "Bash", "tool_use_id": "t1", "tool_input": {"command": command}}
+
+
+def test_a_refused_report_is_found_inside_a_compound_command():
+    command = "cd backend && py scripts/goatcode.py --repo . report --slice S1 --status DONE"
+    assert drivermod.refused_cli_calls(receipt(denials=[denied(command)])) == [command]
+
+
+def test_a_refused_test_run_is_not_a_refused_report():
+    assert drivermod.refused_cli_calls(receipt(denials=[denied("pytest -q")])) == []
+
+
+def test_a_malformed_denial_is_ignored():
+    odd = [
+        {"tool_name": "Bash"},
+        {"tool_name": "WebFetch", "tool_input": {"url": "goatcode.py"}},
+        {"tool_name": "Bash", "tool_input": {"command": None}},
+        "not a dict",
+    ]
+    assert drivermod.refused_cli_calls(receipt(denials=odd)) == []
