@@ -421,6 +421,13 @@ def test_reopen_raises_the_cap_and_the_run_replans(capsys, node_repo):
     assert machine.derive_phase(run) == "replan"
 
 
+def test_reopen_starts_the_stall_count_again(capsys, node_repo):
+    """The cycles that stalled before a reopen must not stop it again at once."""
+    run = _failed_at_the_cap(node_repo)
+    invoke(capsys, "--repo", str(node_repo), "reopen", "--max-cycles", "6")
+    assert Run.load(node_repo, run.run_id).state["stall_floor"] == 4
+
+
 def test_reopen_with_the_cap_spent_names_the_minimum(capsys, node_repo):
     _failed_at_the_cap(node_repo)
     code, _out, err = invoke(capsys, "--repo", str(node_repo), "reopen")

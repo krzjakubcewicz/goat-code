@@ -1367,6 +1367,9 @@ def cmd_reopen(args):
     run.state.pop("dispatch_attempts", None)
     run.state.pop("repeated_run", None)
     run.state.pop("plan_fix_attempts", None)
+    # The no-progress breaker counts cycles from here, not the ones that
+    # stalled before; those would stop the reopened run on its first replan.
+    run.state["stall_floor"] = run.cycle
     run.state.pop("stop_reason", None)
     run.state.pop("stop_details", None)
     run.save()

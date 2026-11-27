@@ -957,6 +957,21 @@ def _replan(run, evidence, _stack):
         )
 
     if not run.state.get("awaiting_replan"):
+        stalled = _stalled_ref(run)
+        if stalled:
+            cycle = run.cycle
+            return _stop(
+                run,
+                evidence,
+                outcome="failed",
+                reason="cycles {}-{} were all verified at {}: nothing merged in two remedial "
+                "cycles, so another replan would judge the same tree; goatcode reopen gives "
+                "it more once the cause is fixed".format(cycle - 2, cycle, stalled[:12]),
+                details=[
+                    "slice reports: {}".format(run.cycle_dir(cycle) / "reports"),
+                    "last verdict: {}".format(run.cycle_dir(cycle) / "verdict.md"),
+                ],
+            )
         return _action(
             run,
             "run",
@@ -974,6 +989,25 @@ def _replan(run, evidence, _stack):
         "dispatch goat-code-replanner ({})".format(_model(run, "replanner")),
         dispatches=[_entry("goat-code-replanner", _model(run, "replanner"), path)],
     )
+
+
+def _stalled_ref(run):
+    """The integration commit the last three cycles were all verified at.
+
+    Remedial slices that merge nothing leave the verifier judging the same
+    tree, so the replan after it can only restate the same slices: goat-bug
+    verified one HEAD for nine cycles. The first of the three must come
+    after any `reopen`, or the cycles that stopped the run would stop it
+    again at once. A cycle that never reached verify has no ref and breaks
+    the run of three.
+    """
+    cycle = run.cycle
+    if cycle - 2 < max(1, run.state.get("stall_floor", 1)):
+        return None
+    refs = {diffpkg.judged_ref(run, c) for c in (cycle - 2, cycle - 1, cycle)}
+    if len(refs) != 1 or None in refs:
+        return None
+    return refs.pop()
 
 
 # -- stop ------------------------------------------------------------------

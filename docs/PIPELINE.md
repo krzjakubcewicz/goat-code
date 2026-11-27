@@ -329,6 +329,12 @@ slices. Back to `execute`, skipping the grill and the gate.
 Past `max_cycles` the run stops and reports what is still unmet. It does not
 loop forever and it does not claim success.
 
+It also stops early when three cycles in a row are verified at the same
+integration commit. Remedial slices that merge nothing leave the verifier
+judging the same tree, and the replan after it can only restate the same
+slices - a blocked environment does that until the cycle cap or the money
+runs out. `reopen` starts the count again.
+
 ## An agent that never reports
 
 The machine moves on only when an agent runs its reporting command. One that

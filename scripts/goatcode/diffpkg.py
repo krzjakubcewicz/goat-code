@@ -117,8 +117,8 @@ def previous_judgement(run, doc):
     if not verdict_path.exists():
         return dict(NOTHING_JUDGED_YET)
 
-    before = _judged_ref(run, run.cycle - 1)
-    now = _judged_ref(run, run.cycle)
+    before = judged_ref(run, run.cycle - 1)
+    now = judged_ref(run, run.cycle)
     if not before or not now:
         return dict(NOTHING_JUDGED_YET)
 
@@ -131,7 +131,7 @@ def previous_judgement(run, doc):
     }
 
 
-def _judged_ref(run, cycle):
+def judged_ref(run, cycle):
     """The integration commit a cycle's gates ran against."""
     path = run.cycle_dir(cycle) / "gates.json"
     if not path.exists():
