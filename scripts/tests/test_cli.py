@@ -791,3 +791,14 @@ def test_the_brief_falls_back_to_the_suite_when_there_is_no_per_file_command(cap
     _code, payload, _err = invoke_json(capsys, "--repo", str(node_repo), "brief", "S1")
     text = pathlib.Path(payload["briefs"][0]).read_text(encoding="utf-8")
     assert "whole suite once before you report" not in text
+
+
+def test_run_takes_the_claude_binary_from_the_config(node_repo):
+    """--claude-bin defaulted to "claude", so claude_bin in config.yaml never won."""
+    import argparse
+
+    (node_repo / ".goatcode").mkdir(exist_ok=True)
+    (node_repo / ".goatcode" / "config.yaml").write_text("claude_bin: C:/tools/claude.cmd\n", encoding="utf-8")
+    assert cli.claude_bin(argparse.Namespace(repo=str(node_repo), claude_bin=None)) == "C:/tools/claude.cmd"
+    assert cli.claude_bin(argparse.Namespace(repo=str(node_repo), claude_bin="mine")) == "mine"
+    assert cli.build_parser().parse_args(["run", "--prompt", "x"]).claude_bin is None

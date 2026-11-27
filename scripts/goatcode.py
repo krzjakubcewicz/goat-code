@@ -235,14 +235,31 @@ def load_stack(run):
 # --------------------------------------------------------------------------
 
 
+def claude_bin(args):
+    """The claude executable: --claude-bin, else claude_bin in the config.
+
+    The flag defaulted to "claude", so the config's setting never won - while
+    the driver's docs said it was read on every start.
+    """
+    if args.claude_bin:
+        return args.claude_bin
+    try:
+        return runmod.load_config(resolve_repo(args)).get("claude_bin") or "claude"
+    except (CliError, RunError):
+        # No repository yet (init --clone makes one), or a config `init`
+        # will report properly; the probe only needs a name to try.
+        return "claude"
+
+
 def cmd_run(args):
     from goatcode import agentcli, driver as drivermod
 
-    version = agentcli.available({"claude_bin": args.claude_bin})
+    binary = claude_bin(args)
+    version = agentcli.available({"claude_bin": binary})
     if not version:
         raise CliError(
             "cannot run {!r}. Install the Claude Code CLI "
-            "(https://claude.com/claude-code), or pass --claude-bin.".format(args.claude_bin)
+            "(https://claude.com/claude-code), or pass --claude-bin.".format(binary)
         )
 
     console = drivermod.Console(quiet=args.quiet)
@@ -1485,7 +1502,7 @@ def build_parser():
     p.add_argument("--force", action="store_true", help="proceed despite preflight problems")
     p.add_argument("--no-baseline", action="store_true", help="skip the baseline gate run")
     p.add_argument("--max-cost", type=float, help="dollar cap per agent dispatch")
-    p.add_argument("--claude-bin", default="claude", help="the Claude Code executable")
+    p.add_argument("--claude-bin", default=None, help="the Claude Code executable (default: claude_bin in the config)")
     p.add_argument(
         "--claude-arg",
         action="append",

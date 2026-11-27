@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 
-from . import agentcli, machine
+from . import agentcli, machine, miniyaml, tasks
 from .run import Run
 
 #: Hard stop on loop iterations. The machine has its own caps - this only
@@ -184,7 +184,8 @@ def refused_cli_calls(receipt):
     for denial in receipt.denials:
         if not isinstance(denial, dict) or denial.get("tool_name") != "Bash":
             continue
-        command = (denial.get("tool_input") or {}).get("command")
+        tool_input = denial.get("tool_input")
+        command = tool_input.get("command") if isinstance(tool_input, dict) else None
         if isinstance(command, str) and "goatcode.py" in command:
             refused.append(command)
     return refused
@@ -278,10 +279,14 @@ class Driver:
         for receipt in results:
             self.console.receipt(receipt)
             self.receipts.append(receipt)
+
+        # Before any failure is recorded: a BLOCKED written here would greet
+        # the resume, and a slice already on the stronger model would then be
+        # failed instead of dispatched again.
+        self._stop_on_a_refused_cli_call(results)
+        for receipt in results:
             if not receipt.ok:
                 self.record_failure(run, receipt)
-
-        self._stop_on_a_refused_cli_call(results)
         self._guard_against_spinning(results)
         return results
 
@@ -297,7 +302,11 @@ class Driver:
         slice_id = receipt.entry.get("slice")
         if not slice_id:
             return
-        reason = (receipt.text or "the agent process failed").splitlines()[0][:300]
+        # Tagged, so the machine can tell a process that died - worth one more
+        # go even on the same model - from an executor that said it is stuck.
+        reason = "{}: {}".format(
+            machine.PROCESS_FAILED, (receipt.text or "no output").splitlines()[0][:280]
+        )
         self.cli(machine.cli_argv(
             run, "report", "--slice", slice_id, "--status", "BLOCKED", "--reason", reason
         ))
@@ -311,8 +320,21 @@ class Driver:
         Not a pipeline failure, so the phase is left alone and `run --resume`
         carries on once the permission is fixed.
         """
-        for receipt in results:
-            refused = refused_cli_calls(receipt)
+        refusals = [(receipt, refused_cli_calls(receipt)) for receipt in results]
+        if not any(refused for _receipt, refused in refusals):
+            return
+        tasks_path = pathlib.Path(Run.load(self.repo).tasks_path)
+        doc = miniyaml.load(tasks_path) if tasks_path.exists() else None
+        for receipt, refused in refusals:
+            slice_id = receipt.entry.get("slice")
+            if refused and slice_id and doc is not None:
+                try:
+                    status = tasks.get(doc, slice_id).get("status")
+                except tasks.TaskError:
+                    status = None
+                if status not in (None, "pending", "claimed"):
+                    # A later attempt got through: the slice has its result.
+                    continue
             if refused:
                 raise DriverError(
                     "{} could not run its goatcode command - permission denied: {}. "

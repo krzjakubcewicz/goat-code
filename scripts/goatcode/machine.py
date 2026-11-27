@@ -21,6 +21,10 @@ from . import debuglog, diffpkg, dispatch, gates, guard, ledger, merge, miniyaml
 #: Actions the orchestrator knows how to perform.
 ACTIONS = ("run", "dispatch", "ask", "escalate", "stop")
 
+#: How the driver opens the BLOCKED reason it records for an agent process
+#: that died before reporting, as against an executor reporting itself stuck.
+PROCESS_FAILED = "agent process failed"
+
 
 class Evidence:
     """Everything on disk that the phase depends on, read once."""
@@ -779,7 +783,12 @@ def _retry_blocked(run, evidence):
         # A slice already on the stronger model would get the same model and
         # a new prompt, which resets the dispatch cap: three more runs that
         # cannot differ. goat-bug spent six dispatches per slice this way.
-        if _executor_model(run, tasks.get(evidence.doc, slice_id), slice_id) == stronger:
+        # A process that died is the exception: it gets its one more go, or a
+        # timed-out agent on a remedial slice - planned on the stronger model -
+        # would cost the run a whole cycle.
+        item = tasks.get(evidence.doc, slice_id)
+        died = str((item.get("report") or {}).get("reason") or "").startswith(PROCESS_FAILED)
+        if _executor_model(run, item, slice_id) == stronger and not died:
             continue
         if run.escalations(slice_id) == 0:
             run.escalate(slice_id)

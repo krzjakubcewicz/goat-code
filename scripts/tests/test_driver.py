@@ -300,7 +300,7 @@ def test_a_failed_dispatch_is_reported_so_the_machine_can_react(no_repo):
     driver.do_dispatch(None, wave("S1"))
     assert no_repo == [[
         "py", "goatcode.py", "report", "--slice", "S1", "--status", "BLOCKED",
-        "--reason", "You've hit your session limit",
+        "--reason", "agent process failed: You've hit your session limit",
     ]]
 
 
@@ -408,6 +408,7 @@ def test_a_malformed_denial_is_ignored():
         {"tool_name": "WebFetch", "tool_input": {"url": "goatcode.py"}},
         {"tool_name": "Bash", "tool_input": {"command": None}},
         "not a dict",
+        {"tool_name": "Bash", "tool_input": "python goatcode.py report"},
     ]
     assert drivermod.refused_cli_calls(receipt(denials=odd)) == []
 

@@ -293,6 +293,22 @@ def test_a_blocked_slice_already_on_the_stronger_model_is_not_retried(run):
     assert tasks.get(miniyaml.load(run.tasks_path), "S1")["status"] != "pending"
 
 
+def test_a_slice_whose_agent_process_died_keeps_its_retry(run):
+    """Remedial slices are planned on the stronger model, so skipping every
+    same-model retry would cost a timed-out agent a whole cycle."""
+    write_plan(run)
+    approved(run)
+    doc = miniyaml.load(run.tasks_path)
+    for item in doc["slices"]:
+        item["model"] = run.config["models"]["executor_escalated"]
+    miniyaml.dump(doc, run.tasks_path)
+    report.record_slice(run, "S1", "BLOCKED", reason="{}: timed out".format(machine.PROCESS_FAILED))
+    for slice_id in ("S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "done")
+    machine.next_action(run)
+    assert run.escalations("S1") == 1
+
+
 def _cycles_verified_at(run, refs):
     """A planned run whose cycles 1..len(refs) verified at these refs; None = no gates.json."""
     write_plan(run)
