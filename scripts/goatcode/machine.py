@@ -774,7 +774,13 @@ def _worktree_ready(doc, slice_id):
 def _retry_blocked(run, evidence):
     """Give each blocked slice exactly one go on a stronger model."""
     retried = []
+    stronger = _model(run, "executor_escalated")
     for slice_id in evidence.blocked:
+        # A slice already on the stronger model would get the same model and
+        # a new prompt, which resets the dispatch cap: three more runs that
+        # cannot differ. goat-bug spent six dispatches per slice this way.
+        if _executor_model(run, tasks.get(evidence.doc, slice_id), slice_id) == stronger:
+            continue
         if run.escalations(slice_id) == 0:
             run.escalate(slice_id)
             tasks.set_status(run.tasks_path, slice_id, "pending")

@@ -277,6 +277,22 @@ def test_a_passing_verdict_over_a_gate_regression_replans(run):
     assert machine.derive_phase(run) == "replan"
 
 
+def test_a_blocked_slice_already_on_the_stronger_model_is_not_retried(run):
+    """goat-bug: the retry went to sonnet on slices already on sonnet; only the
+    prompt changed, so the dispatch cap reset and each slice ran six times."""
+    write_plan(run)
+    approved(run)
+    doc = miniyaml.load(run.tasks_path)
+    for item in doc["slices"]:
+        item["model"] = run.config["models"]["executor_escalated"]
+    miniyaml.dump(doc, run.tasks_path)
+    for slice_id in ("S1", "S2", "S3"):
+        tasks.set_status(run.tasks_path, slice_id, "blocked")
+    machine.next_action(run)
+    assert run.escalations("S1") == 0
+    assert tasks.get(miniyaml.load(run.tasks_path), "S1")["status"] != "pending"
+
+
 def test_a_failing_verdict_replans(run):
     write_plan(run)
     approved(run)
